@@ -1,30 +1,28 @@
 import { NextResponse } from "next/server";
-import { supabase } from "../../../lib/supabaseClient";
 
-export async function GET() {
-  const { data, error } = await supabase
-    .from("companies")
-    .select("*")
-    .order("created_at", { ascending: false });
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-  if (error) return NextResponse.json({ error }, { status: 500 });
-  return NextResponse.json({ data });
+// Next 15: params is Promise
+type Ctx = { params: Promise<{ id: string }> };
+
+function isUuid(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
-export async function POST(req: Request) {
-  const body = await req.json();
-  const name = body?.name;
+export async function GET(_req: Request, ctx: Ctx) {
+  const p = await ctx.params;
+  return NextResponse.json({ ok: true, params: p });
+}
 
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
-  }
+export async function POST(_req: Request, ctx: Ctx) {
+  const p = await ctx.params;
+  const importJobId = (p?.id ?? "").trim();
 
-  const { data, error } = await supabase
-    .from("companies")
-    .insert([{ name }])
-    .select()
-    .single();
-
-  if (error) return NextResponse.json({ error }, { status: 500 });
-  return NextResponse.json({ data }, { status: 201 });
+  return NextResponse.json({
+    ok: true,
+    importJobId,
+    isUuid: isUuid(importJobId),
+    rawParams: p,
+  });
 }
