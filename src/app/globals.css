@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+:root{
+  --sl-bg: 246 248 252;
+  --sl-surface: 255 255 255;
+  --sl-border: 15 23 42 / .10;
+  --sl-text: 15 23 42;
+  --sl-muted: 100 116 139;
+  --sl-sidebar: 10 15 25;
+  --sl-accent: 56 189 248;
+  --sl-accent2: 167 139 250;
+}
+
+html, body { height: 100%; }
+
+body {
+  background: rgb(var(--sl-bg));
+  color: rgb(var(--sl-text));
+}

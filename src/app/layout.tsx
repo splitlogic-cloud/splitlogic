@@ -1,20 +1,15 @@
-export const metadata = {
-    title: 'SplitLogic',
-    description: 'Royalty accounting platform',
-  }
-  
-  export default function RootLayout({
-    children,
-  }: {
-    children: React.ReactNode
-  }) {
-    return (
-      <html lang="en">
-        <body style={{ margin: 0, fontFamily: 'sans-serif' }}>
-          {children}
-        </body>
-      </html>
-    )
-  }
+import "./globals.css";
+import type { Metadata } from "next";
 
-  
+export const metadata: Metadata = {
+  title: "SplitLogic",
+  description: "Royalty engine",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="sv">
+      <body>{children}</body>
+    </html>
+  );
+}

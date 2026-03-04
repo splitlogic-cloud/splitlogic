@@ -1,55 +1,25 @@
-"use client";
+// src/app/login/page.tsx
+import LoginClient from "./ui/LoginClient";
 
-import { useState } from "react";
-import { createSupabaseBrowser } from "@/features/supabase/browser";
+export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
-  const supabase = createSupabaseBrowser();
-  const [email, setEmail] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage(null);
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage("Magic link skickad. Kolla din inbox.");
-    }
-
-    setLoading(false);
-  };
-
   return (
-    <main style={{ maxWidth: 400, margin: "80px auto" }}>
-      <h1>Login</h1>
+    <div className="min-h-[calc(100vh-0px)] flex items-center justify-center p-6 bg-slate-50">
+      <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm space-y-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight">SplitLogic</h1>
+          <p className="text-sm text-slate-600">
+            Logga in för att komma åt dina bolag. Du väljer bolag efter inloggning och kan byta när som helst.
+          </p>
+        </div>
 
-      <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <input
-          type="email"
-          placeholder="your@email.com"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{ padding: 8 }}
-        />
+        <LoginClient />
 
-        <button type="submit" disabled={loading} style={{ padding: 8 }}>
-          {loading ? "Skickar..." : "Skicka magic link"}
-        </button>
-      </form>
-
-      {message && <p style={{ marginTop: 12 }}>{message}</p>}
-    </main>
+        <div className="pt-2 text-xs text-slate-500">
+          Saknar du access? <span className="font-medium text-slate-700">Be om inbjudan</span> (lägg mail/CTA här).
+        </div>
+      </div>
+    </div>
   );
 }
