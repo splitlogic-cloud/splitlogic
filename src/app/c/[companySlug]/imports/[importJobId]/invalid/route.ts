@@ -2,7 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { notFound } from "next/navigation";
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
-import { listImportRowsByJobAdmin } from "@/features/imports/imports.repo";
+import { listImportRows } from "@/features/imports/imports.repo";
 
 type Ctx = {
   params: Promise<{

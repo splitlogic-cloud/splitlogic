@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireActiveCompany } from "@/lib/active-company";
-import { getImportJob, listImportRows } from "@/features/imports/imports.repo";
+import { getImportJobById, listImportRows } from "@/features/imports/imports.repo";
 
 export default async function ImportDetailPage({
   params,
