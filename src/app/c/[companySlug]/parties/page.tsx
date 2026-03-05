@@ -3,19 +3,24 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export default async function PartiesPage(props: {
-  params: { companySlug: string } | { companySlug: string };
-  searchParams?: { q?: string } | { q?: string };
-}) {
-  const params = props.params;
-  const searchParams = (props.searchParams ?? {});
+type Props = {
+  params: Promise<{ companySlug: string }> | { companySlug: string };
+  searchParams?: Promise<{ q?: string }> | { q?: string };
+};
+
+export default async function PartiesPage(props: Props) {
+  const params = await Promise.resolve(props.params);
+  const searchParams = await Promise.resolve(props.searchParams ?? {});
   const companySlug = params.companySlug;
+
+  if (!companySlug) throw new Error("Missing companySlug param");
 
   const supabase = await createSupabaseServerClient();
   const company = await requireCompanyBySlugForUser(companySlug);
 
-  const q = (searchParams?.q ?? "").trim();
+  const q = (searchParams.q ?? "").trim();
 
   let query = supabase
     .from("parties")

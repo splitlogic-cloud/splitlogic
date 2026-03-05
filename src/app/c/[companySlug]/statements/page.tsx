@@ -1,35 +1,29 @@
-// src/app/c/[companySlug]/statements/page.tsx
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 import StatementsListClient from "./ui/StatementsListClient";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-type Row = {
-  id: string;
-  status: string;
-  created_at: string;
-  sent_at: string | null;
-  paid_at: string | null;
-  voided_at: string | null;
+type Props = {
+  params: Promise<{ companySlug: string }> | { companySlug: string };
+  searchParams?: Promise<{ status?: string; q?: string }> | { status?: string; q?: string };
 };
 
-export default async function StatementsPage(props: {
-  params: { companySlug: string } | { companySlug: string };
-  searchParams?: { status?: string; q?: string } | { status?: string; q?: string };
-}) {
-  const params = props.params;
-  const searchParams = (props.searchParams ?? {});
+export default async function StatementsPage(props: Props) {
+  const params = await Promise.resolve(props.params);
+  const searchParams = await Promise.resolve(props.searchParams ?? {});
   const companySlug = params.companySlug;
+
+  if (!companySlug) throw new Error("Missing companySlug param");
 
   const supabase = await createSupabaseServerClient();
   const company = await requireCompanyBySlugForUser(companySlug);
 
-  const status = (searchParams.status ?? "").trim(); // "" | draft | sent | paid | void
+  const status = (searchParams.status ?? "").trim();
   const q = (searchParams.q ?? "").trim();
 
-  // Minimal list from statements table (works with your schema)
   let query = supabase
     .from("statements")
     .select("id,status,created_at,sent_at,paid_at,voided_at")
@@ -38,14 +32,10 @@ export default async function StatementsPage(props: {
     .limit(200);
 
   if (status) query = query.eq("status", status);
-
-  // If you want search, you can later add note search if you have note column
   if (q) query = query.ilike("note", `%${q}%`);
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-
-  const rows = (data ?? []) as Row[];
 
   return (
     <div className="p-6 space-y-6">
@@ -60,7 +50,7 @@ export default async function StatementsPage(props: {
 
       <StatementsListClient
         companySlug={company.slug}
-        initialRows={rows}
+        initialRows={data ?? []}
         initialStatus={status}
         initialQ={q}
       />
