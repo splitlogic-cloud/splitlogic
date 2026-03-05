@@ -1,11 +1,20 @@
-import { cookies } from "next/headers";
+// src/lib/supabase/server.ts
+import "server-only";
+
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-export function createClient() {
-  const cookieStore = cookies(); // INTE await
+export async function createClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!url || !anonKey) {
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    );
+  }
+
+  const cookieStore = await cookies();
 
   return createServerClient(url, anonKey, {
     cookies: {
@@ -13,13 +22,17 @@ export function createClient() {
         return cookieStore.getAll();
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) => {
-          cookieStore.set(name, value, options);
-        });
+        try {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            cookieStore.set(name, value, options);
+          });
+        } catch {
+          // setAll kan faila i vissa server contexts (t.ex. RSC). Okej.
+        }
       },
     },
   });
 }
 
-// --- Backwards compatible alias (old imports) ---
+// ✅ Bakåtkompatibilitet (så dina imports fortsätter funka)
 export const createSupabaseServerClient = createClient;
