@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const name = (body?.name ?? "").trim();
     const orgnr = body?.orgnr ?? null;
 
-    const company = await createCompanyForUser({ name, orgnr });
+    const company = await createCompanyForUser({ name });
 
     return NextResponse.json({ ok: true, company });
   } catch (e: any) {

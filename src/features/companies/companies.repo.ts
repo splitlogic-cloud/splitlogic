@@ -94,7 +94,7 @@ export async function requireCompanyBySlugForUser(companySlug: string): Promise<
   };
 }
 
-export async function createCompanyForUser(input: { name: string }): Promise<MyCompany> {
+export async function createCompanyForUser(input: { name: string; orgnr?: string | null }) { ... }
   const { supabase, userId } = await requireUser();
 
   const name = (input.name ?? "").trim();
