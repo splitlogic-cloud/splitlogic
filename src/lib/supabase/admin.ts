@@ -14,5 +14,5 @@
     });
   }
 
-  // Backwards compatible alias (so older imports keep working)
+ // --- Backwards compatible alias (old imports) ---
 export const supabaseAdmin = getSupabaseAdmin();

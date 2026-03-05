@@ -20,3 +20,6 @@ export function createClient() {
     },
   });
 }
+
+// --- Backwards compatible alias (old imports) ---
+export const createSupabaseServerClient = createClient;
