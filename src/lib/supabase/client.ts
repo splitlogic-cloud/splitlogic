@@ -13,5 +13,6 @@ export function createClient() {
   return createBrowserClient(url, anon);
 }
 
-// Backwards compat: om kod någonstans importerar detta namnet
-export const createSupabaseBrowserClient = createClient;
+
+// Backwards compatible alias (so older imports keep working)
+export const createSupabaseServerClient = createClient;
