@@ -2,15 +2,7 @@
 import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-
-/**
- * DB assumptions (based on your screenshot + earlier work):
- * - public.companies: id (uuid), name (text), slug (text), base_currency (char), created_at (timestamptz)
- * - public.company_members: company_id (uuid), user_id (uuid), role (text), created_at (timestamptz)
- *
- * RLS:
- * - company isolation + membership enforcement exists (you already built this)
- */
+import { redirect } from "next/navigation";
 
 export type Company = {
   id: string;
@@ -20,229 +12,160 @@ export type Company = {
   created_at: string | null;
 };
 
-export type CompanyMember = {
+export type CompanyMembership = {
   company_id: string;
   user_id: string;
   role: string | null;
   created_at: string | null;
 };
 
-async function requireUser() {
-  const supabase = await createSupabaseServerClient();
-
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-
-  const user = data?.user;
-  if (!user?.id) throw new Error("Not authenticated");
-
-  return { supabase, userId: user.id };
-}
-
 function slugify(input: string) {
-  const s = (input ?? "")
+  return input
     .toLowerCase()
     .trim()
     .replace(/å/g, "a")
     .replace(/ä/g, "a")
     .replace(/ö/g, "o")
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-  return s || "company";
+    .replace(/(^-|-$)/g, "");
 }
 
-async function findAvailableSlug(
-  supabase: any,
-  base: string
-): Promise<string> {
-  // Try base first, then base-2, base-3, etc.
-  // NOTE: With RLS, your select should still work (it’ll only see allowed rows).
-  // Even if it can't see other companies, slug collisions are rare; DB unique constraint is best.
-  // If you have a UNIQUE index on companies.slug this is safe (we also handle insert error).
-  let candidate = base.slice(0, 48);
-  if (!candidate) candidate = "company";
+async function requireUser() {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.getUser();
 
-  for (let i = 0; i < 20; i++) {
-    const slug = i === 0 ? candidate : `${candidate}-${i + 1}`;
+  const user = data?.user ?? null;
+  if (error || !user) redirect("/login");
 
-    const { data, error } = await supabase
-      .from("companies")
-      .select("id")
-      .eq("slug", slug)
-      .maybeSingle();
+  return { supabase, user };
+}
 
-    // If RLS blocks this read, data may be null; we still return the slug and rely on insert error.
-    if (error) {
-      return slug;
-    }
-    if (!data) {
-      return slug;
-    }
+/**
+ * List companies for the signed-in user.
+ * Uses: public.company_memberships (company_id, user_id, role, created_at)
+ * and joins to: public.companies
+ */
+export async function listMyCompanies(): Promise<Company[]> {
+  const { supabase, user } = await requireUser();
+
+  // Join company_memberships -> companies
+  const { data, error } = await supabase
+    .from("company_memberships")
+    .select(
+      `
+      company:companies (
+        id,
+        name,
+        slug,
+        base_currency,
+        created_at
+      )
+    `
+    )
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    // Fail loudly in logs, but keep message clean
+    console.error("listMyCompanies error:", error);
+    throw new Error("Could not load companies.");
   }
 
-  // Fallback random suffix
-  return `${candidate}-${Math.random().toString(36).slice(2, 8)}`;
+  const companies = (data ?? [])
+    .map((row: any) => row.company as Company | null)
+    .filter(Boolean) as Company[];
+
+  return companies;
 }
 
 /**
- * List companies user is a member of.
- * Shape: [{ companies: {...}, role: "owner", created_at: ...}, ...]
+ * Require access to a company by slug for current user.
+ * Returns the company if membership exists.
  */
-export async function listMyCompanies(): Promise<
-  Array<Company & { role?: string | null }>
-> {
-  const { supabase, userId } = await requireUser();
+export async function requireCompanyBySlugForUser(companySlug: string): Promise<Company> {
+  const { supabase, user } = await requireUser();
 
-  const { data, error } = await supabase
-    .from("company_members")
-    .select(
-      `
-      role,
-      companies (
-        id,
-        name,
-        slug,
-        base_currency,
-        created_at
-      )
-    `
-    )
-    .eq("user_id", userId);
-
-  if (error) throw error;
-
-  const rows = (data ?? [])
-    .map((row: any) => {
-      const c = row?.companies;
-      if (!c) return null;
-      return {
-        id: c.id as string,
-        name: c.name as string,
-        slug: c.slug as string,
-        base_currency: (c.base_currency ?? null) as string | null,
-        created_at: (c.created_at ?? null) as string | null,
-        role: (row.role ?? null) as string | null,
-      };
-    })
-    .filter(Boolean) as Array<Company & { role?: string | null }>;
-
-  // Sort by name (nice UX)
-  rows.sort((a, b) => a.name.localeCompare(b.name, "sv"));
-
-  return rows;
-}
-
-/**
- * Require that the current user is a member of company by slug.
- * Returns company + role.
- */
-export async function requireCompanyBySlugForUser(companySlug: string): Promise<
-  Company & { role?: string | null }
-> {
-  const { supabase, userId } = await requireUser();
-
-  const slug = (companySlug ?? "").trim();
-  if (!slug) throw new Error("Missing companySlug");
-
-  const { data, error } = await supabase
-    .from("company_members")
-    .select(
-      `
-      role,
-      companies (
-        id,
-        name,
-        slug,
-        base_currency,
-        created_at
-      )
-    `
-    )
-    .eq("user_id", userId)
-    .eq("companies.slug", slug)
+  // 1) Fetch company by slug
+  const { data: company, error: companyErr } = await supabase
+    .from("companies")
+    .select("id,name,slug,base_currency,created_at")
+    .eq("slug", companySlug)
     .maybeSingle();
 
-  if (error) throw error;
-
-  if (!data?.companies) {
-    throw new Error("Not found or not a member of this company");
+  if (companyErr) {
+    console.error("requireCompanyBySlugForUser company lookup error:", companyErr);
+    throw new Error("Could not load company.");
+  }
+  if (!company) {
+    // slug not found
+    redirect("/companies");
   }
 
-  const c = data.companies as any;
+  // 2) Check membership
+  const { data: membership, error: membershipErr } = await supabase
+    .from("company_memberships")
+    .select("company_id,user_id,role,created_at")
+    .eq("company_id", company.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
 
-  return {
-    id: c.id as string,
-    name: c.name as string,
-    slug: c.slug as string,
-    base_currency: (c.base_currency ?? null) as string | null,
-    created_at: (c.created_at ?? null) as string | null,
-    role: (data.role ?? null) as string | null,
-  };
+  if (membershipErr) {
+    console.error("requireCompanyBySlugForUser membership error:", membershipErr);
+    throw new Error("Could not verify membership.");
+  }
+  if (!membership) {
+    // user not allowed
+    redirect("/companies");
+  }
+
+  return company as Company;
 }
 
 /**
- * Create company + add membership as owner.
- * Input only supports { name } because your companies table does NOT have orgnr.
+ * Create a company and add creator membership.
+ * NOTE: Your companies table does NOT have orgnr (per your screenshot), so we don't store it.
  */
-export async function createCompanyForUser(input: { name: string }) {
-  const { supabase, userId } = await requireUser();
+export async function createCompanyForUser(input: { name: string; base_currency?: string | null }) {
+  const { supabase, user } = await requireUser();
 
-  const name = (input?.name ?? "").trim();
-  if (!name) throw new Error("Name is required");
+  const name = (input.name ?? "").trim();
+  if (!name) throw new Error("Name is required.");
 
-  const base = slugify(name);
-  const slug = await findAvailableSlug(supabase, base);
+  const base_currency = (input.base_currency ?? "SEK")?.toString().trim() || "SEK";
 
-  // 1) create company
+  // Create a unique-ish slug
+  const baseSlug = slugify(name) || "company";
+  const suffix = Math.random().toString(36).slice(2, 7);
+  const slug = `${baseSlug}-${suffix}`;
+
+  // 1) Insert company
   const { data: company, error: companyErr } = await supabase
     .from("companies")
     .insert({
       name,
       slug,
-      base_currency: "SEK",
+      base_currency,
     })
     .select("id,name,slug,base_currency,created_at")
     .single();
 
   if (companyErr) {
-    // If slug collision (unique constraint), try again with random suffix once
-    const msg = String((companyErr as any)?.message ?? "");
-    if (msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("unique")) {
-      const slug2 = `${base.slice(0, 42)}-${Math.random().toString(36).slice(2, 8)}`;
-      const { data: company2, error: companyErr2 } = await supabase
-        .from("companies")
-        .insert({
-          name,
-          slug: slug2,
-          base_currency: "SEK",
-        })
-        .select("id,name,slug,base_currency,created_at")
-        .single();
-      if (companyErr2) throw companyErr2;
-
-      // membership
-      const { error: memberErr2 } = await supabase.from("company_members").insert({
-        company_id: company2.id,
-        user_id: userId,
-        role: "owner",
-      });
-      if (memberErr2) throw memberErr2;
-
-      return company2;
-    }
-
-    throw companyErr;
+    console.error("createCompanyForUser insert company error:", companyErr);
+    throw new Error("Could not create company.");
   }
 
-  // 2) add membership (owner)
-  const { error: memberErr } = await supabase.from("company_members").insert({
+  // 2) Insert membership
+  const { error: membershipErr } = await supabase.from("company_memberships").insert({
     company_id: company.id,
-    user_id: userId,
+    user_id: user.id,
     role: "owner",
   });
 
-  if (memberErr) throw memberErr;
+  if (membershipErr) {
+    console.error("createCompanyForUser insert membership error:", membershipErr);
+    // optional: best-effort cleanup could be added, but keep it simple now
+    throw new Error("Company created, but membership failed.");
+  }
 
   return company as Company;
 }
