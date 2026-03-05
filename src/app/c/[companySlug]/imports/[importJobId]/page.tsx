@@ -3,7 +3,7 @@ import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo
 
 type Params = { companySlug: string; importJobId: string };
 
-export default async function Page({ params }: { params: Promise<Params> }) {
+export default async function Page({ params }: { params: Params }) {
   const { companySlug, importJobId } = await params;
 
   // ✅ detta finns enligt ditt felmeddelande

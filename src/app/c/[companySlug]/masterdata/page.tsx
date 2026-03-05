@@ -5,7 +5,7 @@ import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo
 export default async function MasterdataPage({
   params,
 }: {
-  params: Promise<{ companySlug: string }>;
+  params: { companySlug: string };
 }) {
   const { companySlug } = await params;
 

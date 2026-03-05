@@ -1,3 +1,5 @@
+"use client";
+
 // src/app/login/page.tsx
 import LoginClient from "./ui/LoginClient";
 

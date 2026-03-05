@@ -1,63 +1,43 @@
 import "server-only";
-import { NextResponse } from "next/server";
-import { notFound } from "next/navigation";
+
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 import { listImportRows } from "@/features/imports/imports.repo";
 
-type Ctx = {
-  params: Promise<{
-    companySlug: string;
-    importJobId: string;
-  }>;
-};
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, ctx: Ctx) {
-  const { companySlug, importJobId } = await ctx.params;
+export async function GET(
+  req: Request,
+  context: any
+): Promise<Response> {
+  const companySlug = String(context?.params?.companySlug ?? "");
+  const importJobId = String(context?.params?.importJobId ?? "");
 
-  // 1️⃣ Membership
-  const companyData = await requireCompanyBySlugForUser(companySlug);
-  if (!companyData?.id) notFound();
+  if (!companySlug || !importJobId) {
+    return new Response(JSON.stringify({ ok: false, error: "Missing params" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
 
-  // 2️⃣ Fetch invalid rows
-  const rows = await listImportRowsByJobAdmin({
-    companyId: companyData.id,
-    importJobId,
-    onlyInvalid: true,
-    limit: 10000,
-    offset: 0,
-  });
+  await requireCompanyBySlugForUser(companySlug);
 
-  // 3️⃣ Build CSV
-  const escape = (v: unknown) => {
-    if (v == null) return "";
-    const s = typeof v === "string" ? v : JSON.stringify(v);
-    const needsQuotes = /[",\n\r]/.test(s);
-    const escaped = s.replace(/"/g, '""');
-    return needsQuotes ? `"${escaped}"` : escaped;
-  };
+  const url = new URL(req.url);
+  const page = Number(url.searchParams.get("page") ?? "1");
+  const pageSize = Number(url.searchParams.get("pageSize") ?? "50");
 
-  const header = ["row_number", "error", "warnings", "raw"].join(",");
+  const res = await listImportRows(importJobId, page, pageSize);
+  const rows = (res.rows ?? []).filter((r: any) => r.error != null);
 
-  const lines = [
-    header,
-    ...rows.map((r: any) =>
-      [
-        escape(r.row_number),
-        escape(r.error),
-        escape(r.warnings),
-        escape(r.raw),
-      ].join(",")
-    ),
-  ];
-
-  const csv = lines.join("\n");
-
-  return new NextResponse(csv, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="invalid-${importJobId}.csv"`,
-      "Cache-Control": "no-store",
-    },
-  });
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      importId: importJobId,
+      page: res.page,
+      pageSize: res.pageSize,
+      hasNext: typeof res.count === "number" ? res.page * res.pageSize < res.count : rows.length === res.pageSize,
+      rows,
+    }),
+    { status: 200, headers: { "content-type": "application/json" } }
+  );
 }

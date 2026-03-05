@@ -19,7 +19,7 @@ export default async function Page({
     .eq("user_id", me.user.id)
     .limit(1);
 
-  const existingSlug = memberships?.[0]?.companies?.slug as string | undefined;
+    const existingSlug = (memberships?.[0]?.companies?.[0]?.slug ?? undefined) as string | undefined;
   if (existingSlug) redirect(`/c/${existingSlug}/dashboard`);
 
   return (

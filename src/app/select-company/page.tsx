@@ -1,64 +1,126 @@
-// src/app/select-company/page.tsx
+import "server-only";
+
 import Link from "next/link";
-import { listMyCompanies } from "@/features/companies/companies.repo";
-import CreateCompanyClient from "./ui/CreateCompanyClient";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+type MyCompany = {
+  id: string;
+  name: string;
+  slug: string;
+  role?: string | null;
+};
+
 export default async function SelectCompanyPage() {
-  const companies = await listMyCompanies();
+  const supabase = await createClient();
 
-  return (
-    <div className="min-h-[calc(100vh-0px)] p-6 bg-slate-50">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight">Välj bolag</h1>
-              <p className="text-sm text-slate-600">
-                Du är inloggad. Välj vilket bolag du vill arbeta i. Du kan byta bolag när som helst.
-              </p>
-            </div>
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
 
-            <CreateCompanyClient />
+  if (userErr) throw new Error(userErr.message);
+  if (!user) redirect("/login");
+
+  /**
+   * Försök läsa användarens companies via membership-tabellen.
+   * Anpassa tabellnamn/kolumner om din schema skiljer sig.
+   *
+   * Antagande:
+   * - company_memberships: user_id, company_id, role
+   * - companies: id, name, slug
+   */
+  const { data, error } = await supabase
+    .from("company_memberships")
+    .select(
+      `
+      role,
+      companies:companies (
+        id,
+        name,
+        slug
+      )
+    `
+    )
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+
+  const companies: MyCompany[] =
+    (data ?? [])
+      .map((m: any) => {
+        const c = Array.isArray(m.companies) ? m.companies[0] : m.companies;
+        if (!c?.id) return null;
+        return {
+          id: String(c.id),
+          name: String(c.name ?? ""),
+          slug: String(c.slug ?? ""),
+          role: m.role ?? null,
+        } satisfies MyCompany;
+      })
+      .filter(Boolean) as MyCompany[];
+
+  if (companies.length === 0) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="max-w-md w-full rounded-2xl border border-slate-200 bg-white p-6 space-y-3">
+          <h1 className="text-xl font-semibold">No companies</h1>
+          <p className="text-sm text-slate-600">
+            You don’t seem to have access to any companies yet.
+          </p>
+          <div className="text-sm">
+            <Link className="underline" href="/onboarding">
+              Go to onboarding
+            </Link>
           </div>
         </div>
+      </div>
+    );
+  }
 
-        <div className="rounded-2xl border bg-white overflow-hidden shadow-sm">
-          <div className="flex items-center justify-between px-5 py-3 border-b">
-            <div className="text-sm font-medium">Dina bolag</div>
-            <div className="text-xs text-slate-500">{companies.length} st</div>
-          </div>
+  // Om bara en company: skicka direkt
+  if (companies.length === 1) {
+    redirect(`/c/${companies[0].slug}/dashboard`);
+  }
 
-          {companies.length === 0 ? (
-            <div className="p-8 text-sm text-slate-600">
-              Du har inga bolag ännu. Skapa ett nytt bolag uppe till höger.
-            </div>
-          ) : (
-            <div className="divide-y">
-              {companies.map((c) => (
-                <div key={c.id} className="flex items-center justify-between gap-4 p-5 hover:bg-slate-50">
-                  <div className="space-y-0.5">
-                    <div className="text-sm font-medium">{c.name}</div>
-                    <div className="text-xs text-slate-500">
-                      {c.orgnr ? `Org.nr ${c.orgnr} • ` : ""}
-                      slug: {c.slug} • role: {c.role ?? "member"}
-                    </div>
+  // Annars välj
+  return (
+    <div className="min-h-[60vh] p-6">
+      <div className="mx-auto max-w-2xl space-y-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Select company</h1>
+          <p className="text-sm text-slate-600">
+            Choose which company you want to open.
+          </p>
+        </div>
+
+        <div className="grid gap-3">
+          {companies.map((c) => (
+            <Link
+              key={c.id}
+              href={`/c/${c.slug}/dashboard`}
+              className="block rounded-2xl border border-slate-200 bg-white p-4 hover:border-slate-300 hover:bg-slate-50 transition"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{c.name}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    • slug: <span className="font-mono">{c.slug}</span> • role:{" "}
+                    <span className="font-mono">{c.role ?? "member"}</span>
                   </div>
-                  <Link
-                    href={`/c/${c.slug}/statements`}
-                    className="inline-flex h-9 items-center rounded-md bg-slate-900 px-4 text-xs font-medium text-white"
-                  >
-                    Öppna
-                  </Link>
                 </div>
-              ))}
-            </div>
-          )}
+                <div className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white">
+                  Open
+                </div>
+              </div>
+            </Link>
+          ))}
         </div>
 
         <div className="text-xs text-slate-500">
-          Tips: När du står i ett bolag syns bolagsnamnet alltid i topbaren. Byt bolag där.
+          (You can change company later via the company switcher.)
         </div>
       </div>
     </div>

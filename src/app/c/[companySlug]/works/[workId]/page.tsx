@@ -6,7 +6,7 @@ import { deleteWorkAction, updateWorkTitleAction } from "@/features/works/works.
 export default async function WorkDetailPage({
   params,
 }: {
-  params: Promise<{ companySlug: string; workId: string }>;
+  params: { companySlug: string; workId: string };
 }) {
   const { companySlug, workId } = await params;
 

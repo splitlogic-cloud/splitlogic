@@ -14,9 +14,9 @@ function badge(action: string) {
 }
 
 export default async function AuditPage(props: {
-  params: Promise<{ companySlug: string }> | { companySlug: string };
+  params: { companySlug: string } | { companySlug: string };
 }) {
-  const params = await Promise.resolve(props.params);
+  const params = props.params;
   const companySlug = params.companySlug;
 
   const supabase = await createSupabaseServerClient();

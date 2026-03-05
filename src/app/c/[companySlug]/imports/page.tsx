@@ -4,7 +4,7 @@ import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo
 
 type Params = { companySlug: string };
 
-export default async function Page({ params }: { params: Promise<Params> | Params }) {
+export default async function Page({ params }: { params: Params | Params }) {
   const { companySlug } = await Promise.resolve(params);
   const supabase = await createClient();
   const company = await requireCompanyBySlugForUser(companySlug);

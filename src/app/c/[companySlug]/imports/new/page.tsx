@@ -3,7 +3,7 @@ import UploadImportsClient from "./upload.client";
 export default async function Page({
   params,
 }: {
-  params: Promise<{ companySlug: string }>;
+  params: { companySlug: string };
 }) {
   const { companySlug } = await params;
 

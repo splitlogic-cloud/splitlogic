@@ -6,7 +6,7 @@ type Params = { companySlug: string };
 export default async function Page({
   params,
 }: {
-  params: Promise<Params> | Params;
+  params: Params | Params;
 }) {
   const { companySlug } = await Promise.resolve(params);
 

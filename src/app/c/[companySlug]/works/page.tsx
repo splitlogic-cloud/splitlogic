@@ -6,11 +6,11 @@ import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo
 export const dynamic = "force-dynamic";
 
 export default async function WorksPage(props: {
-  params: Promise<{ companySlug: string }> | { companySlug: string };
-  searchParams?: Promise<{ q?: string }> | { q?: string };
+  params: { companySlug: string } | { companySlug: string };
+  searchParams?: { q?: string } | { q?: string };
 }) {
-  const params = await Promise.resolve(props.params);
-  const searchParams = await Promise.resolve(props.searchParams ?? {});
+  const params = props.params;
+  const searchParams = (props.searchParams ?? {});
   const companySlug = params.companySlug;
 
   const supabase = await createSupabaseServerClient();

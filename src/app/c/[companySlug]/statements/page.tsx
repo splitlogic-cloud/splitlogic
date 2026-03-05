@@ -16,11 +16,11 @@ type Row = {
 };
 
 export default async function StatementsPage(props: {
-  params: Promise<{ companySlug: string }> | { companySlug: string };
-  searchParams?: Promise<{ status?: string; q?: string }> | { status?: string; q?: string };
+  params: { companySlug: string } | { companySlug: string };
+  searchParams?: { status?: string; q?: string } | { status?: string; q?: string };
 }) {
-  const params = await Promise.resolve(props.params);
-  const searchParams = await Promise.resolve(props.searchParams ?? {});
+  const params = props.params;
+  const searchParams = (props.searchParams ?? {});
   const companySlug = params.companySlug;
 
   const supabase = await createSupabaseServerClient();

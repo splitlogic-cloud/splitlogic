@@ -2,48 +2,47 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { deleteLatestImportAction } from "@/features/imports/imports.actions";
+import { deleteImportAction } from "@/features/imports/imports.actions";
 
-export default function DeleteImportButton({ companyId, importId }: { companyId: string; importId: string }) {
+export default function DeleteImportButton({
+  companyId,
+  importId,
+}: {
+  companyId: string;
+  importId: string;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
-      <button
-        disabled={busy}
-        onClick={async () => {
-          setErr(null);
-          const ok = confirm(
-            "Delete this import?\n\nRule: only the latest import can be deleted.\nThis will remove DB rows + storage file."
-          );
-          if (!ok) return;
+  async function onDelete() {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
 
-          setBusy(true);
-          try {
-            await deleteLatestImportAction(companyId, importId);
-            router.push(`/c/${companyId}/imports`);
-            router.refresh();
-          } catch (e: any) {
-            setErr(String(e?.message ?? e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-        style={{
-          background: "crimson",
-          color: "white",
-          padding: "8px 12px",
-          borderRadius: 8,
-          border: "none",
-          cursor: "pointer",
-        }}
+    try {
+      await deleteImportAction({ companyId, importId }); // ✅ one argument
+      router.push(`/c/${companyId}/imports`);
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={onDelete}
+        disabled={busy}
+        className="inline-flex items-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
       >
         {busy ? "Deleting…" : "Delete import"}
       </button>
 
-      {err && <div style={{ color: "crimson", maxWidth: 420 }}>{err}</div>}
+      {err ? <div className="text-sm text-rose-600">{err}</div> : null}
     </div>
   );
 }

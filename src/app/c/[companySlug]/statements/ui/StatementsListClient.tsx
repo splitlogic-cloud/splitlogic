@@ -1,37 +1,62 @@
 "use client";
 
-// src/app/c/[companySlug]/statements/StatementsListClient.tsx
-import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { StatementListRow } from "@/features/statements/statements.repo";
+import Link from "next/link";
 
-function formatMoney(v: number | null | undefined, currency?: string | null) {
-  const n = typeof v === "number" ? v : 0;
-  const cur = currency || "";
-  return `${n.toFixed(2)} ${cur}`.trim();
+type AnyRow = Record<string, any>;
+
+export type StatementListRow = {
+  id: string;
+  company_id?: string | null;
+  party_id?: string | null;
+
+  // visning
+  party_name?: string | null;
+  currency?: string | null;
+  earned_net?: number | string | null;
+
+  // status
+  status?: string | null;
+  sent_at?: string | null;
+  paid_at?: string | null;
+  voided_at?: string | null;
+
+  created_at?: string | null;
+};
+
+function toRow(r: AnyRow): StatementListRow {
+  return {
+    id: String(r.id),
+    company_id: r.company_id ?? null,
+    party_id: r.party_id ?? null,
+
+    party_name: r.party_name ?? r.name ?? null,
+    currency: r.currency ?? null,
+    earned_net: r.earned_net ?? r.amount_net ?? r.net_payable ?? null,
+
+    status: r.status ?? null,
+    sent_at: r.sent_at ?? null,
+    paid_at: r.paid_at ?? null,
+    voided_at: r.voided_at ?? null,
+
+    created_at: r.created_at ?? null,
+  };
 }
 
-function periodLabel(r: StatementListRow) {
-  if (r.period) return r.period;
-  if (r.period_start || r.period_end) return `${r.period_start ?? "?"} → ${r.period_end ?? "?"}`;
-  return "—";
+function formatMoney(v: any, currency?: string | null) {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : 0;
+  const cur = currency ?? "";
+  // enkel och stabil
+  return `${cur} ${Math.round(n).toLocaleString("sv-SE")}`.trim();
 }
 
-function StatusBadge({ status }: { status?: string | null }) {
+function badge(status?: string | null) {
   const s = (status ?? "draft").toLowerCase();
-
-  const base = "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium border";
-  const cls =
-    s === "paid"
-      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-      : s === "sent"
-      ? "bg-sky-50 text-sky-700 border-sky-200"
-      : s === "void"
-      ? "bg-rose-50 text-rose-700 border-rose-200"
-      : "bg-slate-50 text-slate-700 border-slate-200";
-
-  return <span className={`${base} ${cls}`}>{s}</span>;
+  const base = "inline-flex items-center rounded-full px-2 py-1 text-xs font-medium";
+  if (s === "paid") return `${base} bg-emerald-100 text-emerald-800`;
+  if (s === "sent") return `${base} bg-sky-100 text-sky-800`;
+  if (s === "void") return `${base} bg-slate-200 text-slate-700`;
+  return `${base} bg-amber-100 text-amber-800`; // draft
 }
 
 export default function StatementsListClient({
@@ -41,136 +66,105 @@ export default function StatementsListClient({
   initialQ,
 }: {
   companySlug: string;
-  initialRows: StatementListRow[];
-  initialStatus: string;
-  initialQ: string;
+  initialRows: AnyRow[]; // ✅ här är fixen
+  initialStatus?: string;
+  initialQ?: string;
 }) {
-  const router = useRouter();
-  const [status, setStatus] = useState(initialStatus || "");
-  const [q, setQ] = useState(initialQ || "");
+  const [status, setStatus] = useState(initialStatus ?? "");
+  const [q, setQ] = useState(initialQ ?? "");
 
-  const rows = useMemo(() => {
+  const rows = useMemo(() => (initialRows ?? []).map(toRow), [initialRows]);
+
+  const filtered = useMemo(() => {
+    const s = status.trim().toLowerCase();
     const qq = q.trim().toLowerCase();
-    if (!qq) return initialRows;
-    return initialRows.filter((r) => (r.party_name ?? "").toLowerCase().includes(qq));
-  }, [initialRows, q]);
 
-  function applyFilters() {
-    const sp = new URLSearchParams();
-    if (status) sp.set("status", status);
-    if (q.trim()) sp.set("q", q.trim());
-    router.push(`/c/${companySlug}/statements?${sp.toString()}`);
-    router.refresh();
-  }
-
-  function clearFilters() {
-    setStatus("");
-    setQ("");
-    router.push(`/c/${companySlug}/statements`);
-    router.refresh();
-  }
+    return rows.filter((r) => {
+      const okStatus = !s || (r.status ?? "draft").toLowerCase() === s;
+      const okQ =
+        !qq ||
+        (r.party_name ?? "").toLowerCase().includes(qq) ||
+        (r.id ?? "").toLowerCase().includes(qq);
+      return okStatus && okQ;
+    });
+  }, [rows, status, q]);
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-500">Status</label>
+      {/* Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Status</div>
             <select
-              className="h-10 rounded-md border px-3 text-sm"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-sky-200"
             >
-              <option value="">All</option>
-              <option value="draft">draft</option>
-              <option value="sent">sent</option>
-              <option value="paid">paid</option>
-              <option value="void">void</option>
+              <option value="">Alla</option>
+              <option value="draft">Draft</option>
+              <option value="sent">Sent</option>
+              <option value="paid">Paid</option>
+              <option value="void">Void</option>
             </select>
           </div>
 
-          <div className="flex flex-1 flex-col gap-1 min-w-[220px]">
-            <label className="text-xs text-slate-500">Sök part</label>
+          <div className="flex-1 min-w-[220px]">
+            <div className="text-xs text-slate-500 mb-1">Sök</div>
             <input
-              className="h-10 rounded-md border px-3 text-sm"
-              placeholder="t.ex. Artist AB"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              placeholder="Sök part eller statement-id..."
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-sky-200"
             />
           </div>
+        </div>
 
-          <button
-            onClick={applyFilters}
-            className="h-10 rounded-md bg-slate-900 px-4 text-sm font-medium text-white"
-          >
-            Apply
-          </button>
-          <button onClick={clearFilters} className="h-10 rounded-md border px-4 text-sm font-medium">
-            Clear
-          </button>
+        <div className="text-xs text-slate-500">
+          {filtered.length} st
         </div>
       </div>
 
-      <div className="rounded-xl border bg-white overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="text-sm font-medium">Statements</div>
-          <div className="text-xs text-slate-500">{rows.length} st</div>
+      {/* Table */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div className="font-semibold tracking-tight">Statements</div>
+          <div className="text-xs text-slate-500">Revisionssäkert · låsbart</div>
         </div>
 
-        {rows.length === 0 ? (
-          <div className="p-8 text-sm text-slate-600">
-            Inga statements ännu. Skapa via din lifecycle/RPC och refresh sidan.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-2 text-left font-medium">Period</th>
-                  <th className="px-4 py-2 text-left font-medium">Part</th>
-                  <th className="px-4 py-2 text-right font-medium">Gross</th>
-                  <th className="px-4 py-2 text-right font-medium">Recoup</th>
-                  <th className="px-4 py-2 text-right font-medium">Payable</th>
-                  <th className="px-4 py-2 text-left font-medium">Status</th>
-                  <th className="px-4 py-2 text-left font-medium">Locked</th>
-                  <th className="px-4 py-2 text-right font-medium">Open</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {rows.map((r) => {
-                  const locked = Boolean(r.allocation_locked_at || r.recoup_locked_at);
-                  return (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-2 whitespace-nowrap">{periodLabel(r)}</td>
-                      <td className="px-4 py-2">{r.party_name ?? r.party_id ?? "—"}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">{formatMoney(r.gross_amount, r.currency)}</td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {formatMoney(r.recouped_amount, r.currency)}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums">
-                        {formatMoney(r.payable_amount, r.currency)}
-                      </td>
-                      <td className="px-4 py-2">
-                        <StatusBadge status={r.status ?? "draft"} />
-                      </td>
-                      <td className="px-4 py-2">
-                        {locked ? <span title="Locked runs">🔒</span> : <span className="text-slate-400">—</span>}
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        <Link
-                          href={`/c/${companySlug}/statements/${r.id}`}
-                          className="inline-flex h-9 items-center rounded-md border px-3 text-xs font-medium"
-                        >
-                          Open
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <div className="divide-y divide-slate-100">
+          {filtered.map((r) => (
+            <Link
+              key={r.id}
+              href={`/c/${companySlug}/statements/${r.id}`}
+              className="block hover:bg-slate-50"
+            >
+              <div className="px-4 py-3 flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="font-medium truncate">
+                    {r.party_name ?? "Unknown party"}
+                  </div>
+                  <div className="text-xs text-slate-500 truncate">
+                    {r.id}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-semibold tabular-nums">
+                    {formatMoney(r.earned_net, r.currency)}
+                  </div>
+                  <span className={badge(r.status)}>{(r.status ?? "draft").toUpperCase()}</span>
+                </div>
+              </div>
+            </Link>
+          ))}
+
+          {filtered.length === 0 && (
+            <div className="px-4 py-8 text-sm text-slate-500">
+              Inga statements matchar filtret.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
