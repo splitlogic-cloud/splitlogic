@@ -1,18 +1,34 @@
 // src/lib/supabase/client.ts
-import "client-only";
-import { createBrowserClient } from "@supabase/ssr";
+"use client";
 
-export function createClient() {
+import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+let browserClient: SupabaseClient | null = null;
+
+/**
+ * Browser/client-side Supabase client (singleton).
+ * - Safe to use in Client Components
+ * - Uses NEXT_PUBLIC_* env vars
+ */
+export function createClient(): SupabaseClient {
+  if (browserClient) return browserClient;
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !anon) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    throw new Error(
+      "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY"
+    );
   }
 
-  return createBrowserClient(url, anon);
+  browserClient = createBrowserClient(url, anon);
+  return browserClient;
 }
 
-
-// Backwards compatible alias (so older imports keep working)
-export const createSupabaseServerClient = createClient;
+/**
+ * Backwards-compatible export name used across the app.
+ * Your code imports: createSupabaseBrowserClient
+ */
+export const createSupabaseBrowserClient = createClient;
