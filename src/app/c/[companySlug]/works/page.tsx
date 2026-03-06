@@ -1,4 +1,5 @@
 import "server-only";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -32,14 +33,25 @@ export default async function WorksPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Works</h1>
-        <p className="text-sm text-slate-500">
-          Catalog works for company: {companySlug}
-        </p>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Works</h1>
+          <p className="text-sm text-slate-500">
+            Catalog works for company: {companySlug}
+          </p>
+        </div>
+
+        <Link
+          href={`/c/${companySlug}/works/new`}
+          className="inline-flex items-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          Add work
+        </Link>
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+
         <div className="grid grid-cols-[1.5fr_1fr_1fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
           <div>Title</div>
           <div>External ID</div>
@@ -47,7 +59,16 @@ export default async function WorksPage({
         </div>
 
         {!works || works.length === 0 ? (
-          <div className="px-6 py-8 text-sm text-slate-500">No works yet.</div>
+          <div className="flex flex-col items-center gap-4 px-6 py-12 text-sm text-slate-500">
+            <div>No works yet.</div>
+
+            <Link
+              href={`/c/${companySlug}/works/new`}
+              className="rounded-xl border px-4 py-2 text-sm font-medium hover:bg-slate-50"
+            >
+              Create first work
+            </Link>
+          </div>
         ) : (
           works.map((work) => (
             <div
@@ -57,9 +78,11 @@ export default async function WorksPage({
               <div className="font-medium text-slate-900">
                 {work.title || "Untitled work"}
               </div>
+
               <div className="text-sm text-slate-600">
                 {work.external_id || "—"}
               </div>
+
               <div className="text-sm text-slate-600">
                 {work.created_at
                   ? new Date(work.created_at).toISOString().slice(0, 10)
