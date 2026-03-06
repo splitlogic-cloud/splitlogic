@@ -133,7 +133,7 @@ export default function LandingPage() {
             />
             <Card
               title="Förskott & recoupment"
-              body="Automatisk avräkning mot saldo med full historik: vad är recoupat, vad återstår, och varför."
+              body="Automatisk avräkning mot saldo med full historik: vad är   recoupat, vad återstår, och varför."
             />
             <Card
               title="Full transparens"

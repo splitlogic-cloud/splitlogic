@@ -1,7 +1,8 @@
 import "server-only";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import StatementsListClient from "./StatementsListClient";
-import { listStatementsByCompany } from "@/features/statements/statements.repo";
+import { listStatementsByCompany, generateStatement } from "@/features/statements/statements.repo";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,33 @@ export default async function StatementsPage({
 
   if (!company) {
     throw new Error(`Company not found for slug: ${companySlug}`);
+  }
+
+  async function createStatement(formData: FormData) {
+    "use server";
+
+    const periodStart = String(formData.get("period_start") || "").trim();
+    const periodEnd = String(formData.get("period_end") || "").trim();
+    const amountFieldRaw = String(formData.get("amount_field") || "net").trim();
+
+    const amountField = amountFieldRaw === "gross" ? "gross" : "net";
+
+    if (!periodStart) {
+      throw new Error("Period start is required");
+    }
+
+    if (!periodEnd) {
+      throw new Error("Period end is required");
+    }
+
+    await generateStatement({
+      companyId: company.id,
+      periodStart,
+      periodEnd,
+      amountField,
+    });
+
+    redirect(`/c/${companySlug}/statements`);
   }
 
   const [{ data: parties, error: partiesError }, statements] = await Promise.all([
@@ -78,10 +106,55 @@ export default async function StatementsPage({
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-2 text-lg font-semibold">Create statement</div>
-        <p className="text-sm text-slate-500">
-          Statement generation action is not wired in yet. Existing statements are shown below.
-        </p>
+        <div className="mb-4">
+          <div className="text-lg font-semibold">Create statement</div>
+          <p className="text-sm text-slate-500">
+            Generate statements for a selected period.
+          </p>
+        </div>
+
+        <form action={createStatement} className="grid gap-4 md:grid-cols-4">
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Period start</label>
+            <input
+              type="date"
+              name="period_start"
+              required
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Period end</label>
+            <input
+              type="date"
+              name="period_end"
+              required
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Amount basis</label>
+            <select
+              name="amount_field"
+              defaultValue="net"
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="net">Net</option>
+              <option value="gross">Gross</option>
+            </select>
+          </div>
+
+          <div className="flex items-end">
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+            >
+              Create statement
+            </button>
+          </div>
+        </form>
       </div>
 
       <StatementsListClient companySlug={companySlug} rows={rows} />
