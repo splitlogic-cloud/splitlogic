@@ -1,19 +1,9 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import StatementsListClient from "./StatementsListClient";
+import { listStatementsByCompany } from "@/features/statements/statements.repo";
 
 export const dynamic = "force-dynamic";
-
-type StatementRow = {
-  id: string;
-  party_id: string | null;
-  status: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  amount_basis: string | null;
-  net_amount: number | null;
-  gross_amount: number | null;
-};
 
 type PartyRow = {
   id: string;
@@ -43,25 +33,13 @@ export default async function StatementsPage({
     throw new Error(`Company not found for slug: ${companySlug}`);
   }
 
-  const [{ data: statements, error: statementsError }, { data: parties, error: partiesError }] =
-    await Promise.all([
-      supabase
-        .from("statements")
-        .select(
-          "id,party_id,status,period_start,period_end,amount_basis,net_amount,gross_amount"
-        )
-        .eq("company_id", company.id)
-        .order("created_at", { ascending: false })
-        .limit(200),
-      supabase
-        .from("parties")
-        .select("id,name,external_id")
-        .eq("company_id", company.id),
-    ]);
-
-  if (statementsError) {
-    throw new Error(`load statements failed: ${statementsError.message}`);
-  }
+  const [{ data: parties, error: partiesError }, statements] = await Promise.all([
+    supabase
+      .from("parties")
+      .select("id,name,external_id")
+      .eq("company_id", company.id),
+    listStatementsByCompany(company.id, { limit: 200 }),
+  ]);
 
   if (partiesError) {
     throw new Error(`load parties failed: ${partiesError.message}`);
@@ -72,14 +50,9 @@ export default async function StatementsPage({
     partyMap.set(party.id, party);
   }
 
-  const rows = ((statements ?? []) as StatementRow[]).map((statement) => {
+  const rows = statements.map((statement) => {
     const party = statement.party_id ? partyMap.get(statement.party_id) : null;
     const partyName = party?.name || party?.external_id || "Unknown party";
-
-    const amount =
-      statement.amount_basis === "gross"
-        ? statement.gross_amount
-        : statement.net_amount;
 
     const periodLabel =
       statement.period_start && statement.period_end
@@ -90,7 +63,7 @@ export default async function StatementsPage({
       id: statement.id,
       partyName,
       periodLabel,
-      amountLabel: typeof amount === "number" ? amount.toFixed(2) : "—",
+      amountLabel: "—",
       status: statement.status || "draft",
     };
   });
