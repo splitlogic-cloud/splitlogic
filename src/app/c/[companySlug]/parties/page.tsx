@@ -1,73 +1,75 @@
 import "server-only";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
-type Props = {
-  params: Promise<{ companySlug: string }> | { companySlug: string };
-  searchParams?: Promise<{ q?: string }> | { q?: string };
-};
+export default async function PartiesPage({
+  params,
+}: {
+  params: Promise<{ companySlug: string }>;
+}) {
+  const { companySlug } = await params;
+  const supabase = await createClient();
 
-export default async function PartiesPage(props: Props) {
-  const params = await Promise.resolve(props.params);
-  const searchParams = await Promise.resolve(props.searchParams ?? {});
-  const companySlug = params.companySlug;
+  const { data: company } = await supabase
+    .from("companies")
+    .select("id,name,slug")
+    .eq("slug", companySlug)
+    .maybeSingle();
 
-  if (!companySlug) throw new Error("Missing companySlug param");
+  if (!company) {
+    throw new Error(`Company not found for slug: ${companySlug}`);
+  }
 
-  const supabase = await createSupabaseServerClient();
-  const company = await requireCompanyBySlugForUser(companySlug);
-
-  const q = (searchParams.q ?? "").trim();
-
-  let query = supabase
+  const { data: parties, error } = await supabase
     .from("parties")
-    .select("id, name, created_at")
+    .select("id,name,email,type,external_id,created_at,updated_at")
     .eq("company_id", company.id)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(500);
 
-  if (q) query = query.ilike("name", `%${q}%`);
-
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`load parties failed: ${error.message}`);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Parties</h1>
-          <p className="text-sm text-slate-500">Artists, labels, publishers, etc.</p>
-        </div>
-
-        <form className="flex gap-2" action={`/c/${company.slug}/parties`} method="get">
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Search party…"
-            className="h-9 w-64 rounded-md border px-3 text-sm"
-          />
-          <button className="h-9 rounded-md bg-slate-900 px-3 text-xs font-medium text-white">
-            Search
-          </button>
-        </form>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight">Parties</h1>
+        <p className="text-sm text-slate-500">
+          Rights holders and recipients for company: {companySlug}
+        </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {(data ?? []).map((p: any) => (
-          <div key={p.id} className="rounded-2xl border bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold">{p.name ?? "Unknown"}</div>
-            <div className="mt-1 text-xs text-slate-500 font-mono">{p.id}</div>
-          </div>
-        ))}
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="grid grid-cols-[1.4fr_1.1fr_0.9fr_1fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div>Name</div>
+          <div>Email</div>
+          <div>Type</div>
+          <div>External ID</div>
+        </div>
 
-        {(data ?? []).length === 0 ? (
-          <div className="rounded-2xl border bg-white p-6 text-sm text-slate-600 shadow-sm md:col-span-3">
-            No parties found yet.
-          </div>
-        ) : null}
+        {!parties || parties.length === 0 ? (
+          <div className="px-6 py-8 text-sm text-slate-500">No parties yet.</div>
+        ) : (
+          parties.map((party) => (
+            <div
+              key={party.id}
+              className="grid grid-cols-[1.4fr_1.1fr_0.9fr_1fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+            >
+              <div className="font-medium text-slate-900">
+                {party.name || "Unknown party"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {party.email || "—"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {party.type || "—"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {party.external_id || "—"}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

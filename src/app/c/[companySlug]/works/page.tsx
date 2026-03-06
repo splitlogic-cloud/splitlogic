@@ -1,94 +1,73 @@
 import "server-only";
-import Link from "next/link";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
-type Props = {
-  params: Promise<{ companySlug: string }> | { companySlug: string };
-  searchParams?: Promise<{ q?: string }> | { q?: string };
-};
+export default async function WorksPage({
+  params,
+}: {
+  params: Promise<{ companySlug: string }>;
+}) {
+  const { companySlug } = await params;
+  const supabase = await createClient();
 
-export default async function WorksPage(props: Props) {
-  const params = await Promise.resolve(props.params);
-  const searchParams = await Promise.resolve(props.searchParams ?? {});
-  const companySlug = params.companySlug;
+  const { data: company } = await supabase
+    .from("companies")
+    .select("id,name,slug")
+    .eq("slug", companySlug)
+    .maybeSingle();
 
-  if (!companySlug) throw new Error("Missing companySlug param");
+  if (!company) {
+    throw new Error(`Company not found for slug: ${companySlug}`);
+  }
 
-  const supabase = await createSupabaseServerClient();
-  const company = await requireCompanyBySlugForUser(companySlug);
-
-  const q = (searchParams.q ?? "").trim();
-
-  let query = supabase
+  const { data: works, error } = await supabase
     .from("works")
-    .select("id, title, created_at")
+    .select("id,title,external_id,created_at,updated_at")
     .eq("company_id", company.id)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(500);
 
-  if (q) query = query.ilike("title", `%${q}%`);
-
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`load works failed: ${error.message}`);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Works</h1>
-          <p className="text-sm text-slate-500">Tracks / works in this company</p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight">Works</h1>
+        <p className="text-sm text-slate-500">
+          Catalog works for company: {companySlug}
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="grid grid-cols-[1.5fr_1fr_1fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div>Title</div>
+          <div>External ID</div>
+          <div>Created</div>
         </div>
 
-        <form className="flex gap-2" action={`/c/${company.slug}/works`} method="get">
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Search title…"
-            className="h-9 w-64 rounded-md border px-3 text-sm"
-          />
-          <button className="h-9 rounded-md bg-slate-900 px-3 text-xs font-medium text-white">
-            Search
-          </button>
-        </form>
-      </div>
-
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-xs text-slate-500">
-            <tr>
-              <th className="text-left px-4 py-2 font-medium">Title</th>
-              <th className="text-right px-4 py-2 font-medium">Created</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {(data ?? []).map((w: any) => (
-              <tr key={w.id} className="hover:bg-slate-50">
-                <td className="px-4 py-2 font-medium">{w.title ?? "Untitled"}</td>
-                <td className="px-4 py-2 text-right text-xs text-slate-500">
-                  {w.created_at ? new Date(w.created_at).toLocaleDateString("sv-SE") : "—"}
-                </td>
-              </tr>
-            ))}
-
-            {(data ?? []).length === 0 ? (
-              <tr>
-                <td className="px-4 py-8 text-sm text-slate-600" colSpan={2}>
-                  No works found.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="text-xs text-slate-500">
-        <Link className="hover:underline" href={`/c/${company.slug}/imports`}>
-          Go to Imports
-        </Link>
+        {!works || works.length === 0 ? (
+          <div className="px-6 py-8 text-sm text-slate-500">No works yet.</div>
+        ) : (
+          works.map((work) => (
+            <div
+              key={work.id}
+              className="grid grid-cols-[1.5fr_1fr_1fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+            >
+              <div className="font-medium text-slate-900">
+                {work.title || "Untitled work"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {work.external_id || "—"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {work.created_at
+                  ? new Date(work.created_at).toISOString().slice(0, 10)
+                  : "—"}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

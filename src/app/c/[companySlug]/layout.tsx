@@ -1,10 +1,5 @@
 import "server-only";
-
-import Link from "next/link";
-import { redirect } from "next/navigation";
-import { requireCompanyBySlugForUser, listMyCompanies } from "@/features/companies/companies.repo";
-
-export const dynamic = "force-dynamic";
+import CompanySidebarNav from "@/components/company-sidebar-nav";
 
 export default async function CompanyLayout({
   children,
@@ -13,112 +8,72 @@ export default async function CompanyLayout({
   children: React.ReactNode;
   params: Promise<{ companySlug: string }>;
 }) {
-  const { companySlug } = await params; // ✅ Next 16: params is Promise
-
-  const active = await requireCompanyBySlugForUser(companySlug);
-  const companies = await listMyCompanies();
-
-  // safety: if slug exists but user no longer has membership, bounce to select-company
-  if (!active?.id) redirect("/select-company");
+  const { companySlug } = await params;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="flex">
-        {/* Sidebar */}
-        <aside className="hidden md:flex md:w-72 md:flex-col md:fixed md:inset-y-0 bg-slate-950 text-slate-100">
-          <div className="h-16 flex items-center gap-3 px-5 border-b border-slate-800">
-            <div className="h-9 w-9 rounded-xl bg-sky-500/20 flex items-center justify-center">
-              <div className="h-5 w-5 rounded bg-sky-500" />
-            </div>
-            <div className="leading-tight">
-              <div className="font-semibold tracking-tight">SplitLogic</div>
-              <div className="text-xs text-slate-400">ROYALTY ENGINE</div>
-            </div>
-          </div>
-
-          {/* Company switch */}
-          <div className="px-4 py-4">
-            <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-3">
-              <div className="text-xs text-slate-400">Active company</div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{active.name ?? active.slug}</div>
-                  <div className="text-xs text-slate-400 truncate">{active.slug}</div>
+      <div className="grid min-h-screen grid-cols-[280px_1fr]">
+        <aside className="relative border-r border-white/10 bg-[linear-gradient(180deg,#041127_0%,#020817_100%)] text-white">
+          <div className="flex h-full flex-col">
+            <div className="border-b border-white/10 px-6 py-6">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-500/15 ring-1 ring-cyan-400/20">
+                  <div className="h-6 w-6 rounded-lg bg-cyan-400 shadow-[0_0_24px_rgba(34,211,238,0.35)]" />
                 </div>
 
-                {/* Simple dropdown via <details> */}
-                <details className="relative">
-                  <summary className="cursor-pointer select-none text-xs px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700">
-                    Switch
-                  </summary>
-                  <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-800 bg-slate-950 shadow-lg overflow-hidden z-50">
-                    <div className="px-3 py-2 text-xs text-slate-400 border-b border-slate-800">
-                      Your companies
+                <div>
+                  <div className="text-[22px] font-semibold tracking-tight">
+                    SplitLogic
+                  </div>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-cyan-200/70">
+                    Royalty Engine
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 pt-5">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+                  Active company
+                </div>
+
+                <div className="mt-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[19px] font-semibold tracking-tight text-white">
+                      {companySlug}
                     </div>
-                    <div className="max-h-64 overflow-auto">
-                      {companies.map((c) => (
-                        <Link
-                          key={c.id}
-                          href={`/c/${c.slug}/dashboard`}
-                          className={`block px-3 py-2 text-sm hover:bg-slate-900 ${
-                            c.slug === active.slug ? "bg-slate-900" : ""
-                          }`}
-                        >
-                          <div className="font-medium truncate">{c.name ?? c.slug}</div>
-                          <div className="text-xs text-slate-400 truncate">{c.slug}</div>
-                        </Link>
-                      ))}
-                    </div>
-                    <div className="border-t border-slate-800">
-                      <Link href="/select-company" className="block px-3 py-2 text-sm hover:bg-slate-900">
-                        Manage companies →
-                      </Link>
+                    <div className="mt-1 truncate text-sm text-slate-400">
+                      SplitLogic workspace
                     </div>
                   </div>
-                </details>
+
+                  <button
+                    type="button"
+                    className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/15"
+                  >
+                    <span className="text-xs">▶</span>
+                    Switch
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <CompanySidebarNav companySlug={companySlug} />
+
+            <div className="mt-auto px-5 pb-5">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-400">
+                <div className="font-medium text-slate-200">System status</div>
+                <div className="mt-1">App shell active</div>
               </div>
             </div>
           </div>
-
-          {/* Nav */}
-          <nav className="px-3 py-2 text-sm">
-            <div className="px-3 py-2 text-xs uppercase tracking-wider text-slate-500">Navigation</div>
-            <NavLink href={`/c/${active.slug}/dashboard`} label="Dashboard" />
-            <NavLink href={`/c/${active.slug}/imports`} label="Imports" />
-            <NavLink href={`/c/${active.slug}/works`} label="Works" />
-            <NavLink href={`/c/${active.slug}/parties`} label="Parties" />
-            <NavLink href={`/c/${active.slug}/statements`} label="Statements" />
-            <NavLink href={`/c/${active.slug}/audit`} label="Audit" />
-          </nav>
-
-          <div className="mt-auto px-5 py-4 text-xs text-slate-500 border-t border-slate-800">
-            Engine v1.1 · Active
-          </div>
         </aside>
 
-        {/* Main */}
-        <main className="flex-1 md:pl-72">
-          <div className="md:hidden h-14 flex items-center justify-between px-4 border-b border-slate-200 bg-white">
-            <div className="font-semibold">SplitLogic</div>
-            <Link href="/select-company" className="text-xs px-2 py-1 rounded-md border border-slate-200">
-              Company
-            </Link>
-          </div>
-
-          <div className="p-6">{children}</div>
+        <main className="bg-slate-50">
+          <div className="mx-auto max-w-7xl p-8">{children}</div>
         </main>
       </div>
     </div>
-  );
-}
-
-function NavLink({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="block rounded-xl px-3 py-2 text-slate-200 hover:bg-slate-900 hover:text-white transition"
-    >
-      {label}
-    </Link>
   );
 }

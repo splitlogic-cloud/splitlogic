@@ -213,3 +213,36 @@ export async function deleteLatestImportAction(args: { companyId: string; import
 
   return deleteImportAction({ companyId: args.companyId, importId: String(latest.id) });
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// UNDO LATEST IMPORT
+////////////////////////////////////////////////////////////////////////////////
+
+export async function undoLatestImportAction(args: { companyId: string }) {
+  const { companyId } = args;
+
+  if (!companyId) throw new Error("companyId is required");
+
+  const supabase = await createClient();
+
+  // hämta senaste importen
+  const { data: latest, error } = await supabase
+    .from("import_jobs")
+    .select("id")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`load latest import failed: ${error.message}`);
+  if (!latest?.id) return { ok: true };
+
+  // kör undo
+  const { data, error: undoErr } = await supabase.rpc("undo_import", {
+    p_import_id: latest.id,
+  });
+
+  if (undoErr) throw new Error(`undo_import failed: ${undoErr.message}`);
+
+  return data ?? { ok: true };
+}

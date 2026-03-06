@@ -1,67 +1,95 @@
+import "server-only";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 
-type Params = { companySlug: string };
+export const dynamic = "force-dynamic";
 
-export default async function Page({ params }: { params: Params | Params }) {
-  const { companySlug } = await Promise.resolve(params);
+export default async function ImportsPage({
+  params,
+}: {
+  params: Promise<{ companySlug: string }>;
+}) {
+  const { companySlug } = await params;
   const supabase = await createClient();
-  const company = await requireCompanyBySlugForUser(companySlug);
 
-  const { data: jobs, error } = await supabase
+  const { data: company, error: companyError } = await supabase
+    .from("companies")
+    .select("id,name,slug")
+    .eq("slug", companySlug)
+    .maybeSingle();
+
+  if (companyError) {
+    throw new Error(`load company failed: ${companyError.message}`);
+  }
+
+  if (!company) {
+    throw new Error(`Company not found for slug: ${companySlug}`);
+  }
+
+  const { data: imports, error } = await supabase
     .from("import_jobs")
-    .select("id, created_at, status, original_filename")
+    .select("id,status,created_at,processed_at")
     .eq("company_id", company.id)
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(200);
+
+  if (error) {
+    throw new Error(`load imports failed: ${error.message}`);
+  }
 
   return (
-    <div className="max-w-5xl">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Imports</h1>
+    <div className="space-y-6">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Imports</h1>
+          <p className="text-sm text-slate-500">
+            Import jobs for company: {company.name || company.slug}
+          </p>
+        </div>
+
         <Link
-          href={`/c/${companySlug}/imports/new`}
-          className="rounded-xl px-4 py-2 font-medium text-white bg-gradient-to-r from-cyan-500 to-violet-500 hover:opacity-95"
+          href={`/c/${companySlug}/masterdata/upload`}
+          className="inline-flex rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
         >
-          Ny import
+          New import
         </Link>
       </div>
 
-      {error && <div className="text-sm text-rose-600">DB error: {error.message}</div>}
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr_1fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div>Import ID</div>
+          <div>Status</div>
+          <div>Created</div>
+          <div>Processed</div>
+        </div>
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="text-left p-3">Datum</th>
-              <th className="text-left p-3">Fil</th>
-              <th className="text-left p-3">Status</th>
-              <th className="text-left p-3">Öppna</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(jobs ?? []).map((j) => (
-              <tr key={j.id} className="border-t border-slate-200 hover:bg-slate-50">
-                <td className="p-3">{j.created_at ? new Date(j.created_at).toLocaleString("sv-SE") : "—"}</td>
-                <td className="p-3">{j.original_filename ?? "—"}</td>
-                <td className="p-3">{String(j.status ?? "—")}</td>
-                <td className="p-3">
-                  <Link className="text-cyan-700 hover:underline" href={`/c/${companySlug}/imports/${j.id}`}>
-                    Visa
-                  </Link>
-                </td>
-              </tr>
-            ))}
-            {!jobs?.length && (
-              <tr>
-                <td className="p-3 text-slate-500" colSpan={4}>
-                  Inga importer än. Klicka “Ny import”.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        {!imports || imports.length === 0 ? (
+          <div className="px-6 py-8 text-sm text-slate-500">
+            No imports yet.
+          </div>
+        ) : (
+          imports.map((job) => (
+            <div
+              key={job.id}
+              className="grid grid-cols-[1.2fr_0.8fr_0.8fr_1fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+            >
+              <div className="truncate text-sm font-medium text-slate-900">
+                {job.id}
+              </div>
+              <div className="text-sm text-slate-600">{job.status || "—"}</div>
+              <div className="text-sm text-slate-600">
+                {job.created_at
+                  ? new Date(job.created_at).toISOString().slice(0, 10)
+                  : "—"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {job.processed_at
+                  ? new Date(job.processed_at).toISOString().slice(0, 10)
+                  : "—"}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

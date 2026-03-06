@@ -3,28 +3,25 @@ import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
-export default async function WorkDetailPage({
+export default async function NewWorkPage({
   params,
 }: {
-  params: Promise<{ companySlug: string; workId: string }>;
+  params: Promise<{ companySlug: string }>;
 }) {
-  const { companySlug, workId } = await params;
+  const { companySlug } = await params;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Work</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">New work</h1>
         <p className="text-sm text-slate-500">
-          Work detail page for company: {companySlug}
+          Create work flow for company: {companySlug}
         </p>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="text-sm text-slate-500">Work ID</div>
-        <div className="mt-2 text-lg font-medium text-slate-900">{workId}</div>
-
-        <p className="mt-4 text-sm text-slate-500">
-          Detailed editing for works is not wired in yet.
+        <p className="text-sm text-slate-500">
+          Work creation form is not wired in yet.
         </p>
 
         <div className="mt-6">
