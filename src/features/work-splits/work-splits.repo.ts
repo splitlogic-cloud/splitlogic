@@ -1,7 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 
-export type WorkSplitRow = {
+export type WorkSplitListRow = {
   id: string;
   company_id: string;
   work_id: string;
@@ -15,9 +15,6 @@ export type WorkSplitRow = {
   end_date: string | null;
   created_at: string;
   updated_at: string;
-};
-
-export type WorkSplitListRow = WorkSplitRow & {
   party_name: string | null;
 };
 

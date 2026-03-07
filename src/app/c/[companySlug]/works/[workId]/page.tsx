@@ -175,13 +175,11 @@ export default async function WorkDetailPage({
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold">Splits</h2>
-            <p className="text-sm text-slate-500">
-              Add parties, percentages, roles and territory rules for this work.
-            </p>
-          </div>
+        <div>
+          <h2 className="text-lg font-semibold">Splits</h2>
+          <p className="text-sm text-slate-500">
+            Add parties, percentages, roles and territory rules for this work.
+          </p>
         </div>
 
         {splits.length === 0 ? (
