@@ -16,27 +16,35 @@ export default async function NewWorkPage({
     const supabase = await createClient();
 
     const title = String(formData.get("title") || "").trim();
-    const externalId = String(formData.get("external_id") || "").trim();
+    const isrc = String(formData.get("isrc") || "").trim();
 
     if (!title) {
       throw new Error("Title is required");
     }
 
-    const { data: company } = await supabase
+    const { data: company, error: companyError } = await supabase
       .from("companies")
-      .select("id")
+      .select("id, slug")
       .eq("slug", companySlug)
       .maybeSingle();
 
-    if (!company) throw new Error("Company not found");
+    if (companyError) {
+      throw new Error(`Failed to load company: ${companyError.message}`);
+    }
+
+    if (!company) {
+      throw new Error("Company not found");
+    }
 
     const { error } = await supabase.from("works").insert({
       company_id: company.id,
       title,
-      external_id: externalId || null,
+      isrc: isrc || null,
     });
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      throw new Error(`Failed to create work: ${error.message}`);
+    }
 
     redirect(`/c/${companySlug}/works`);
   }
@@ -50,21 +58,32 @@ export default async function NewWorkPage({
         </p>
       </div>
 
-      <form action={createWork} className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <form
+        action={createWork}
+        className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <div className="space-y-1">
-          <label className="text-sm font-medium">Title</label>
+          <label htmlFor="title" className="text-sm font-medium">
+            Title
+          </label>
           <input
+            id="title"
             name="title"
             required
             className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            placeholder="Song title"
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-sm font-medium">External ID</label>
+          <label htmlFor="isrc" className="text-sm font-medium">
+            ISRC
+          </label>
           <input
-            name="external_id"
+            id="isrc"
+            name="isrc"
             className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            placeholder="Optional"
           />
         </div>
 
