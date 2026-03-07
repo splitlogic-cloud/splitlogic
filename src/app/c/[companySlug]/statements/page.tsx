@@ -1,8 +1,15 @@
+// src/app/c/[companySlug]/statements/page.tsx
 import "server-only";
+
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 import StatementsListClient from "./StatementsListClient";
-import { listStatementsByCompany, generateStatement } from "@/features/statements/statements.repo";
+import {
+  listStatementsByCompany,
+  generateStatement,
+} from "@/features/statements/statements.repo";
 
 export const dynamic = "force-dynamic";
 
@@ -12,27 +19,28 @@ type PartyRow = {
   external_id: string | null;
 };
 
+function fmtPeriod(periodStart: string | null, periodEnd: string | null) {
+  if (!periodStart || !periodEnd) return "—";
+  return `${periodStart} → ${periodEnd}`;
+}
+
+function fmtAmount(amount: number | null | undefined, currency = "SEK") {
+  const n = Number(amount ?? 0);
+  const safe = Number.isFinite(n) ? n : 0;
+  return `${currency} ${new Intl.NumberFormat("sv-SE", {
+    maximumFractionDigits: 0,
+  }).format(safe)}`;
+}
+
 export default async function StatementsPage({
   params,
 }: {
   params: Promise<{ companySlug: string }>;
 }) {
   const { companySlug } = await params;
-  const supabase = await createClient();
 
-  const { data: company, error: companyError } = await supabase
-    .from("companies")
-    .select("id,name,slug")
-    .eq("slug", companySlug)
-    .maybeSingle();
-
-  if (companyError) {
-    throw new Error(`load company failed: ${companyError.message}`);
-  }
-
-  if (!company) {
-    throw new Error(`Company not found for slug: ${companySlug}`);
-  }
+  const supabase = await createSupabaseServerClient();
+  const company = await requireCompanyBySlugForUser(companySlug);
 
   async function createStatement(formData: FormData) {
     "use server";
@@ -51,21 +59,31 @@ export default async function StatementsPage({
       throw new Error("Period end is required");
     }
 
-    await generateStatement({
+    const result = await generateStatement({
       companyId: company.id,
       periodStart,
       periodEnd,
       amountField,
     });
 
-    redirect(`/c/${companySlug}/statements`);
+    const statementId =
+      result && typeof result === "object" && "id" in result ? result.id : null;
+
+    if (!statementId || typeof statementId !== "string") {
+      throw new Error(
+        "Statement was generated, but no statement id was returned from generateStatement()."
+      );
+    }
+
+    redirect(`/c/${companySlug}/statements/${statementId}`);
   }
 
   const [{ data: parties, error: partiesError }, statements] = await Promise.all([
     supabase
       .from("parties")
       .select("id,name,external_id")
-      .eq("company_id", company.id),
+      .eq("company_id", company.id)
+      .order("name", { ascending: true }),
     listStatementsByCompany(company.id, { limit: 200 }),
   ]);
 
@@ -78,23 +96,28 @@ export default async function StatementsPage({
     partyMap.set(party.id, party);
   }
 
-  const rows = statements.map((statement) => {
+  const rows = statements.map((statement: any) => {
     const party = statement.party_id ? partyMap.get(statement.party_id) : null;
     const partyName = party?.name || party?.external_id || "Unknown party";
-
-    const periodLabel =
-      statement.period_start && statement.period_end
-        ? `${statement.period_start} → ${statement.period_end}`
-        : "—";
 
     return {
       id: statement.id,
       partyName,
-      periodLabel,
-      amountLabel: "—",
+      periodLabel: fmtPeriod(statement.period_start, statement.period_end),
+      amountLabel: fmtAmount(
+        statement.total_payable_amount ??
+          statement.total_amount ??
+          statement.payable_amount ??
+          0,
+        statement.currency ?? "SEK"
+      ),
       status: statement.status || "draft",
+      href: `/c/${companySlug}/statements/${statement.id}`,
+      createdAt: statement.created_at ?? null,
     };
   });
+
+  const hasStatements = rows.length > 0;
 
   return (
     <div className="space-y-6">
@@ -157,7 +180,39 @@ export default async function StatementsPage({
         </form>
       </div>
 
-      <StatementsListClient companySlug={companySlug} rows={rows} />
+      {hasStatements ? (
+        <StatementsListClient companySlug={companySlug} rows={rows} />
+      ) : (
+        <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-10 shadow-sm">
+          <div className="max-w-xl">
+            <div className="text-lg font-semibold text-slate-900">
+              No statements yet
+            </div>
+            <p className="mt-2 text-sm text-slate-500">
+              Statements appear here after you generate them for a selected
+              period. Once created, you can review details, inspect line items
+              and export CSV.
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <a
+                href="#"
+                onClick={(e) => e.preventDefault()}
+                className="inline-flex h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-medium text-white hover:bg-slate-800"
+              >
+                Use the form above to create your first statement
+              </a>
+
+              <Link
+                href={`/c/${companySlug}/masterdata`}
+                className="inline-flex h-10 items-center rounded-xl border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Go to masterdata
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

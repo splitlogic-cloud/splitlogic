@@ -25,6 +25,6 @@
     ".next/dev/types/**/*.ts",
     "**/*.ts",
     "**/*.tsx"
-  ],
+, "src/middleware.ts.off"  ],
   "exclude": ["node_modules"]
 }
