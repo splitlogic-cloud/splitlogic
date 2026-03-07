@@ -28,7 +28,6 @@ export default async function NewPartyPage({
     const name = String(formData.get("name") || "").trim();
     const email = String(formData.get("email") || "").trim();
     const type = String(formData.get("type") || "").trim().toLowerCase();
-    const externalId = String(formData.get("external_id") || "").trim();
 
     if (!name) {
       throw new Error("Name is required");
@@ -57,7 +56,6 @@ export default async function NewPartyPage({
       name,
       email: email || null,
       type,
-      external_id: externalId || null,
     });
 
     if (error) {
@@ -125,18 +123,6 @@ export default async function NewPartyPage({
             <option value="manager">Manager</option>
             <option value="other">Other</option>
           </select>
-        </div>
-
-        <div className="space-y-1">
-          <label htmlFor="external_id" className="text-sm font-medium">
-            External ID
-          </label>
-          <input
-            id="external_id"
-            name="external_id"
-            className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            placeholder="Optional"
-          />
         </div>
 
         <div className="flex gap-3 pt-2">
