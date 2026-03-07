@@ -1,4 +1,5 @@
 import "server-only";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { listPartiesMini } from "@/features/parties/parties.repo";
@@ -19,6 +20,8 @@ const ALLOWED_TERRITORY_SCOPES = [
   "region",
   "country",
 ] as const;
+
+export const dynamic = "force-dynamic";
 
 export default async function WorkDetailPage({
   params,
@@ -126,6 +129,37 @@ export default async function WorkDetailPage({
     redirect(`/c/${companySlug}/works/${work.id}`);
   }
 
+  async function deleteWork() {
+    "use server";
+
+    const supabase = await createClient();
+
+    const { count, error: countError } = await supabase
+      .from("work_splits")
+      .select("id", { count: "exact", head: true })
+      .eq("work_id", work.id);
+
+    if (countError) {
+      throw new Error(`Failed to validate delete: ${countError.message}`);
+    }
+
+    if ((count ?? 0) > 0) {
+      throw new Error("Cannot delete work with splits. Remove splits first.");
+    }
+
+    const { error } = await supabase
+      .from("works")
+      .delete()
+      .eq("id", work.id)
+      .eq("company_id", company.id);
+
+    if (error) {
+      throw new Error(`Failed to delete work: ${error.message}`);
+    }
+
+    redirect(`/c/${companySlug}/works`);
+  }
+
   return (
     <div className="space-y-8">
       <div className="space-y-2">
@@ -136,11 +170,31 @@ export default async function WorkDetailPage({
           ← Back to works
         </a>
 
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">{work.title}</h1>
-          <p className="text-sm text-slate-500">
-            Work detail and royalty split setup
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">{work.title}</h1>
+            <p className="text-sm text-slate-500">
+              Work detail and royalty split setup
+            </p>
+          </div>
+
+          <div className="flex gap-3">
+            <Link
+              href={`/c/${companySlug}/works/${work.id}/edit`}
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Edit work
+            </Link>
+
+            <form action={deleteWork}>
+              <button
+                type="submit"
+                className="rounded-xl border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              >
+                Delete work
+              </button>
+            </form>
+          </div>
         </div>
       </div>
 
