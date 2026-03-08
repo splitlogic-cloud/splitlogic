@@ -1,57 +1,77 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 
-export type ImportJob = {
+export type ImportJobRow = {
   id: string;
   company_id: string;
+  filename: string | null;
   status: string | null;
   created_at: string | null;
-  storage_path?: string | null;
-  original_filename?: string | null;
+  updated_at: string | null;
 };
 
-export type ImportRow = {
-  id: string;
-  import_id: string;
-  row_number: number | null;
-  raw: any;
-  error: string | null;
-  status?: string | null;
-  created_at?: string | null;
-};
-
-export async function getImportJobById(importId: string) {
+export async function listImportJobs(companyId: string, limit = 100): Promise<ImportJobRow[]> {
   const supabase = await createClient();
 
   const { data, error } = await supabase
     .from("import_jobs")
-    .select("id, company_id, status, created_at, storage_path, original_filename")
-    .eq("id", importId)
-    .maybeSingle();
+    .select("id, company_id, filename, status, created_at, updated_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
 
-  if (error) throw new Error(`getImportJobById failed: ${error.message}`);
-  return data as ImportJob | null;
+  if (error) {
+    throw new Error(`listImportJobs: ${error.message}`);
+  }
+
+  return (data ?? []) as ImportJobRow[];
 }
 
-export async function listImportRows(importId: string, page = 1, pageSize = 50) {
+export async function getLatestImportJob(companyId: string): Promise<ImportJobRow | null> {
   const supabase = await createClient();
 
-  const from = Math.max(0, (page - 1) * pageSize);
-  const to = from + pageSize - 1;
+  const { data, error } = await supabase
+    .from("import_jobs")
+    .select("id, company_id, filename, status, created_at, updated_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  const { data, error, count } = await supabase
+  if (error) {
+    throw new Error(`getLatestImportJob: ${error.message}`);
+  }
+
+  return (data ?? null) as ImportJobRow | null;
+}
+
+export async function deleteLatestImportJob(companyId: string) {
+  const supabase = await createClient();
+
+  const latest = await getLatestImportJob(companyId);
+
+  if (!latest) {
+    return { deleted: false, reason: "no_latest_import" as const };
+  }
+
+  const { error: rowsError } = await supabase
     .from("import_rows")
-    .select("id, import_id, row_number, raw, error, status, created_at", { count: "exact" })
-    .eq("import_id", importId)
-    .order("row_number", { ascending: true })
-    .range(from, to);
+    .delete()
+    .eq("import_job_id", latest.id);
 
-  if (error) throw new Error(`listImportRows failed: ${error.message}`);
+  if (rowsError) {
+    throw new Error(`deleteLatestImportJob import_rows: ${rowsError.message}`);
+  }
 
-  return {
-    rows: (data ?? []) as ImportRow[],
-    count: count ?? null,
-    page,
-    pageSize,
-  };
+  const { error: jobError } = await supabase
+    .from("import_jobs")
+    .delete()
+    .eq("id", latest.id)
+    .eq("company_id", companyId);
+
+  if (jobError) {
+    throw new Error(`deleteLatestImportJob import_jobs: ${jobError.message}`);
+  }
+
+  return { deleted: true, importJobId: latest.id };
 }
