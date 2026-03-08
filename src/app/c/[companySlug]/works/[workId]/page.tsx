@@ -1,7 +1,8 @@
 import "server-only";
+
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import { listPartiesMini } from "@/features/parties/parties.repo";
 import { listWorkSplits } from "@/features/work-splits/work-splits.repo";
 
@@ -21,13 +22,27 @@ const ALLOWED_TERRITORY_SCOPES = [
   "country",
 ] as const;
 
+type Role = (typeof ALLOWED_ROLES)[number];
+type TerritoryScope = (typeof ALLOWED_TERRITORY_SCOPES)[number];
+
 export const dynamic = "force-dynamic";
 
-export default async function WorkDetailPage({
-  params,
-}: {
-  params: Promise<{ companySlug: string; workId: string }>;
-}) {
+type PageProps = {
+  params: Promise<{
+    companySlug: string;
+    workId: string;
+  }>;
+};
+
+function isAllowedRole(value: string): value is Role {
+  return ALLOWED_ROLES.includes(value as Role);
+}
+
+function isAllowedTerritoryScope(value: string): value is TerritoryScope {
+  return ALLOWED_TERRITORY_SCOPES.includes(value as TerritoryScope);
+}
+
+export default async function WorkDetailPage({ params }: PageProps) {
   const { companySlug, workId } = await params;
   const supabase = await createClient();
 
@@ -68,28 +83,26 @@ export default async function WorkDetailPage({
 
     const supabase = await createClient();
 
-    const partyId = String(formData.get("party_id") || "").trim();
-    const role = String(formData.get("role") || "").trim().toLowerCase();
-    const sharePercentRaw = String(formData.get("share_percent") || "").trim();
-    const territoryScope = String(formData.get("territory_scope") || "").trim().toLowerCase();
-    const territoryCodeRaw = String(formData.get("territory_code") || "").trim();
-    const startDateRaw = String(formData.get("start_date") || "").trim();
-    const endDateRaw = String(formData.get("end_date") || "").trim();
+    const partyId = String(formData.get("party_id") ?? "").trim();
+    const roleRaw = String(formData.get("role") ?? "").trim().toLowerCase();
+    const sharePercentRaw = String(formData.get("share_percent") ?? "").trim();
+    const territoryScopeRaw = String(formData.get("territory_scope") ?? "")
+      .trim()
+      .toLowerCase();
+    const territoryCodeRaw = String(formData.get("territory_code") ?? "").trim();
+    const startDateRaw = String(formData.get("start_date") ?? "").trim();
+    const endDateRaw = String(formData.get("end_date") ?? "").trim();
 
     if (!partyId) {
       throw new Error("Party is required");
     }
 
-    if (!ALLOWED_ROLES.includes(role as (typeof ALLOWED_ROLES)[number])) {
-      throw new Error(`Invalid role: ${role}`);
+    if (!isAllowedRole(roleRaw)) {
+      throw new Error(`Invalid role: ${roleRaw}`);
     }
 
-    if (
-      !ALLOWED_TERRITORY_SCOPES.includes(
-        territoryScope as (typeof ALLOWED_TERRITORY_SCOPES)[number]
-      )
-    ) {
-      throw new Error(`Invalid territory scope: ${territoryScope}`);
+    if (!isAllowedTerritoryScope(territoryScopeRaw)) {
+      throw new Error(`Invalid territory scope: ${territoryScopeRaw}`);
     }
 
     const sharePercent = Number(sharePercentRaw.replace(",", "."));
@@ -103,9 +116,9 @@ export default async function WorkDetailPage({
     }
 
     const territoryCode =
-      territoryScope === "worldwide" ? null : territoryCodeRaw || null;
+      territoryScopeRaw === "worldwide" ? null : territoryCodeRaw || null;
 
-    if (territoryScope !== "worldwide" && !territoryCode) {
+    if (territoryScopeRaw !== "worldwide" && !territoryCode) {
       throw new Error("Territory code is required for region/country");
     }
 
@@ -113,10 +126,10 @@ export default async function WorkDetailPage({
       company_id: company.id,
       work_id: work.id,
       party_id: partyId,
-      role,
+      role: roleRaw,
       share_percent: sharePercent,
       share_basis: "net",
-      territory_scope: territoryScope,
+      territory_scope: territoryScopeRaw,
       territory_code: territoryCode,
       start_date: startDateRaw || null,
       end_date: endDateRaw || null,
@@ -163,12 +176,12 @@ export default async function WorkDetailPage({
   return (
     <div className="space-y-8">
       <div className="space-y-2">
-        <a
+        <Link
           href={`/c/${companySlug}/works`}
           className="text-sm text-slate-500 hover:text-slate-900"
         >
           ← Back to works
-        </a>
+        </Link>
 
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -213,7 +226,9 @@ export default async function WorkDetailPage({
           </div>
 
           <div>
-            <div className="text-xs uppercase tracking-wide text-slate-400">External ID</div>
+            <div className="text-xs uppercase tracking-wide text-slate-400">
+              External ID
+            </div>
             <div className="mt-1 break-all text-sm text-slate-900">
               {work.external_id || "—"}
             </div>
@@ -248,7 +263,9 @@ export default async function WorkDetailPage({
                   <th className="border-b border-slate-200 px-3 py-2 font-medium">Party</th>
                   <th className="border-b border-slate-200 px-3 py-2 font-medium">Role</th>
                   <th className="border-b border-slate-200 px-3 py-2 font-medium">Share %</th>
-                  <th className="border-b border-slate-200 px-3 py-2 font-medium">Territory</th>
+                  <th className="border-b border-slate-200 px-3 py-2 font-medium">
+                    Territory
+                  </th>
                   <th className="border-b border-slate-200 px-3 py-2 font-medium">Code</th>
                   <th className="border-b border-slate-200 px-3 py-2 font-medium">Start</th>
                   <th className="border-b border-slate-200 px-3 py-2 font-medium">End</th>
@@ -301,8 +318,8 @@ export default async function WorkDetailPage({
                 id="party_id"
                 name="party_id"
                 required
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
                 defaultValue=""
+                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="" disabled>
                   Select party
@@ -322,8 +339,8 @@ export default async function WorkDetailPage({
               <select
                 id="role"
                 name="role"
-                defaultValue="artist"
                 required
+                defaultValue="artist"
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="artist">Artist</option>
@@ -357,8 +374,8 @@ export default async function WorkDetailPage({
               <select
                 id="territory_scope"
                 name="territory_scope"
-                defaultValue="worldwide"
                 required
+                defaultValue="worldwide"
                 className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="worldwide">Worldwide</option>
@@ -403,7 +420,7 @@ export default async function WorkDetailPage({
               />
             </div>
 
-            <div className="sm:col-span-2 flex gap-3 pt-2">
+            <div className="flex gap-3 pt-2 sm:col-span-2">
               <button
                 type="submit"
                 className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
