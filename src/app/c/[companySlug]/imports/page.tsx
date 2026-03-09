@@ -1,6 +1,6 @@
 import "server-only";
 import Link from "next/link";
-import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -42,14 +42,22 @@ export default async function ImportsPage({
     "use server";
 
     const importId = String(formData.get("importId") || "").trim();
-    if (!importId) return;
+    const companySlugFromForm = String(formData.get("companySlug") || "").trim();
+
+    if (!importId) {
+      throw new Error("Missing importId");
+    }
+
+    if (!companySlugFromForm) {
+      throw new Error("Missing companySlug");
+    }
 
     const supabase = await createClient();
 
     const { data: company, error: companyError } = await supabase
       .from("companies")
       .select("id,slug")
-      .eq("slug", companySlug)
+      .eq("slug", companySlugFromForm)
       .maybeSingle();
 
     if (companyError) {
@@ -60,26 +68,26 @@ export default async function ImportsPage({
       throw new Error("Company not found");
     }
 
-    const { error: deleteRowsError } = await supabase
+    const { error: rowsDeleteError } = await supabase
       .from("import_rows")
       .delete()
       .eq("import_id", importId);
 
-    if (deleteRowsError) {
-      throw new Error(`delete import rows failed: ${deleteRowsError.message}`);
+    if (rowsDeleteError) {
+      throw new Error(`delete import rows failed: ${rowsDeleteError.message}`);
     }
 
-    const { error: deleteJobError } = await supabase
+    const { error: jobDeleteError } = await supabase
       .from("import_jobs")
       .delete()
       .eq("company_id", company.id)
       .eq("id", importId);
 
-    if (deleteJobError) {
-      throw new Error(`delete import failed: ${deleteJobError.message}`);
+    if (jobDeleteError) {
+      throw new Error(`delete import failed: ${jobDeleteError.message}`);
     }
 
-    revalidatePath(`/c/${companySlug}/imports`);
+    redirect(`/c/${companySlugFromForm}/imports`);
   }
 
   return (
@@ -101,7 +109,7 @@ export default async function ImportsPage({
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[1.8fr_140px_190px_190px_120px] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+        <div className="grid grid-cols-[1.8fr_140px_190px_190px_140px] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
           <div>File</div>
           <div>Status</div>
           <div>Created</div>
@@ -117,7 +125,7 @@ export default async function ImportsPage({
           jobs.map((job) => (
             <div
               key={job.id}
-              className="grid grid-cols-[1.8fr_140px_190px_190px_120px] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+              className="grid grid-cols-[1.8fr_140px_190px_190px_140px] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
             >
               <Link
                 href={`/c/${companySlug}/imports/${job.id}`}
@@ -148,6 +156,7 @@ export default async function ImportsPage({
 
               <form action={deleteImport}>
                 <input type="hidden" name="importId" value={job.id} />
+                <input type="hidden" name="companySlug" value={companySlug} />
                 <button
                   type="submit"
                   className="inline-flex rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
