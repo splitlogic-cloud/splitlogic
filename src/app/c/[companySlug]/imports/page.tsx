@@ -1,6 +1,5 @@
 import "server-only";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -36,58 +35,6 @@ export default async function ImportsPage({
 
   if (jobsError) {
     throw new Error(`load import jobs failed: ${jobsError.message}`);
-  }
-
-  async function deleteImport(formData: FormData) {
-    "use server";
-
-    const importId = String(formData.get("importId") || "").trim();
-    const companySlugFromForm = String(formData.get("companySlug") || "").trim();
-
-    if (!importId) {
-      throw new Error("Missing importId");
-    }
-
-    if (!companySlugFromForm) {
-      throw new Error("Missing companySlug");
-    }
-
-    const supabase = await createClient();
-
-    const { data: company, error: companyError } = await supabase
-      .from("companies")
-      .select("id,slug")
-      .eq("slug", companySlugFromForm)
-      .maybeSingle();
-
-    if (companyError) {
-      throw new Error(`load company failed: ${companyError.message}`);
-    }
-
-    if (!company) {
-      throw new Error("Company not found");
-    }
-
-    const { error: rowsDeleteError } = await supabase
-      .from("import_rows")
-      .delete()
-      .eq("import_id", importId);
-
-    if (rowsDeleteError) {
-      throw new Error(`delete import rows failed: ${rowsDeleteError.message}`);
-    }
-
-    const { error: jobDeleteError } = await supabase
-      .from("import_jobs")
-      .delete()
-      .eq("company_id", company.id)
-      .eq("id", importId);
-
-    if (jobDeleteError) {
-      throw new Error(`delete import failed: ${jobDeleteError.message}`);
-    }
-
-    redirect(`/c/${companySlugFromForm}/imports`);
   }
 
   return (
@@ -154,9 +101,10 @@ export default async function ImportsPage({
                   : "—"}
               </div>
 
-              <form action={deleteImport}>
-                <input type="hidden" name="importId" value={job.id} />
-                <input type="hidden" name="companySlug" value={companySlug} />
+              <form
+                method="POST"
+                action={`/c/${companySlug}/imports/${job.id}/delete`}
+              >
                 <button
                   type="submit"
                   className="inline-flex rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
