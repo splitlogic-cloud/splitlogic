@@ -1,5 +1,6 @@
 import "server-only";
 import Link from "next/link";
+import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,50 @@ export default async function ImportsPage({
     throw new Error(`load import jobs failed: ${jobsError.message}`);
   }
 
+  async function deleteImport(formData: FormData) {
+    "use server";
+
+    const importId = String(formData.get("importId") || "").trim();
+    if (!importId) return;
+
+    const supabase = await createClient();
+
+    const { data: company, error: companyError } = await supabase
+      .from("companies")
+      .select("id,slug")
+      .eq("slug", companySlug)
+      .maybeSingle();
+
+    if (companyError) {
+      throw new Error(`load company failed: ${companyError.message}`);
+    }
+
+    if (!company) {
+      throw new Error("Company not found");
+    }
+
+    const { error: deleteRowsError } = await supabase
+      .from("import_rows")
+      .delete()
+      .eq("import_id", importId);
+
+    if (deleteRowsError) {
+      throw new Error(`delete import rows failed: ${deleteRowsError.message}`);
+    }
+
+    const { error: deleteJobError } = await supabase
+      .from("import_jobs")
+      .delete()
+      .eq("company_id", company.id)
+      .eq("id", importId);
+
+    if (deleteJobError) {
+      throw new Error(`delete import failed: ${deleteJobError.message}`);
+    }
+
+    revalidatePath(`/c/${companySlug}/imports`);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
@@ -56,11 +101,12 @@ export default async function ImportsPage({
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[1.8fr_140px_190px_190px] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+        <div className="grid grid-cols-[1.8fr_140px_190px_190px_120px] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
           <div>File</div>
           <div>Status</div>
           <div>Created</div>
           <div>Processed</div>
+          <div>Actions</div>
         </div>
 
         {!jobs || jobs.length === 0 ? (
@@ -69,14 +115,16 @@ export default async function ImportsPage({
           </div>
         ) : (
           jobs.map((job) => (
-            <Link
+            <div
               key={job.id}
-              href={`/c/${companySlug}/imports/${job.id}`}
-              className="grid grid-cols-[1.8fr_140px_190px_190px] gap-4 border-b border-slate-100 px-6 py-4 transition hover:bg-slate-50 last:border-b-0"
+              className="grid grid-cols-[1.8fr_140px_190px_190px_120px] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
             >
-              <div className="text-sm font-medium text-slate-900">
+              <Link
+                href={`/c/${companySlug}/imports/${job.id}`}
+                className="text-sm font-medium text-slate-900 hover:text-slate-700 hover:underline"
+              >
                 {job.file_name || job.id}
-              </div>
+              </Link>
 
               <div className="text-sm text-slate-600">{job.status || "—"}</div>
 
@@ -97,7 +145,17 @@ export default async function ImportsPage({
                       .replace("T", " ")
                   : "—"}
               </div>
-            </Link>
+
+              <form action={deleteImport}>
+                <input type="hidden" name="importId" value={job.id} />
+                <button
+                  type="submit"
+                  className="inline-flex rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                >
+                  Delete
+                </button>
+              </form>
+            </div>
           ))
         )}
       </div>
