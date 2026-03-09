@@ -28,7 +28,7 @@ export default async function ImportDetailPage({
 
   const { data: job, error: jobError } = await supabase
     .from("import_jobs")
-    .select("id,status,created_at,processed_at")
+    .select("id,file_name,status,created_at,processed_at")
     .eq("company_id", company.id)
     .eq("id", importJobId)
     .maybeSingle();
@@ -77,6 +77,13 @@ export default async function ImportDetailPage({
             </div>
 
             <div>
+              <div className="text-sm text-slate-500">File</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">
+                {job.file_name || "—"}
+              </div>
+            </div>
+
+            <div>
               <div className="text-sm text-slate-500">Status</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
                 {job.status || "—"}
@@ -87,16 +94,10 @@ export default async function ImportDetailPage({
               <div className="text-sm text-slate-500">Created</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
                 {job.created_at
-                  ? new Date(job.created_at).toISOString().slice(0, 19).replace("T", " ")
-                  : "—"}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-slate-500">Processed</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
-                {job.processed_at
-                  ? new Date(job.processed_at).toISOString().slice(0, 19).replace("T", " ")
+                  ? new Date(job.created_at)
+                      .toISOString()
+                      .slice(0, 19)
+                      .replace("T", " ")
                   : "—"}
               </div>
             </div>
