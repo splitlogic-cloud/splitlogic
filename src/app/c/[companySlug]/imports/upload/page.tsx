@@ -40,8 +40,7 @@ function parseCsv(text: string) {
       row.push(current);
       current = "";
 
-      const hasContent = row.some((cell) => cell.trim() !== "");
-      if (hasContent) {
+      if (row.some((cell) => cell.trim() !== "")) {
         rows.push(row);
       }
 
@@ -53,6 +52,7 @@ function parseCsv(text: string) {
   }
 
   row.push(current);
+
   if (row.some((cell) => cell.trim() !== "")) {
     rows.push(row);
   }
@@ -62,16 +62,19 @@ function parseCsv(text: string) {
 
 function toObjects(csvText: string) {
   const parsed = parseCsv(csvText);
+
   if (parsed.length === 0) return [];
 
-  const headers = parsed[0].map((h) => h.trim());
-  const body = parsed.slice(1);
+  const headers = parsed[0].map((h, index) => {
+    const trimmed = h.trim();
+    return trimmed || `column_${index + 1}`;
+  });
 
-  return body.map((cells) => {
+  return parsed.slice(1).map((cells) => {
     const obj: Record<string, string> = {};
 
     headers.forEach((header, index) => {
-      obj[header || `column_${index + 1}`] = (cells[index] ?? "").trim();
+      obj[header] = (cells[index] ?? "").trim();
     });
 
     return obj;
@@ -146,6 +149,7 @@ export default async function UploadImportPage({
       .insert({
         company_id: company.id,
         file_name: file.name,
+        source: "csv",
         status: "parsed",
         processed_at: new Date().toISOString(),
       })
