@@ -70,7 +70,6 @@ export async function processImportJob(importJobId: string) {
         import_job_id: typedJob.id,
         row_index: row.rowIndex,
         raw: row.raw,
-        error_message: row.errorMessage,
       }));
 
       const { error: insertError } = await supabaseAdmin
@@ -82,14 +81,10 @@ export async function processImportJob(importJobId: string) {
       }
     }
 
-    const invalidCount = parsedRows.filter((row) => !!row.errorMessage).length;
-    const nextStatus =
-      invalidCount > 0 ? "processed_with_errors" : "processed";
-
     const { error: updateDoneError } = await supabaseAdmin
       .from("import_jobs")
       .update({
-        status: nextStatus,
+        status: "processed",
         updated_at: new Date().toISOString(),
       })
       .eq("id", typedJob.id);
@@ -101,8 +96,7 @@ export async function processImportJob(importJobId: string) {
     return {
       ok: true,
       totalRows: parsedRows.length,
-      invalidRows: invalidCount,
-      status: nextStatus,
+      status: "processed",
     };
   } catch (error) {
     const message =
