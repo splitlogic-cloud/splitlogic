@@ -6,8 +6,11 @@ type Props = {
   companySlug: string;
 };
 
+type ImportSource = "revenue" | "masterdata";
+
 export default function UploadImportsClient({ companySlug }: Props) {
   const [file, setFile] = useState<File | null>(null);
+  const [source, setSource] = useState<ImportSource>("revenue");
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +32,7 @@ export default function UploadImportsClient({ companySlug }: Props) {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("companySlug", companySlug);
+      formData.append("source", source);
 
       const res = await fetch("/api/imports/upload", {
         method: "POST",
@@ -37,26 +41,56 @@ export default function UploadImportsClient({ companySlug }: Props) {
 
       const data = await res.json();
 
-      if (!res.ok) {
+      if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Upload failed");
       }
 
-      setMessage(`Upload klar. Job ID: ${data.jobId}`);
+      setMessage(
+        `Upload klar. Import job ID: ${data.importJobId}`
+      );
+
       setFile(null);
 
-      const input = document.getElementById("csv-file-input") as HTMLInputElement | null;
+      const input = document.getElementById(
+        "csv-file-input"
+      ) as HTMLInputElement | null;
+
       if (input) input.value = "";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Något gick fel vid upload.");
+      setError(
+        err instanceof Error ? err.message : "Något gick fel vid upload."
+      );
     } finally {
       setIsUploading(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-2">
-        <label htmlFor="csv-file-input" className="block text-sm font-medium text-slate-700">
+        <label
+          htmlFor="import-source"
+          className="block text-sm font-medium text-slate-700"
+        >
+          Importtyp
+        </label>
+
+        <select
+          id="import-source"
+          value={source}
+          onChange={(e) => setSource(e.target.value as ImportSource)}
+          className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+        >
+          <option value="revenue">Revenue</option>
+          <option value="masterdata">Masterdata</option>
+        </select>
+      </div>
+
+      <div className="space-y-2">
+        <label
+          htmlFor="csv-file-input"
+          className="block text-sm font-medium text-slate-700"
+        >
           CSV-fil
         </label>
 
