@@ -1,145 +1,96 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 
-type ImportType = "revenue" | "masterdata";
+type Props = {
+  companySlug: string;
+};
 
-export default function UploadImportsClient({ companySlug }: { companySlug: string }) {
-  const router = useRouter();
+export default function UploadImportsClient({ companySlug }: Props) {
+  const [file, setFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [type, setType] = useState<ImportType>("revenue");
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
 
-  const label = useMemo(() => {
-    return type === "revenue" ? "Revenue (royalty-filer)" : "Masterdata (works/parties)";
-  }, [type]);
+    setMessage(null);
+    setError(null);
 
-  async function uploadAndParse(file: File) {
-    // 1) UPLOAD (FormData)
-    const form = new FormData();
-    form.set("companySlug", companySlug);
-    form.set("source", type);
-    form.set("file", file);
-
-    const up = await fetch("/api/imports/upload", {
-      method: "POST",
-      body: form,
-    });
-
-    const upJson = await up.json().catch(() => ({}));
-    if (!up.ok || !upJson?.ok) {
-      throw new Error(upJson?.error ?? `Upload failed (${up.status})`);
+    if (!file) {
+      setError("Välj en CSV-fil först.");
+      return;
     }
 
-    const importJobId = String(upJson.importJobId ?? "");
-    if (!importJobId) throw new Error("Upload succeeded but missing importJobId");
+    try {
+      setIsUploading(true);
 
-    // 2) PARSE (JSON)
-    const pr = await fetch("/api/imports/parse", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        companySlug,
-        importJobId, // parse-route accepterar både importId och importJobId
-      }),
-    });
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("companySlug", companySlug);
 
-    const prJson = await pr.json().catch(() => ({}));
-    if (!pr.ok || !prJson?.ok) {
-      throw new Error(prJson?.error ?? `Parse failed (${pr.status})`);
+      const res = await fetch("/api/imports/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Upload failed");
+      }
+
+      setMessage(`Upload klar. Job ID: ${data.jobId}`);
+      setFile(null);
+
+      const input = document.getElementById("csv-file-input") as HTMLInputElement | null;
+      if (input) input.value = "";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Något gick fel vid upload.");
+    } finally {
+      setIsUploading(false);
     }
-
-    return { importJobId };
   }
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ display: "grid", gap: 6 }}>
-        <div style={{ fontSize: 14, opacity: 0.8 }}>Välj en CSV-fil och ladda upp.</div>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <label htmlFor="csv-file-input" className="block text-sm font-medium text-slate-700">
+          CSV-fil
+        </label>
 
-        <label style={{ fontSize: 13, opacity: 0.8 }}>Typ</label>
-        <select
-          value={type}
-          disabled={busy}
-          onChange={(e) => setType(e.target.value as ImportType)}
-          style={{
-            height: 40,
-            borderRadius: 10,
-            border: "1px solid rgba(0,0,0,0.12)",
-            padding: "0 12px",
-            maxWidth: 420,
+        <input
+          id="csv-file-input"
+          type="file"
+          accept=".csv,text/csv"
+          onChange={(e) => {
+            const selected = e.target.files?.[0] ?? null;
+            setFile(selected);
           }}
-        >
-          <option value="revenue">Revenue (royalty-filer)</option>
-          <option value="masterdata">Masterdata (works/parties)</option>
-        </select>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10 }}>
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            disabled={busy}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-
-              setBusy(true);
-              setErr(null);
-
-              try {
-                const { importJobId } = await uploadAndParse(file);
-
-                router.push(`/c/${companySlug}/imports/${importJobId}`);
-                router.refresh();
-              } catch (ex: any) {
-                setErr(String(ex?.message ?? ex));
-              } finally {
-                setBusy(false);
-                e.currentTarget.value = "";
-              }
-            }}
-          />
-
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => setErr("Välj en fil först (klicka på filväljaren).")}
-            style={{
-              height: 40,
-              padding: "0 14px",
-              borderRadius: 12,
-              border: "0",
-              cursor: busy ? "not-allowed" : "pointer",
-              background: "linear-gradient(90deg,#22c55e,#6366f1)",
-              color: "white",
-              fontWeight: 600,
-            }}
-            title={label}
-          >
-            {busy ? "Uploading + parsing…" : "Upload & parse"}
-          </button>
-        </div>
+          className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+        />
       </div>
 
-      {busy && <div>Uploading + parsing…</div>}
+      <button
+        type="submit"
+        disabled={isUploading}
+        className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+      >
+        {isUploading ? "Laddar upp..." : "Upload CSV"}
+      </button>
 
-      {err && (
-        <div
-          style={{
-            padding: 10,
-            borderRadius: 10,
-            border: "1px solid rgba(220,38,38,0.35)",
-            background: "rgba(220,38,38,0.06)",
-            color: "#b91c1c",
-            fontSize: 13,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {err}
+      {message ? (
+        <div className="rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+          {message}
         </div>
-      )}
-    </div>
+      ) : null}
+
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+    </form>
   );
 }
