@@ -56,7 +56,7 @@ export default async function ImportDetailPage({ params }: PageProps) {
             Import detail
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Import job for company: {company.companyName}
+            Import job for company: {companySlug}
           </p>
         </div>
 
