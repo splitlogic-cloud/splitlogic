@@ -1,6 +1,6 @@
 import "server-only";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { parseCsvText } from "./import.parser";
+import { parseCsvText } from "./imports.parser";
 
 type ImportJobForProcessing = {
   id: string;
