@@ -14,7 +14,7 @@ export type ImportRowRow = {
   id: string;
   import_job_id: string;
   row_index: number | null;
-  raw: unknown;
+  raw: Record<string, unknown> | null;
   error_code: string | null;
   error_message: string | null;
   created_at: string | null;
