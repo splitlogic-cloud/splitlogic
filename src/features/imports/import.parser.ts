@@ -59,7 +59,6 @@ export function parseCsvText(text: string): ParsedCsvRow[] {
   }
 
   const headers = splitCsvLine(lines[0]).map(normalizeHeader);
-
   const rows: ParsedCsvRow[] = [];
 
   for (let i = 1; i < lines.length; i++) {
