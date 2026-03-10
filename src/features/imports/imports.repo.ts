@@ -13,7 +13,6 @@ export type ImportJobRow = {
 export type ImportRowRow = {
   id: string;
   import_job_id: string;
-  row_index: number | null;
   raw: Record<string, unknown> | null;
   created_at: string | null;
 };
@@ -86,9 +85,9 @@ export async function listImportRows(
 
   const { data, error } = await supabase
     .from("import_rows")
-    .select("id, import_job_id, row_index, raw, created_at")
+    .select("id, import_job_id, raw, created_at")
     .eq("import_job_id", importJobId)
-    .order("row_index", { ascending: true })
+    .order("created_at", { ascending: true })
     .limit(limit);
 
   if (error) {
