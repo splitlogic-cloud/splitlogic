@@ -17,7 +17,6 @@ export default function UploadImportsClient({ companySlug }: Props) {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-
     setMessage(null);
     setError(null);
 
@@ -45,21 +44,13 @@ export default function UploadImportsClient({ companySlug }: Props) {
         throw new Error(data?.error || "Upload failed");
       }
 
-      setMessage(
-        `Upload klar. Import job ID: ${data.importJobId}`
-      );
-
+      setMessage(`Upload klar. Import job ID: ${data.importJobId}`);
       setFile(null);
 
-      const input = document.getElementById(
-        "csv-file-input"
-      ) as HTMLInputElement | null;
-
+      const input = document.getElementById("csv-file-input") as HTMLInputElement | null;
       if (input) input.value = "";
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Något gick fel vid upload."
-      );
+      setError(err instanceof Error ? err.message : "Något gick fel vid upload.");
     } finally {
       setIsUploading(false);
     }
