@@ -1,6 +1,6 @@
 import "server-only";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { parseCsvText } from "./imports.parser";
+import { parseCsvText } from "./import.parser";
 
 type ImportJobForProcessing = {
   id: string;
@@ -70,7 +70,6 @@ export async function processImportJob(importJobId: string) {
         import_job_id: typedJob.id,
         row_index: row.rowIndex,
         raw: row.raw,
-        error_code: row.errorCode,
         error_message: row.errorMessage,
       }));
 
@@ -83,7 +82,7 @@ export async function processImportJob(importJobId: string) {
       }
     }
 
-    const invalidCount = parsedRows.filter((row) => !!row.errorCode).length;
+    const invalidCount = parsedRows.filter((row) => !!row.errorMessage).length;
     const nextStatus =
       invalidCount > 0 ? "processed_with_errors" : "processed";
 
