@@ -491,7 +491,7 @@ export default async function ImportDetailPage({
             <div>
               <div className="text-sm text-slate-500">Total rows</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
-                {totalRowsCount ?? 0}
+                {(totalRowsCount ?? 0).toLocaleString("en-US")}
               </div>
             </div>
           </div>
@@ -504,7 +504,8 @@ export default async function ImportDetailPage({
         <div className="border-b border-slate-200 px-6 py-4">
           <h2 className="text-lg font-semibold text-slate-900">Parsed row review</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Showing {parsedRows.length} of {totalRowsCount ?? 0} rows.
+            Showing {parsedRows.length.toLocaleString("en-US")} of{" "}
+            {(totalRowsCount ?? 0).toLocaleString("en-US")} rows.
           </p>
         </div>
 
