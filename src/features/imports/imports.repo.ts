@@ -12,7 +12,8 @@ export type ImportJobRow = {
 
 export type ImportRowRow = {
   id: string;
-  import_job_id: string;
+  import_id: string;
+  row_number: number | null;
   raw: Record<string, unknown> | null;
   created_at: string | null;
 };
@@ -85,9 +86,9 @@ export async function listImportRows(
 
   const { data, error } = await supabase
     .from("import_rows")
-    .select("id, import_job_id, raw, created_at")
-    .eq("import_job_id", importJobId)
-    .order("created_at", { ascending: true })
+    .select("id, import_id, row_number, raw, created_at")
+    .eq("import_id", importJobId)
+    .order("row_number", { ascending: true })
     .limit(limit);
 
   if (error) {
@@ -109,7 +110,7 @@ export async function deleteLatestImportJob(companyId: string) {
   const { error: rowsError } = await supabase
     .from("import_rows")
     .delete()
-    .eq("import_job_id", latest.id);
+    .eq("import_id", latest.id);
 
   if (rowsError) {
     throw new Error(`deleteLatestImportJob import_rows: ${rowsError.message}`);
