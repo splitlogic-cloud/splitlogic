@@ -84,7 +84,7 @@ export async function processImportJob(importJobId: string) {
     const { error: updateDoneError } = await supabaseAdmin
       .from("import_jobs")
       .update({
-        status: "processed",
+        status: "uploaded",
         updated_at: new Date().toISOString(),
       })
       .eq("id", typedJob.id);
@@ -96,7 +96,7 @@ export async function processImportJob(importJobId: string) {
     return {
       ok: true,
       totalRows: parsedRows.length,
-      status: "processed",
+      status: "uploaded",
     };
   } catch (error) {
     const message =
@@ -105,7 +105,7 @@ export async function processImportJob(importJobId: string) {
     await supabaseAdmin
       .from("import_jobs")
       .update({
-        status: "failed",
+        status: "uploaded",
         updated_at: new Date().toISOString(),
       })
       .eq("id", typedJob.id);
