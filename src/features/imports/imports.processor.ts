@@ -66,12 +66,10 @@ export async function processImportJob(importJobId: string) {
     }
 
     if (parsedRows.length > 0) {
-      const rowsToInsert = parsedRows.map((row) => ({
+      const rowsToInsert = parsedRows.map((row, index) => ({
         import_id: typedJob.id,
-        raw: {
-          row_index: row.rowIndex,
-          ...row.raw,
-        },
+        row_number: index + 1,
+        raw: row.raw,
       }));
 
       const { error: insertError } = await supabaseAdmin
