@@ -7,18 +7,29 @@ export type ParsedCsvRow = {
   errorMessage: string | null;
 };
 
-function splitCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let current = "";
+function normalizeHeader(header: string): string {
+  return header
+    .replace(/\uFEFF/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = "";
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    const next = line[i + 1];
+  const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  for (let i = 0; i < normalizedText.length; i++) {
+    const ch = normalizedText[i];
+    const next = normalizedText[i + 1];
 
     if (ch === '"') {
       if (inQuotes && next === '"') {
-        current += '"';
+        currentCell += '"';
         i++;
       } else {
         inQuotes = !inQuotes;
@@ -27,53 +38,63 @@ function splitCsvLine(line: string): string[] {
     }
 
     if (ch === "," && !inQuotes) {
-      out.push(current);
-      current = "";
+      currentRow.push(currentCell);
+      currentCell = "";
       continue;
     }
 
-    current += ch;
+    if (ch === "\n" && !inQuotes) {
+      currentRow.push(currentCell);
+      rows.push(currentRow);
+      currentRow = [];
+      currentCell = "";
+      continue;
+    }
+
+    currentCell += ch;
   }
 
-  out.push(current);
-  return out.map((v) => v.trim());
-}
+  currentRow.push(currentCell);
 
-function normalizeHeader(header: string): string {
-  return header
-    .trim()
-    .toLowerCase()
-    .replace(/\uFEFF/g, "")
-    .replace(/\s+/g, "_");
+  const hasAnyValue =
+    currentRow.length > 1 || currentRow[0]?.trim().length > 0;
+
+  if (hasAnyValue) {
+    rows.push(currentRow);
+  }
+
+  return rows;
 }
 
 export function parseCsvText(text: string): ParsedCsvRow[] {
-  const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const lines = normalizedText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  const matrix = parseCsv(text);
 
-  if (lines.length === 0) {
+  if (matrix.length === 0) {
     return [];
   }
 
-  const headers = splitCsvLine(lines[0]).map(normalizeHeader);
+  const headers = matrix[0].map((header, index) => {
+    const normalized = normalizeHeader(header);
+    return normalized || `column_${index + 1}`;
+  });
+
   const rows: ParsedCsvRow[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
-    const values = splitCsvLine(lines[i]);
+  for (let i = 1; i < matrix.length; i++) {
+    const values = matrix[i];
 
     const raw: Record<string, string> = {};
 
     for (let c = 0; c < headers.length; c++) {
-      raw[headers[c] || `column_${c + 1}`] = values[c] ?? "";
+      raw[headers[c]] = (values[c] ?? "").trim();
     }
 
     let errorCode: string | null = null;
     let errorMessage: string | null = null;
 
-    if (values.length === 0 || Object.values(raw).every((v) => !String(v).trim())) {
+    const isEmptyRow = Object.values(raw).every((v) => !v.trim());
+
+    if (isEmptyRow) {
       errorCode = "empty_row";
       errorMessage = "CSV row is empty";
     }
