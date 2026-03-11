@@ -12,6 +12,125 @@ function isUuid(value: string) {
   );
 }
 
+type RawRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): RawRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as RawRecord;
+}
+
+function pickString(record: RawRecord | null, keys: string[]): string | null {
+  if (!record) return null;
+
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return null;
+}
+
+function pickNumberLike(record: RawRecord | null, keys: string[]): string | null {
+  if (!record) return null;
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function compactJson(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "—";
+  }
+}
+
+function extractReviewFields(raw: unknown) {
+  const record = asRecord(raw);
+
+  const title =
+    pickString(record, [
+      "title",
+      "track_title",
+      "song_title",
+      "work_title",
+      "release_title",
+      "track",
+      "song",
+      "name",
+    ]) || "—";
+
+  const artist =
+    pickString(record, [
+      "artist",
+      "artist_name",
+      "party",
+      "party_name",
+      "performer",
+      "main_artist",
+      "recipient",
+      "counterparty",
+    ]) || "—";
+
+  const amount =
+    pickNumberLike(record, [
+      "amount",
+      "net_amount",
+      "gross_amount",
+      "royalty_amount",
+      "revenue",
+      "income",
+      "total",
+      "value",
+    ]) || "—";
+
+  const currency =
+    pickString(record, [
+      "currency",
+      "currency_code",
+      "curr",
+    ]) || "—";
+
+  const period =
+    pickString(record, [
+      "period",
+      "period_name",
+      "statement_period",
+      "sales_period",
+      "earning_period",
+      "month",
+      "date",
+    ]) ||
+    (() => {
+      const start = pickString(record, ["period_start", "start_date", "from"]);
+      const end = pickString(record, ["period_end", "end_date", "to"]);
+      if (start && end) return `${start} → ${end}`;
+      if (start) return start;
+      if (end) return end;
+      return "—";
+    })();
+
+  return {
+    title,
+    artist,
+    amount,
+    currency,
+    period,
+    rawPreview: compactJson(raw),
+  };
+}
+
 export default async function ImportDetailPage({
   params,
 }: {
@@ -52,7 +171,7 @@ export default async function ImportDetailPage({
 
   const { data: rows, error: rowsError } = await supabase
     .from("import_rows")
-    .select("id,row_number,status,error,raw,created_at")
+    .select("id,row_number,raw,created_at")
     .eq("import_id", importJobId)
     .order("row_number", { ascending: true })
     .limit(200);
@@ -103,13 +222,19 @@ export default async function ImportDetailPage({
     redirect(`/c/${companySlug}/imports`);
   }
 
+  const parsedRows =
+    rows?.map((row) => ({
+      ...row,
+      review: extractReviewFields(row.raw),
+    })) ?? [];
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Import detail</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">Import review</h1>
           <p className="text-sm text-slate-500">
-            Import job for company: {company.name || company.slug}
+            Review imported rows for company: {company.name || company.slug}
           </p>
         </div>
 
@@ -134,10 +259,10 @@ export default async function ImportDetailPage({
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         {job ? (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <div>
               <div className="text-sm text-slate-500">Import ID</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
+              <div className="mt-1 break-all text-sm font-medium text-slate-900">
                 {job.id}
               </div>
             </div>
@@ -167,38 +292,81 @@ export default async function ImportDetailPage({
                   : "—"}
               </div>
             </div>
+
+            <div>
+              <div className="text-sm text-slate-500">Rows loaded</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">
+                {parsedRows.length}
+              </div>
+            </div>
           </div>
         ) : (
           <p className="text-sm text-slate-500">Import job not found.</p>
         )}
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[90px_110px_1fr_1.6fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
-          <div>Row</div>
-          <div>Status</div>
-          <div>Error</div>
-          <div>Raw</div>
+      <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-6 py-4">
+          <h2 className="text-lg font-semibold text-slate-900">Parsed row review</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Heuristic preview from <code>raw</code>. This is the step before mapping
+            and matching.
+          </p>
         </div>
 
-        {!rows || rows.length === 0 ? (
+        {!parsedRows.length ? (
           <div className="px-6 py-8 text-sm text-slate-500">
             No import rows found.
           </div>
         ) : (
-          rows.map((row) => (
-            <div
-              key={row.id}
-              className="grid grid-cols-[90px_110px_1fr_1.6fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
-            >
-              <div className="text-sm text-slate-900">{row.row_number ?? "—"}</div>
-              <div className="text-sm text-slate-600">{row.status || "—"}</div>
-              <div className="text-sm text-slate-600">{row.error || "—"}</div>
-              <div className="truncate text-sm text-slate-500">
-                {row.raw ? JSON.stringify(row.raw) : "—"}
+          <div className="overflow-x-auto">
+            <div className="min-w-[1200px]">
+              <div className="grid grid-cols-[80px_1.4fr_1.2fr_130px_110px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+                <div>Row</div>
+                <div>Title</div>
+                <div>Artist / party</div>
+                <div>Amount</div>
+                <div>Currency</div>
+                <div>Period</div>
+                <div>Raw preview</div>
               </div>
+
+              {parsedRows.map((row) => (
+                <div
+                  key={row.id}
+                  className="grid grid-cols-[80px_1.4fr_1.2fr_130px_110px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+                >
+                  <div className="text-sm text-slate-900">
+                    {row.row_number ?? "—"}
+                  </div>
+
+                  <div className="text-sm text-slate-900">
+                    {row.review.title}
+                  </div>
+
+                  <div className="text-sm text-slate-700">
+                    {row.review.artist}
+                  </div>
+
+                  <div className="text-sm text-slate-700">
+                    {row.review.amount}
+                  </div>
+
+                  <div className="text-sm text-slate-700">
+                    {row.review.currency}
+                  </div>
+
+                  <div className="text-sm text-slate-700">
+                    {row.review.period}
+                  </div>
+
+                  <div className="truncate text-sm text-slate-500">
+                    {row.review.rawPreview}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))
+          </div>
         )}
       </div>
     </div>
