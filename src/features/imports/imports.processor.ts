@@ -1,129 +1,117 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { parseCsvText } from "./imports.parser";
 
-export type ImportJobRow = {
+type ImportJobForProcessing = {
   id: string;
   company_id: string;
   filename: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
   status: string | null;
-  created_at: string | null;
-  updated_at: string | null;
 };
 
-export type ImportRowRow = {
-  id: string;
-  import_id: string;
-  raw: Record<string, unknown> | null;
-  created_at: string | null;
-};
-
-export async function listImportJobs(
-  companyId: string,
-  limit = 100
-): Promise<ImportJobRow[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
+export async function processImportJob(importJobId: string) {
+  const { data: job, error: jobError } = await supabaseAdmin
     .from("import_jobs")
-    .select("id, company_id, filename, status, created_at, updated_at")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    throw new Error(`listImportJobs: ${error.message}`);
-  }
-
-  return (data ?? []) as ImportJobRow[];
-}
-
-export async function getLatestImportJob(
-  companyId: string
-): Promise<ImportJobRow | null> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("import_jobs")
-    .select("id, company_id, filename, status, created_at, updated_at")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`getLatestImportJob: ${error.message}`);
-  }
-
-  return (data ?? null) as ImportJobRow | null;
-}
-
-export async function getImportJobById(
-  companyId: string,
-  importJobId: string
-): Promise<ImportJobRow | null> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("import_jobs")
-    .select("id, company_id, filename, status, created_at, updated_at")
-    .eq("company_id", companyId)
+    .select("id, company_id, filename, storage_bucket, storage_path, status")
     .eq("id", importJobId)
     .maybeSingle();
 
-  if (error) {
-    throw new Error(`getImportJobById: ${error.message}`);
-  }
-
-  return (data ?? null) as ImportJobRow | null;
-}
-
-export async function listImportRows(
-  importJobId: string,
-  limit = 500
-): Promise<ImportRowRow[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("import_rows")
-    .select("id, import_id, raw, created_at")
-    .eq("import_id", importJobId)
-    .order("created_at", { ascending: true })
-    .limit(limit);
-
-  if (error) {
-    throw new Error(`listImportRows: ${error.message}`);
-  }
-
-  return (data ?? []) as ImportRowRow[];
-}
-
-export async function deleteLatestImportJob(companyId: string) {
-  const supabase = await createClient();
-
-  const latest = await getLatestImportJob(companyId);
-
-  if (!latest) {
-    return { deleted: false, reason: "no_latest_import" as const };
-  }
-
-  const { error: rowsError } = await supabase
-    .from("import_rows")
-    .delete()
-    .eq("import_id", latest.id);
-
-  if (rowsError) {
-    throw new Error(`deleteLatestImportJob import_rows: ${rowsError.message}`);
-  }
-
-  const { error: jobError } = await supabase
-    .from("import_jobs")
-    .delete()
-    .eq("id", latest.id)
-    .eq("company_id", companyId);
-
   if (jobError) {
-    throw new Error(`deleteLatestImportJob import_jobs: ${jobError.message}`);
+    throw new Error(`processImportJob load job: ${jobError.message}`);
   }
 
-  return { deleted: true, importJobId: latest.id };
+  if (!job) {
+    throw new Error("Import job not found");
+  }
+
+  const typedJob = job as ImportJobForProcessing;
+
+  if (!typedJob.storage_bucket || !typedJob.storage_path) {
+    throw new Error("Import job is missing storage location");
+  }
+
+  const { error: setProcessingError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: "processing",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", typedJob.id);
+
+  if (setProcessingError) {
+    throw new Error(`set processing status: ${setProcessingError.message}`);
+  }
+
+  try {
+    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+      .from(typedJob.storage_bucket)
+      .download(typedJob.storage_path);
+
+    if (downloadError || !fileData) {
+      throw new Error(downloadError?.message ?? "Could not download file from storage");
+    }
+
+    const text = await fileData.text();
+    const parsedRows = parseCsvText(text);
+
+    const { error: deleteError } = await supabaseAdmin
+      .from("import_rows")
+      .delete()
+      .eq("import_id", typedJob.id);
+
+    if (deleteError) {
+      throw new Error(`delete existing import_rows: ${deleteError.message}`);
+    }
+
+    if (parsedRows.length > 0) {
+      const rowsToInsert = parsedRows.map((row) => ({
+        import_id: typedJob.id,
+        raw: {
+          row_index: row.rowIndex,
+          ...row.raw,
+        },
+      }));
+
+      const { error: insertError } = await supabaseAdmin
+        .from("import_rows")
+        .insert(rowsToInsert);
+
+      if (insertError) {
+        throw new Error(`insert import_rows: ${insertError.message}`);
+      }
+    }
+
+    const { error: updateDoneError } = await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "processed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", typedJob.id);
+
+    if (updateDoneError) {
+      throw new Error(`update import_jobs after processing: ${updateDoneError.message}`);
+    }
+
+    return {
+      ok: true,
+      totalRows: parsedRows.length,
+      status: "processed",
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown processing error";
+
+    await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", typedJob.id);
+
+    throw new Error(message);
+  }
 }
