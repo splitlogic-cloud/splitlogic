@@ -489,8 +489,8 @@ export default async function ImportDetailPage({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <div className="min-w-[1800px]">
-              <div className="grid grid-cols-[80px_1.4fr_1.3fr_170px_220px_130px_150px_140px_150px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+            <div className="min-w-[1400px]">
+              <div className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_120px_1.4fr] gap-3 border-b border-slate-200 px-4 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
                 <div>Row</div>
                 <div>Title</div>
                 <div>Artist</div>
@@ -508,17 +508,17 @@ export default async function ImportDetailPage({
               {parsedRows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-[80px_1.4fr_1.3fr_170px_220px_130px_150px_140px_150px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+                  className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_120px_1.4fr] gap-3 border-b border-slate-100 px-4 py-4 last:border-b-0"
                 >
                   <div className="text-sm text-slate-900">
                     {row.row_number ?? "—"}
                   </div>
 
-                  <div className="text-sm text-slate-900">
+                  <div className="truncate text-sm text-slate-900" title={row.review.title}>
                     {row.review.title}
                   </div>
 
-                  <div className="text-sm text-slate-700">
+                  <div className="truncate text-sm text-slate-700" title={row.review.artist}>
                     {row.review.artist}
                   </div>
 
@@ -526,7 +526,7 @@ export default async function ImportDetailPage({
                     {row.review.isrc}
                   </div>
 
-                  <div className="text-sm text-slate-700">
+                  <div className="truncate text-sm text-slate-700" title={row.review.store}>
                     {row.review.store}
                   </div>
 
@@ -550,12 +550,12 @@ export default async function ImportDetailPage({
                     {row.review.saleCurrency}
                   </div>
 
-                  <div className="text-sm text-slate-700">
+                  <div className="truncate text-sm text-slate-700" title={row.review.period}>
                     {row.review.period}
                   </div>
 
                   <div
-                    className="truncate text-sm text-slate-500"
+                    className="truncate text-xs text-slate-500"
                     title={row.rawPreview}
                   >
                     {row.rawPreview}
