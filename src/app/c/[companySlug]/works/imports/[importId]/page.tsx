@@ -153,13 +153,7 @@ function extractReviewFields(raw: unknown): ReviewRow {
   );
 
   const isrc = toDisplayString(
-    findValue(record, [
-      "ISRC",
-      "isrc",
-      "Asset ISRC",
-      "ASSET ISRC",
-      "asset_isrc",
-    ])
+    findValue(record, ["ISRC", "isrc", "Asset ISRC", "ASSET ISRC", "asset_isrc"])
   );
 
   const store = toDisplayString(
@@ -484,7 +478,7 @@ export default async function ImportDetailPage({
             <div>
               <div className="text-sm text-slate-500">Rows shown</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
-                {parsedRows.length}
+                {parsedRows.length.toLocaleString("en-US")}
               </div>
             </div>
 
