@@ -15,17 +15,17 @@ function normalizeHeader(header: string): string {
     .replace(/\s+/g, "_");
 }
 
-function parseCsv(text: string): string[][] {
+function parseCsvMatrix(text: string): string[][] {
+  const input = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
   const rows: string[][] = [];
   let currentRow: string[] = [];
   let currentCell = "";
   let inQuotes = false;
 
-  const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-  for (let i = 0; i < normalizedText.length; i++) {
-    const ch = normalizedText[i];
-    const next = normalizedText[i + 1];
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    const next = input[i + 1];
 
     if (ch === '"') {
       if (inQuotes && next === '"') {
@@ -56,36 +56,49 @@ function parseCsv(text: string): string[][] {
 
   currentRow.push(currentCell);
 
-  const hasAnyValue =
-    currentRow.length > 1 || currentRow[0]?.trim().length > 0;
+  const hasLastRowContent =
+    currentRow.length > 1 || currentRow.some((cell) => cell.trim().length > 0);
 
-  if (hasAnyValue) {
+  if (hasLastRowContent) {
     rows.push(currentRow);
   }
 
   return rows;
 }
 
+function padOrTrimRow(values: string[], targetLength: number): string[] {
+  if (values.length === targetLength) return values;
+
+  if (values.length < targetLength) {
+    return [...values, ...Array.from({ length: targetLength - values.length }, () => "")];
+  }
+
+  return values.slice(0, targetLength);
+}
+
 export function parseCsvText(text: string): ParsedCsvRow[] {
-  const matrix = parseCsv(text);
+  const matrix = parseCsvMatrix(text);
 
   if (matrix.length === 0) {
     return [];
   }
 
-  const headers = matrix[0].map((header, index) => {
+  const rawHeaders = matrix[0];
+  const headers = rawHeaders.map((header, index) => {
     const normalized = normalizeHeader(header);
     return normalized || `column_${index + 1}`;
   });
 
-  const rows: ParsedCsvRow[] = [];
+  const expectedColumnCount = headers.length;
+  const parsedRows: ParsedCsvRow[] = [];
 
   for (let i = 1; i < matrix.length; i++) {
-    const values = matrix[i];
+    const originalValues = matrix[i];
+    const values = padOrTrimRow(originalValues, expectedColumnCount);
 
     const raw: Record<string, string> = {};
 
-    for (let c = 0; c < headers.length; c++) {
+    for (let c = 0; c < expectedColumnCount; c++) {
       raw[headers[c]] = (values[c] ?? "").trim();
     }
 
@@ -97,9 +110,12 @@ export function parseCsvText(text: string): ParsedCsvRow[] {
     if (isEmptyRow) {
       errorCode = "empty_row";
       errorMessage = "CSV row is empty";
+    } else if (originalValues.length !== expectedColumnCount) {
+      errorCode = "column_count_mismatch";
+      errorMessage = `Expected ${expectedColumnCount} columns, got ${originalValues.length}`;
     }
 
-    rows.push({
+    parsedRows.push({
       rowIndex: i,
       raw,
       errorCode,
@@ -107,5 +123,5 @@ export function parseCsvText(text: string): ParsedCsvRow[] {
     });
   }
 
-  return rows;
+  return parsedRows;
 }
