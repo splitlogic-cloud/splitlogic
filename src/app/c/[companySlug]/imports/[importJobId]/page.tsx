@@ -153,13 +153,7 @@ function extractReviewFields(raw: unknown): ReviewRow {
   );
 
   const isrc = toDisplayString(
-    findValue(record, [
-      "ISRC",
-      "isrc",
-      "Asset ISRC",
-      "ASSET ISRC",
-      "asset_isrc",
-    ])
+    findValue(record, ["ISRC", "isrc", "Asset ISRC", "ASSET ISRC", "asset_isrc"])
   );
 
   const store = toDisplayString(
@@ -213,8 +207,8 @@ function extractReviewFields(raw: unknown): ReviewRow {
     "total",
   ]);
 
-  let amount: string = "—";
-  let currency: string = "—";
+  let amount = "—";
+  let currency = "—";
 
   if (isMeaningfulValue(usd)) {
     amount = toDisplayString(usd);
@@ -338,12 +332,23 @@ export default async function ImportDetailPage({
     throw new Error(`load import job failed: ${jobError.message}`);
   }
 
+  const { count: totalRowsCount, error: countError } = await supabase
+    .from("import_rows")
+    .select("*", { count: "exact", head: true })
+    .eq("import_id", importJobId);
+
+  if (countError) {
+    throw new Error(`count import rows failed: ${countError.message}`);
+  }
+
+  const reviewLimit = 200;
+
   const { data: rows, error: rowsError } = await supabase
     .from("import_rows")
     .select("id,row_number,raw,created_at")
     .eq("import_id", importJobId)
     .order("row_number", { ascending: true })
-    .limit(200);
+    .limit(reviewLimit);
 
   if (rowsError) {
     throw new Error(`load import rows failed: ${rowsError.message}`);
@@ -436,7 +441,7 @@ export default async function ImportDetailPage({
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         {job ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
             <div>
               <div className="text-sm text-slate-500">Import ID</div>
               <div className="mt-1 break-all text-sm font-medium text-slate-900">
@@ -446,7 +451,7 @@ export default async function ImportDetailPage({
 
             <div>
               <div className="text-sm text-slate-500">File</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
+              <div className="mt-1 break-all text-sm font-medium text-slate-900">
                 {fileName}
               </div>
             </div>
@@ -471,9 +476,16 @@ export default async function ImportDetailPage({
             </div>
 
             <div>
-              <div className="text-sm text-slate-500">Rows loaded</div>
+              <div className="text-sm text-slate-500">Rows shown</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
-                {parsedRows.length}
+                {parsedRows.length.toLocaleString("en-US")}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-sm text-slate-500">Total rows</div>
+              <div className="mt-1 text-sm font-medium text-slate-900">
+                {(totalRowsCount ?? 0).toLocaleString("en-US")}
               </div>
             </div>
           </div>
@@ -486,7 +498,8 @@ export default async function ImportDetailPage({
         <div className="border-b border-slate-200 px-6 py-4">
           <h2 className="text-lg font-semibold text-slate-900">Parsed row review</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Review preview from <code>raw</code> with normalized header matching.
+            Showing {parsedRows.length.toLocaleString("en-US")} of{" "}
+            {(totalRowsCount ?? 0).toLocaleString("en-US")} rows.
           </p>
         </div>
 
@@ -497,7 +510,7 @@ export default async function ImportDetailPage({
         ) : (
           <div className="overflow-x-auto">
             <div className="min-w-[1500px]">
-              <div className="grid grid-cols-[80px_1.5fr_1.4fr_180px_150px_130px_120px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+              <div className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_120px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
                 <div>Row</div>
                 <div>Title</div>
                 <div>Artist</div>
@@ -513,7 +526,7 @@ export default async function ImportDetailPage({
               {parsedRows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-[80px_1.5fr_1.4fr_180px_150px_130px_120px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+                  className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_120px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
                 >
                   <div className="text-sm text-slate-900">
                     {row.row_number ?? "—"}
