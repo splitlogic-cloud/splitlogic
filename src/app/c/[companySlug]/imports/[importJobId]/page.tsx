@@ -14,8 +14,10 @@ type ReviewRow = {
   isrc: string;
   store: string;
   country: string;
-  amount: string;
-  currency: string;
+  netAccountAmount: string;
+  accountCurrency: string;
+  grossSaleAmount: string;
+  saleCurrency: string;
   period: string;
 };
 
@@ -109,8 +111,10 @@ function extractReviewFields(raw: unknown): ReviewRow {
       isrc: "—",
       store: "—",
       country: "—",
-      amount: "—",
-      currency: "—",
+      netAccountAmount: "—",
+      accountCurrency: "—",
+      grossSaleAmount: "—",
+      saleCurrency: "—",
       period: "—",
     };
   }
@@ -149,12 +153,7 @@ function extractReviewFields(raw: unknown): ReviewRow {
   );
 
   const isrc = toDisplayString(
-    findValue(record, [
-      "isrc",
-      "ISRC",
-      "asset_isrc",
-      "Asset ISRC",
-    ])
+    findValue(record, ["isrc", "ISRC", "asset_isrc", "Asset ISRC"])
   );
 
   const store = toDisplayString(
@@ -182,10 +181,7 @@ function extractReviewFields(raw: unknown): ReviewRow {
   );
 
   const accountCurrency = toDisplayString(
-    findValue(record, [
-      "account_currency",
-      "ACCOUNT CURRENCY",
-    ])
+    findValue(record, ["account_currency", "ACCOUNT CURRENCY"])
   );
 
   const saleCurrency = toDisplayString(
@@ -198,56 +194,23 @@ function extractReviewFields(raw: unknown): ReviewRow {
     ])
   );
 
-  const netShareAccountCurrency = findValue(record, [
-    "net_share_account_currency",
-    "NET SHARE ACCOUNT CURRENCY",
-  ]);
+  const netAccountAmount = toDisplayString(
+    findValue(record, [
+      "net_share_account_currency",
+      "NET SHARE ACCOUNT CURRENCY",
+      "net_amount_account_currency",
+    ])
+  );
 
-  const grossRevenueAccountCurrency = findValue(record, [
-    "gross_revenue_account_currency",
-    "GROSS REVENUE ACCOUNT CURRENCY",
-  ]);
-
-  const grossRevenueSaleCurrency = findValue(record, [
-    "gross_revenue_sale_currency",
-    "GROSS REVENUE SALE CURRENCY",
-  ]);
-
-  const unitPriceSaleCurrency = findValue(record, [
-    "unit_price_sale_currency",
-    "UNIT PRICE SALE CURRENCY",
-  ]);
-
-  const reportedRoyalty = findValue(record, [
-    "reported_royalty",
-    "REPORTED ROYALTY",
-    "royalty",
-  ]);
-
-  let amount = "—";
-  let currency = "—";
-
-  if (isMeaningfulValue(netShareAccountCurrency)) {
-    amount = toDisplayString(netShareAccountCurrency);
-    currency = accountCurrency !== "—" ? accountCurrency : "—";
-  } else if (isMeaningfulValue(grossRevenueAccountCurrency)) {
-    amount = toDisplayString(grossRevenueAccountCurrency);
-    currency = accountCurrency !== "—" ? accountCurrency : "—";
-  } else if (isMeaningfulValue(grossRevenueSaleCurrency)) {
-    amount = toDisplayString(grossRevenueSaleCurrency);
-    currency = saleCurrency !== "—" ? saleCurrency : "—";
-  } else if (isMeaningfulValue(unitPriceSaleCurrency)) {
-    amount = toDisplayString(unitPriceSaleCurrency);
-    currency = saleCurrency !== "—" ? saleCurrency : "—";
-  } else if (isMeaningfulValue(reportedRoyalty)) {
-    amount = toDisplayString(reportedRoyalty);
-    currency =
-      accountCurrency !== "—"
-        ? accountCurrency
-        : saleCurrency !== "—"
-        ? saleCurrency
-        : "—";
-  }
+  const grossSaleAmount = toDisplayString(
+    findValue(record, [
+      "gross_revenue_sale_currency",
+      "GROSS REVENUE SALE CURRENCY",
+      "gross_sale_amount",
+      "unit_price_sale_currency",
+      "UNIT PRICE SALE CURRENCY",
+    ])
+  );
 
   const periodStart = findValue(record, [
     "sale_start_date",
@@ -303,8 +266,10 @@ function extractReviewFields(raw: unknown): ReviewRow {
     isrc,
     store,
     country,
-    amount,
-    currency,
+    netAccountAmount,
+    accountCurrency,
+    grossSaleAmount,
+    saleCurrency,
     period,
   };
 }
@@ -524,16 +489,18 @@ export default async function ImportDetailPage({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <div className="min-w-[1500px]">
-              <div className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_140px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+            <div className="min-w-[1800px]">
+              <div className="grid grid-cols-[80px_1.4fr_1.3fr_170px_220px_130px_150px_140px_150px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
                 <div>Row</div>
                 <div>Title</div>
                 <div>Artist</div>
                 <div>ISRC</div>
                 <div>Store</div>
                 <div>Country</div>
-                <div>Amount</div>
-                <div>Currency</div>
+                <div>Net account</div>
+                <div>Account curr</div>
+                <div>Gross sale</div>
+                <div>Sale curr</div>
                 <div>Period</div>
                 <div>Raw preview</div>
               </div>
@@ -541,7 +508,7 @@ export default async function ImportDetailPage({
               {parsedRows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_140px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+                  className="grid grid-cols-[80px_1.4fr_1.3fr_170px_220px_130px_150px_140px_150px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
                 >
                   <div className="text-sm text-slate-900">
                     {row.row_number ?? "—"}
@@ -568,11 +535,19 @@ export default async function ImportDetailPage({
                   </div>
 
                   <div className="text-sm text-slate-700">
-                    {row.review.amount}
+                    {row.review.netAccountAmount}
                   </div>
 
                   <div className="text-sm text-slate-700">
-                    {row.review.currency}
+                    {row.review.accountCurrency}
+                  </div>
+
+                  <div className="text-sm text-slate-700">
+                    {row.review.grossSaleAmount}
+                  </div>
+
+                  <div className="text-sm text-slate-700">
+                    {row.review.saleCurrency}
                   </div>
 
                   <div className="text-sm text-slate-700">
