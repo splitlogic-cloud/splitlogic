@@ -117,15 +117,14 @@ function extractReviewFields(raw: unknown): ReviewRow {
 
   const title = toDisplayString(
     findValue(record, [
+      "track",
       "TRACK",
-      "Track",
       "title",
       "Title",
+      "product",
       "PRODUCT",
-      "Product",
-      "ASSET TITLE",
-      "Asset Title",
       "asset_title",
+      "Asset Title",
       "song_title",
       "track_title",
       "work_title",
@@ -136,15 +135,12 @@ function extractReviewFields(raw: unknown): ReviewRow {
 
   const artist = toDisplayString(
     findValue(record, [
-      "TRACK ARTIST",
-      "Track Artist",
       "track_artist",
-      "PRODUCT ARTIST",
-      "Product Artist",
+      "TRACK ARTIST",
       "product_artist",
-      "ASSET ARTIST",
-      "Asset Artist",
+      "PRODUCT ARTIST",
       "asset_artist",
+      "Asset Artist",
       "artist",
       "artist_name",
       "main_artist",
@@ -154,24 +150,21 @@ function extractReviewFields(raw: unknown): ReviewRow {
 
   const isrc = toDisplayString(
     findValue(record, [
-      "ISRC",
       "isrc",
-      "Asset ISRC",
-      "ASSET ISRC",
+      "ISRC",
       "asset_isrc",
+      "Asset ISRC",
     ])
   );
 
   const store = toDisplayString(
     findValue(record, [
-      "STORE",
-      "Store",
       "store",
-      "DSP",
+      "STORE",
       "dsp",
-      "Sale Store Name",
-      "SALE STORE NAME",
+      "DSP",
       "sale_store_name",
+      "Sale Store Name",
       "service_detail",
       "SERVICE DETAIL",
     ])
@@ -179,96 +172,94 @@ function extractReviewFields(raw: unknown): ReviewRow {
 
   const country = toDisplayString(
     findValue(record, [
-      "SALE COUNTRY",
-      "Sale Country",
       "sale_country",
+      "SALE COUNTRY",
       "country",
       "Country",
-      "TERRITORY",
-      "Territory",
       "territory",
+      "TERRITORY",
     ])
   );
 
-  const usd = findValue(record, ["USD", "usd"]);
-  const sek = findValue(record, ["SEK", "sek"]);
-  const eur = findValue(record, ["EUR", "eur"]);
-  const gbp = findValue(record, ["GBP", "gbp"]);
+  const accountCurrency = toDisplayString(
+    findValue(record, [
+      "account_currency",
+      "ACCOUNT CURRENCY",
+    ])
+  );
 
-  const netReceipts = findValue(record, [
-    "Sale net receipts",
-    "SALE NET RECEIPTS",
-    "sale_net_receipts",
-    "sale net receipt",
+  const saleCurrency = toDisplayString(
+    findValue(record, [
+      "sale_currency",
+      "SALE CURRENCY",
+      "currency",
+      "Currency",
+      "currency_code",
+    ])
+  );
+
+  const netShareAccountCurrency = findValue(record, [
+    "net_share_account_currency",
+    "NET SHARE ACCOUNT CURRENCY",
+  ]);
+
+  const grossRevenueAccountCurrency = findValue(record, [
+    "gross_revenue_account_currency",
+    "GROSS REVENUE ACCOUNT CURRENCY",
+  ]);
+
+  const grossRevenueSaleCurrency = findValue(record, [
+    "gross_revenue_sale_currency",
+    "GROSS REVENUE SALE CURRENCY",
+  ]);
+
+  const unitPriceSaleCurrency = findValue(record, [
+    "unit_price_sale_currency",
+    "UNIT PRICE SALE CURRENCY",
   ]);
 
   const reportedRoyalty = findValue(record, [
-    "Reported Royalty",
-    "REPORTED ROYALTY",
     "reported_royalty",
+    "REPORTED ROYALTY",
     "royalty",
   ]);
-
-  const genericAmount = findValue(record, [
-    "amount",
-    "Amount",
-    "net_amount",
-    "royalty_amount",
-    "revenue",
-    "income",
-    "value",
-    "total",
-  ]);
-
-  const explicitCurrency = toDisplayString(
-    findValue(record, [
-      "Currency",
-      "currency",
-      "currency_code",
-      "sale_currency",
-      "reporting_currency",
-    ])
-  );
 
   let amount = "—";
   let currency = "—";
 
-  if (isMeaningfulValue(usd)) {
-    amount = toDisplayString(usd);
-    currency = "USD";
-  } else if (isMeaningfulValue(sek)) {
-    amount = toDisplayString(sek);
-    currency = "SEK";
-  } else if (isMeaningfulValue(eur)) {
-    amount = toDisplayString(eur);
-    currency = "EUR";
-  } else if (isMeaningfulValue(gbp)) {
-    amount = toDisplayString(gbp);
-    currency = "GBP";
+  if (isMeaningfulValue(netShareAccountCurrency)) {
+    amount = toDisplayString(netShareAccountCurrency);
+    currency = accountCurrency !== "—" ? accountCurrency : "—";
+  } else if (isMeaningfulValue(grossRevenueAccountCurrency)) {
+    amount = toDisplayString(grossRevenueAccountCurrency);
+    currency = accountCurrency !== "—" ? accountCurrency : "—";
+  } else if (isMeaningfulValue(grossRevenueSaleCurrency)) {
+    amount = toDisplayString(grossRevenueSaleCurrency);
+    currency = saleCurrency !== "—" ? saleCurrency : "—";
+  } else if (isMeaningfulValue(unitPriceSaleCurrency)) {
+    amount = toDisplayString(unitPriceSaleCurrency);
+    currency = saleCurrency !== "—" ? saleCurrency : "—";
   } else if (isMeaningfulValue(reportedRoyalty)) {
     amount = toDisplayString(reportedRoyalty);
-    currency = explicitCurrency !== "—" ? explicitCurrency : "—";
-  } else if (isMeaningfulValue(netReceipts)) {
-    amount = toDisplayString(netReceipts);
-    currency = explicitCurrency !== "—" ? explicitCurrency : "—";
-  } else if (isMeaningfulValue(genericAmount)) {
-    amount = toDisplayString(genericAmount);
-    currency = explicitCurrency !== "—" ? explicitCurrency : "—";
+    currency =
+      accountCurrency !== "—"
+        ? accountCurrency
+        : saleCurrency !== "—"
+        ? saleCurrency
+        : "—";
   }
 
   const periodStart = findValue(record, [
-    "Sale Start date",
-    "SALE START DATE",
     "sale_start_date",
+    "SALE START DATE",
     "period_start",
     "start_date",
     "from",
   ]);
 
   const periodEnd = findValue(record, [
-    "Sale End date",
-    "SALE END DATE",
     "sale_end_date",
+    "SALE END DATE",
     "period_end",
     "end_date",
     "to",
@@ -276,9 +267,10 @@ function extractReviewFields(raw: unknown): ReviewRow {
 
   let period = toDisplayString(
     findValue(record, [
-      "STATEMENT PERIOD",
-      "Statement Period",
       "statement_period",
+      "STATEMENT PERIOD",
+      "original_statement_period",
+      "ORIGINAL STATEMENT PERIOD",
       "period",
       "Period",
       "period_name",
@@ -533,7 +525,7 @@ export default async function ImportDetailPage({
         ) : (
           <div className="overflow-x-auto">
             <div className="min-w-[1500px]">
-              <div className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_120px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+              <div className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_140px_120px_180px_2fr] gap-4 border-b border-slate-200 px-6 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
                 <div>Row</div>
                 <div>Title</div>
                 <div>Artist</div>
@@ -549,7 +541,7 @@ export default async function ImportDetailPage({
               {parsedRows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_120px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
+                  className="grid grid-cols-[80px_1.5fr_1.4fr_180px_180px_130px_140px_120px_180px_2fr] gap-4 border-b border-slate-100 px-6 py-4 last:border-b-0"
                 >
                   <div className="text-sm text-slate-900">
                     {row.row_number ?? "—"}
