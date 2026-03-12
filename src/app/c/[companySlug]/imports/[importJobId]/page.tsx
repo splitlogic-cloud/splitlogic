@@ -153,7 +153,13 @@ function extractReviewFields(raw: unknown): ReviewRow {
   );
 
   const isrc = toDisplayString(
-    findValue(record, ["ISRC", "isrc", "Asset ISRC", "ASSET ISRC", "asset_isrc"])
+    findValue(record, [
+      "ISRC",
+      "isrc",
+      "Asset ISRC",
+      "ASSET ISRC",
+      "asset_isrc",
+    ])
   );
 
   const store = toDisplayString(
@@ -186,16 +192,23 @@ function extractReviewFields(raw: unknown): ReviewRow {
 
   const usd = findValue(record, ["USD", "usd"]);
   const sek = findValue(record, ["SEK", "sek"]);
+  const eur = findValue(record, ["EUR", "eur"]);
+  const gbp = findValue(record, ["GBP", "gbp"]);
+
   const netReceipts = findValue(record, [
     "Sale net receipts",
     "SALE NET RECEIPTS",
     "sale_net_receipts",
+    "sale net receipt",
   ]);
+
   const reportedRoyalty = findValue(record, [
     "Reported Royalty",
     "REPORTED ROYALTY",
     "reported_royalty",
+    "royalty",
   ]);
+
   const genericAmount = findValue(record, [
     "amount",
     "Amount",
@@ -207,6 +220,16 @@ function extractReviewFields(raw: unknown): ReviewRow {
     "total",
   ]);
 
+  const explicitCurrency = toDisplayString(
+    findValue(record, [
+      "Currency",
+      "currency",
+      "currency_code",
+      "sale_currency",
+      "reporting_currency",
+    ])
+  );
+
   let amount = "—";
   let currency = "—";
 
@@ -216,21 +239,21 @@ function extractReviewFields(raw: unknown): ReviewRow {
   } else if (isMeaningfulValue(sek)) {
     amount = toDisplayString(sek);
     currency = "SEK";
-  } else if (isMeaningfulValue(netReceipts)) {
-    amount = toDisplayString(netReceipts);
-    currency = toDisplayString(
-      findValue(record, ["Currency", "currency", "currency_code"])
-    );
+  } else if (isMeaningfulValue(eur)) {
+    amount = toDisplayString(eur);
+    currency = "EUR";
+  } else if (isMeaningfulValue(gbp)) {
+    amount = toDisplayString(gbp);
+    currency = "GBP";
   } else if (isMeaningfulValue(reportedRoyalty)) {
     amount = toDisplayString(reportedRoyalty);
-    currency = toDisplayString(
-      findValue(record, ["Currency", "currency", "currency_code"])
-    );
+    currency = explicitCurrency !== "—" ? explicitCurrency : "—";
+  } else if (isMeaningfulValue(netReceipts)) {
+    amount = toDisplayString(netReceipts);
+    currency = explicitCurrency !== "—" ? explicitCurrency : "—";
   } else if (isMeaningfulValue(genericAmount)) {
     amount = toDisplayString(genericAmount);
-    currency = toDisplayString(
-      findValue(record, ["Currency", "currency", "currency_code"])
-    );
+    currency = explicitCurrency !== "—" ? explicitCurrency : "—";
   }
 
   const periodStart = findValue(record, [
