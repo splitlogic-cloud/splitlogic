@@ -12,6 +12,11 @@ type CompanyRecord = {
   name: string | null;
 };
 
+function toSafeNumber(value: string | undefined) {
+  const num = Number(value ?? 0);
+  return Number.isFinite(num) ? num : 0;
+}
+
 export default async function WorkImportPage({
   params,
   searchParams,
@@ -23,6 +28,7 @@ export default async function WorkImportPage({
     skipped?: string;
     upserted?: string;
     errors?: string;
+    firstError?: string;
   }>;
 }) {
   const { companySlug } = await params;
@@ -44,11 +50,15 @@ export default async function WorkImportPage({
 
   const typedCompany = company as CompanyRecord;
 
-  const total = Number(resolvedSearchParams?.total ?? 0);
-  const valid = Number(resolvedSearchParams?.valid ?? 0);
-  const skipped = Number(resolvedSearchParams?.skipped ?? 0);
-  const upserted = Number(resolvedSearchParams?.upserted ?? 0);
-  const errorCount = Number(resolvedSearchParams?.errors ?? 0);
+  const total = toSafeNumber(resolvedSearchParams?.total);
+  const valid = toSafeNumber(resolvedSearchParams?.valid);
+  const skipped = toSafeNumber(resolvedSearchParams?.skipped);
+  const upserted = toSafeNumber(resolvedSearchParams?.upserted);
+  const errorCount = toSafeNumber(resolvedSearchParams?.errors);
+  const firstError = resolvedSearchParams?.firstError ?? "";
+
+  const hasSummary =
+    total > 0 || valid > 0 || skipped > 0 || upserted > 0 || errorCount > 0;
 
   return (
     <div className="space-y-6">
@@ -60,12 +70,21 @@ export default async function WorkImportPage({
           </p>
         </div>
 
-        <Link
-          href={`/c/${companySlug}`}
-          className="inline-flex rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-        >
-          Back
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/c/${companySlug}/imports`}
+            className="inline-flex rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Back to imports
+          </Link>
+
+          <Link
+            href={`/c/${companySlug}/works`}
+            className="inline-flex rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Back to works
+          </Link>
+        </div>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -75,6 +94,7 @@ export default async function WorkImportPage({
             Required columns: <span className="font-medium">isrc</span> and{" "}
             <span className="font-medium">title</span>.
           </p>
+
           <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-700">
             <pre className="whitespace-pre-wrap font-mono">
 {`isrc,title
@@ -85,7 +105,7 @@ GBKPL1942019,Another Track`}
         </div>
       </div>
 
-      {(total > 0 || valid > 0 || skipped > 0 || upserted > 0 || errorCount > 0) && (
+      {hasSummary ? (
         <div className="grid gap-4 md:grid-cols-5">
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="text-sm text-slate-500">Total rows</div>
@@ -112,7 +132,14 @@ GBKPL1942019,Another Track`}
             <div className="mt-1 text-2xl font-semibold text-slate-900">{errorCount}</div>
           </div>
         </div>
-      )}
+      ) : null}
+
+      {firstError ? (
+        <div className="rounded-3xl border border-red-200 bg-red-50 p-5 shadow-sm">
+          <div className="text-sm font-medium text-red-800">First error</div>
+          <div className="mt-2 break-words text-sm text-red-700">{firstError}</div>
+        </div>
+      ) : null}
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <form
@@ -126,6 +153,7 @@ GBKPL1942019,Another Track`}
             >
               Work catalog CSV
             </label>
+
             <input
               id="file"
               name="file"
@@ -148,8 +176,8 @@ GBKPL1942019,Another Track`}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Next step</h2>
         <p className="mt-2 text-sm text-slate-600">
-          After importing your catalog, go back to the import review page and run work
-          matching again.
+          After importing your catalog, go back to the import review page and run
+          work matching again.
         </p>
       </div>
     </div>
