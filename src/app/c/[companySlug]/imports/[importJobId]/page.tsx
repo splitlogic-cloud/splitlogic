@@ -2,7 +2,8 @@ import "server-only";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import RunWorkMatchingButton from "./RunWorkMatchingButton";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,44 @@ type ReviewRow = {
   grossSaleAmount: string;
   saleCurrency: string;
   period: string;
+};
+
+type MatchedWorkPreview = {
+  id: string;
+  title: string | null;
+  isrc: string | null;
+};
+
+type ImportRowRecord = {
+  id: string;
+  row_number: number | null;
+  raw: unknown;
+  created_at: string | null;
+  matched_work_id: string | null;
+  match_source: string | null;
+  match_confidence: number | string | null;
+  work?: MatchedWorkPreview | MatchedWorkPreview[] | null;
+};
+
+type ParsedImportRow = ImportRowRecord & {
+  review: ReviewRow;
+  rawPreview: string;
+  matchedWork: MatchedWorkPreview | null;
+};
+
+type CompanyRecord = {
+  id: string;
+  name: string | null;
+  slug: string | null;
+};
+
+type ImportJobRecord = {
+  id: string;
+  file_name?: string | null;
+  filename?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  processed_at?: string | null;
 };
 
 function isUuid(value: string) {
@@ -99,6 +138,16 @@ function compactJson(value: unknown) {
   } catch {
     return "—";
   }
+}
+
+function formatConfidence(value: number | string | null | undefined) {
+  if (value === null || value === undefined) return "—";
+
+  const numeric = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isFinite(numeric)) return "—";
+
+  return `${Math.round(numeric * 100)}%`;
 }
 
 function extractReviewFields(raw: unknown): ReviewRow {
@@ -274,20 +323,41 @@ function extractReviewFields(raw: unknown): ReviewRow {
   };
 }
 
+function normalizeMatchedWork(
+  work: MatchedWorkPreview | MatchedWorkPreview[] | null | undefined
+): MatchedWorkPreview | null {
+  if (!work) return null;
+  if (Array.isArray(work)) return work[0] ?? null;
+  return work;
+}
+
+function filterButtonClass(active: boolean) {
+  return active
+    ? "inline-flex rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
+    : "inline-flex rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50";
+}
+
 export default async function ImportDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ companySlug: string; importJobId: string }>;
+  searchParams?: Promise<{ filter?: string }>;
 }) {
   const { companySlug, importJobId } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : undefined;
+
+  const filter =
+    resolvedSearchParams?.filter === "matched" ||
+    resolvedSearchParams?.filter === "unmatched"
+      ? resolvedSearchParams.filter
+      : "all";
 
   if (!isUuid(importJobId)) {
     notFound();
   }
 
-  const supabase = await createClient();
-
-  const { data: company, error: companyError } = await supabase
+  const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
     .select("id,name,slug")
     .eq("slug", companySlug)
@@ -298,13 +368,15 @@ export default async function ImportDetailPage({
   }
 
   if (!company) {
-    throw new Error(`Company not found for slug: ${companySlug}`);
+    notFound();
   }
 
-  const { data: job, error: jobError } = await supabase
+  const typedCompany = company as CompanyRecord;
+
+  const { data: job, error: jobError } = await supabaseAdmin
     .from("import_jobs")
     .select("id,file_name,filename,status,created_at,processed_at")
-    .eq("company_id", company.id)
+    .eq("company_id", typedCompany.id)
     .eq("id", importJobId)
     .maybeSingle();
 
@@ -312,7 +384,13 @@ export default async function ImportDetailPage({
     throw new Error(`load import job failed: ${jobError.message}`);
   }
 
-  const { count: totalRowsCount, error: countError } = await supabase
+  if (!job) {
+    notFound();
+  }
+
+  const typedJob = job as ImportJobRecord;
+
+  const { count: totalRowsCount, error: countError } = await supabaseAdmin
     .from("import_rows")
     .select("*", { count: "exact", head: true })
     .eq("import_id", importJobId);
@@ -323,9 +401,22 @@ export default async function ImportDetailPage({
 
   const reviewLimit = 200;
 
-  const { data: rows, error: rowsError } = await supabase
+  const { data: rows, error: rowsError } = await supabaseAdmin
     .from("import_rows")
-    .select("id,row_number,raw,created_at")
+    .select(`
+      id,
+      row_number,
+      raw,
+      created_at,
+      matched_work_id,
+      match_source,
+      match_confidence,
+      work:matched_work_id (
+        id,
+        title,
+        isrc
+      )
+    `)
     .eq("import_id", importJobId)
     .order("row_number", { ascending: true })
     .limit(reviewLimit);
@@ -337,23 +428,22 @@ export default async function ImportDetailPage({
   async function deleteImport() {
     "use server";
 
-    const supabase = await createClient();
-
-    const { data: currentCompany, error: currentCompanyError } = await supabase
-      .from("companies")
-      .select("id,slug")
-      .eq("slug", companySlug)
-      .maybeSingle();
+    const { data: currentCompany, error: currentCompanyError } =
+      await supabaseAdmin
+        .from("companies")
+        .select("id,slug")
+        .eq("slug", companySlug)
+        .maybeSingle();
 
     if (currentCompanyError) {
       throw new Error(`load company failed: ${currentCompanyError.message}`);
     }
 
     if (!currentCompany) {
-      throw new Error("Company not found");
+      notFound();
     }
 
-    const { error: deleteRowsError } = await supabase
+    const { error: deleteRowsError } = await supabaseAdmin
       .from("import_rows")
       .delete()
       .eq("import_id", importJobId);
@@ -362,7 +452,7 @@ export default async function ImportDetailPage({
       throw new Error(`delete import rows failed: ${deleteRowsError.message}`);
     }
 
-    const { error: deleteJobError } = await supabase
+    const { error: deleteJobError } = await supabaseAdmin
       .from("import_jobs")
       .delete()
       .eq("company_id", currentCompany.id)
@@ -376,19 +466,28 @@ export default async function ImportDetailPage({
     redirect(`/c/${companySlug}/imports`);
   }
 
-  const parsedRows =
-    rows?.map((row) => ({
-      ...row,
-      review: extractReviewFields(row.raw),
-      rawPreview: compactJson(row.raw),
-    })) ?? [];
+  const typedRows = (rows ?? []) as ImportRowRecord[];
 
-  const fileName =
-    (job as { file_name?: string | null; filename?: string | null } | null)
-      ?.file_name ||
-    (job as { file_name?: string | null; filename?: string | null } | null)
-      ?.filename ||
-    "—";
+  const parsedRows: ParsedImportRow[] = typedRows.map((row) => ({
+    ...row,
+    review: extractReviewFields(row.raw),
+    rawPreview: compactJson(row.raw),
+    matchedWork: normalizeMatchedWork(row.work),
+  }));
+
+  const fileName = typedJob.file_name || typedJob.filename || "—";
+
+  const matchedRowsCount = parsedRows.filter((row) => !!row.matched_work_id).length;
+  const unmatchedRowsCount = parsedRows.length - matchedRowsCount;
+  const visibleMatchRate =
+    parsedRows.length > 0 ? (matchedRowsCount / parsedRows.length) * 100 : 0;
+
+  const filteredRows =
+    filter === "matched"
+      ? parsedRows.filter((row) => !!row.matched_work_id)
+      : filter === "unmatched"
+      ? parsedRows.filter((row) => !row.matched_work_id)
+      : parsedRows;
 
   return (
     <div className="space-y-6">
@@ -396,7 +495,8 @@ export default async function ImportDetailPage({
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Import review</h1>
           <p className="text-sm text-slate-500">
-            Review imported rows for company: {company.name || company.slug}
+            Review imported rows for company:{" "}
+            {typedCompany.name || typedCompany.slug}
           </p>
         </div>
 
@@ -420,12 +520,12 @@ export default async function ImportDetailPage({
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        {job ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="grid flex-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
             <div>
               <div className="text-sm text-slate-500">Import ID</div>
               <div className="mt-1 break-all text-sm font-medium text-slate-900">
-                {job.id}
+                {typedJob.id}
               </div>
             </div>
 
@@ -439,15 +539,15 @@ export default async function ImportDetailPage({
             <div>
               <div className="text-sm text-slate-500">Status</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
-                {job.status || "—"}
+                {typedJob.status || "—"}
               </div>
             </div>
 
             <div>
               <div className="text-sm text-slate-500">Created</div>
               <div className="mt-1 text-sm font-medium text-slate-900">
-                {job.created_at
-                  ? new Date(job.created_at)
+                {typedJob.created_at
+                  ? new Date(typedJob.created_at)
                       .toISOString()
                       .slice(0, 19)
                       .replace("T", " ")
@@ -469,28 +569,83 @@ export default async function ImportDetailPage({
               </div>
             </div>
           </div>
-        ) : (
-          <p className="text-sm text-slate-500">Import job not found.</p>
-        )}
+
+          <div className="shrink-0">
+            <RunWorkMatchingButton
+              companySlug={companySlug}
+              importJobId={importJobId}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-sm text-slate-500">Visible matched rows</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">
+            {matchedRowsCount.toLocaleString("en-US")}
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-sm text-slate-500">Visible unmatched rows</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">
+            {unmatchedRowsCount.toLocaleString("en-US")}
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-sm text-slate-500">Visible match rate</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">
+            {visibleMatchRate.toFixed(2)}%
+          </div>
+        </div>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-6 py-4">
-          <h2 className="text-lg font-semibold text-slate-900">Parsed row review</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Showing {parsedRows.length.toLocaleString("en-US")} of{" "}
-            {(totalRowsCount ?? 0).toLocaleString("en-US")} rows.
-          </p>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Parsed row review
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Showing {filteredRows.length.toLocaleString("en-US")} of{" "}
+                {parsedRows.length.toLocaleString("en-US")} visible rows.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href={`/c/${companySlug}/imports/${importJobId}?filter=all`}
+                className={filterButtonClass(filter === "all")}
+              >
+                All
+              </Link>
+              <Link
+                href={`/c/${companySlug}/imports/${importJobId}?filter=matched`}
+                className={filterButtonClass(filter === "matched")}
+              >
+                Matched
+              </Link>
+              <Link
+                href={`/c/${companySlug}/imports/${importJobId}?filter=unmatched`}
+                className={filterButtonClass(filter === "unmatched")}
+              >
+                Unmatched
+              </Link>
+            </div>
+          </div>
         </div>
 
-        {!parsedRows.length ? (
+        {!filteredRows.length ? (
           <div className="px-6 py-8 text-sm text-slate-500">
-            No import rows found.
+            No import rows found for this filter.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <div className="min-w-[1400px]">
-              <div className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_120px_1.4fr] gap-3 border-b border-slate-200 px-4 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
+            <div className="min-w-[2050px]">
+              <div className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_140px_110px_220px_130px_110px_1.2fr] gap-3 border-b border-slate-200 px-4 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
                 <div>Row</div>
                 <div>Title</div>
                 <div>Artist</div>
@@ -502,66 +657,128 @@ export default async function ImportDetailPage({
                 <div>Gross sale</div>
                 <div>Sale curr</div>
                 <div>Period</div>
+                <div>Match</div>
+                <div>Matched work</div>
+                <div>Match source</div>
+                <div>Confidence</div>
                 <div>Raw preview</div>
               </div>
 
-              {parsedRows.map((row) => (
-                <div
-                  key={row.id}
-                  className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_120px_1.4fr] gap-3 border-b border-slate-100 px-4 py-4 last:border-b-0"
-                >
-                  <div className="text-sm text-slate-900">
-                    {row.row_number ?? "—"}
-                  </div>
+              {filteredRows.map((row) => {
+                const isMatched = !!row.matched_work_id;
+                const matchedWorkTitle = row.matchedWork?.title?.trim() || "—";
 
-                  <div className="truncate text-sm text-slate-900" title={row.review.title}>
-                    {row.review.title}
-                  </div>
-
-                  <div className="truncate text-sm text-slate-700" title={row.review.artist}>
-                    {row.review.artist}
-                  </div>
-
-                  <div className="text-sm text-slate-700">
-                    {row.review.isrc}
-                  </div>
-
-                  <div className="truncate text-sm text-slate-700" title={row.review.store}>
-                    {row.review.store}
-                  </div>
-
-                  <div className="text-sm text-slate-700">
-                    {row.review.country}
-                  </div>
-
-                  <div className="text-sm text-slate-700">
-                    {row.review.netAccountAmount}
-                  </div>
-
-                  <div className="text-sm text-slate-700">
-                    {row.review.accountCurrency}
-                  </div>
-
-                  <div className="text-sm text-slate-700">
-                    {row.review.grossSaleAmount}
-                  </div>
-
-                  <div className="text-sm text-slate-700">
-                    {row.review.saleCurrency}
-                  </div>
-
-                  <div className="truncate text-sm text-slate-700" title={row.review.period}>
-                    {row.review.period}
-                  </div>
-
+                return (
                   <div
-                    className="truncate text-xs text-slate-500"
-                    title={row.rawPreview}
+                    key={row.id}
+                    className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_140px_110px_220px_130px_110px_1.2fr] gap-3 border-b border-slate-100 px-4 py-4 last:border-b-0"
                   >
-                    {row.rawPreview}
+                    <div className="text-sm text-slate-900">
+                      {row.row_number ?? "—"}
+                    </div>
+
+                    <div
+                      className="truncate text-sm text-slate-900"
+                      title={row.review.title}
+                    >
+                      {row.review.title}
+                    </div>
+
+                    <div
+                      className="truncate text-sm text-slate-700"
+                      title={row.review.artist}
+                    >
+                      {row.review.artist}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.review.isrc}
+                    </div>
+
+                    <div
+                      className="truncate text-sm text-slate-700"
+                      title={row.review.store}
+                    >
+                      {row.review.store}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.review.country}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.review.netAccountAmount}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.review.accountCurrency}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.review.grossSaleAmount}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.review.saleCurrency}
+                    </div>
+
+                    <div
+                      className="truncate text-sm text-slate-700"
+                      title={row.review.period}
+                    >
+                      {row.review.period}
+                    </div>
+
+                    <div className="text-sm">
+                      {isMatched ? (
+                        <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                          Matched
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
+                          Unmatched
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      {isMatched ? (
+                        <div className="space-y-1">
+                          <div
+                            className="truncate text-sm font-medium text-slate-900"
+                            title={matchedWorkTitle}
+                          >
+                            {matchedWorkTitle}
+                          </div>
+                          <div
+                            className="truncate text-xs text-slate-500"
+                            title={row.matched_work_id ?? ""}
+                          >
+                            {row.matched_work_id}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-slate-400">—</span>
+                      )}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {row.match_source ?? "—"}
+                    </div>
+
+                    <div className="text-sm text-slate-700">
+                      {formatConfidence(row.match_confidence)}
+                    </div>
+
+                    <div
+                      className="truncate text-xs text-slate-500"
+                      title={row.rawPreview}
+                    >
+                      {row.rawPreview}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
