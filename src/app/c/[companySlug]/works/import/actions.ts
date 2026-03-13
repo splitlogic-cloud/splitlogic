@@ -15,6 +15,10 @@ type CompanyRecord = {
   name: string | null;
 };
 
+type ExistingWorkRecord = {
+  id: string;
+};
+
 export async function importWorksAction(
   companySlug: string,
   formData: FormData
@@ -42,7 +46,7 @@ export async function importWorksAction(
   }
 
   if (!company) {
-    throw new Error("Company not found");
+    throw new Error(`Company not found for slug: ${companySlug}`);
   }
 
   const typedCompany = company as CompanyRecord;
@@ -54,23 +58,55 @@ export async function importWorksAction(
   let insertedOrUpdated = 0;
 
   for (const row of parsed) {
-    const { error } = await supabaseAdmin
+    const { data: existingWork, error: existingWorkError } = await supabaseAdmin
       .from("works")
-      .upsert(
-        {
-          company_id: typedCompany.id,
-          title: row.title,
-          isrc: row.isrc,
-        },
-        {
-          onConflict: "company_id,isrc",
-        }
-      );
+      .select("id")
+      .eq("company_id", typedCompany.id)
+      .eq("isrc", row.isrc)
+      .maybeSingle();
 
-    if (error) {
+    if (existingWorkError) {
       errors.push({
         rowNumber: row.rowNumber,
-        message: error.message,
+        message: `lookup failed: ${existingWorkError.message}`,
+      });
+      continue;
+    }
+
+    if (existingWork) {
+      const typedExistingWork = existingWork as ExistingWorkRecord;
+
+      const { error: updateError } = await supabaseAdmin
+        .from("works")
+        .update({
+          title: row.title,
+        })
+        .eq("id", typedExistingWork.id);
+
+      if (updateError) {
+        errors.push({
+          rowNumber: row.rowNumber,
+          message: `update failed: ${updateError.message}`,
+        });
+        continue;
+      }
+
+      insertedOrUpdated += 1;
+      continue;
+    }
+
+    const { error: insertError } = await supabaseAdmin
+      .from("works")
+      .insert({
+        company_id: typedCompany.id,
+        title: row.title,
+        isrc: row.isrc,
+      });
+
+    if (insertError) {
+      errors.push({
+        rowNumber: row.rowNumber,
+        message: `insert failed: ${insertError.message}`,
       });
       continue;
     }
@@ -79,6 +115,7 @@ export async function importWorksAction(
   }
 
   revalidatePath(`/c/${companySlug}/works`);
+  revalidatePath(`/c/${companySlug}/works/import`);
   revalidatePath(`/c/${companySlug}/imports`);
 
   return {
@@ -96,12 +133,16 @@ export async function importWorksAndRedirectAction(
 ) {
   const result = await importWorksAction(companySlug, formData);
 
+  const firstError =
+    result.errors.length > 0 ? result.errors[0].message : "";
+
   const params = new URLSearchParams({
     total: String(result.totalRows),
     valid: String(result.validRows),
     skipped: String(result.skippedRows),
     upserted: String(result.insertedOrUpdated),
     errors: String(result.errors.length),
+    firstError,
   });
 
   redirect(`/c/${companySlug}/works/import?${params.toString()}`);
