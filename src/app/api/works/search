@@ -1,0 +1,15 @@
+import { supabaseAdmin } from "@/lib/supabase/admin";
+
+export async function GET(req: Request) {
+
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get("q") ?? "";
+
+  const { data } = await supabaseAdmin
+    .from("works")
+    .select("id,title,isrc")
+    .ilike("title", `%${q}%`)
+    .limit(10);
+
+  return Response.json(data ?? []);
+}

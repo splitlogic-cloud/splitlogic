@@ -1,788 +1,647 @@
 import "server-only";
+
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import RunWorkMatchingButton from "./RunWorkMatchingButton";
+import BootstrapWorksButton from "./BootstrapWorksButton";
+import ManualMatchCell from "./ManualMatchCell";
+import ClearMatchButton from "./ClearMatchButton";
+import RunMatchingV3Button from "./RunMatchingV3Button";
+import RunAllocationButton from "./RunAllocationButton";
+import {
+  getLatestAllocationRunForImport,
+  listAllocationTotalsByParty,
+} from "@/features/allocations/allocations.repo";
 
 export const dynamic = "force-dynamic";
 
-type RawRecord = Record<string, unknown>;
-
-type ReviewRow = {
-  title: string;
-  artist: string;
-  isrc: string;
-  store: string;
-  country: string;
-  netAccountAmount: string;
-  accountCurrency: string;
-  grossSaleAmount: string;
-  saleCurrency: string;
-  period: string;
+type Params = {
+  params: Promise<{
+    companySlug: string;
+    importJobId: string;
+  }>;
 };
 
-type MatchedWorkPreview = {
+type RawRecord = Record<string, unknown>;
+
+type CompanyRecord = {
   id: string;
-  title: string | null;
-  isrc: string | null;
+  slug: string | null;
+  name: string | null;
+};
+
+type ImportJobRecord = {
+  id: string;
+  company_id: string;
+  file_name: string | null;
+  created_at: string | null;
 };
 
 type ImportRowRecord = {
   id: string;
   row_number: number | null;
   raw: unknown;
-  created_at: string | null;
   matched_work_id: string | null;
   match_source: string | null;
   match_confidence: number | string | null;
-  work?: MatchedWorkPreview | MatchedWorkPreview[] | null;
+  created_at: string | null;
 };
 
-type ParsedImportRow = ImportRowRecord & {
-  review: ReviewRow;
-  rawPreview: string;
-  matchedWork: MatchedWorkPreview | null;
-};
-
-type CompanyRecord = {
+type WorkRecord = {
   id: string;
-  name: string | null;
-  slug: string | null;
+  title: string | null;
+  artist: string | null;
+  isrc: string | null;
 };
 
-type ImportJobRecord = {
-  id: string;
-  file_name?: string | null;
-  filename?: string | null;
-  status?: string | null;
-  created_at?: string | null;
-  processed_at?: string | null;
-};
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
-
-function asRecord(value: unknown): RawRecord | null {
+function asRecord(value: unknown): RawRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
+    return {};
   }
   return value as RawRecord;
 }
 
-function normalizeKey(key: string) {
-  return key
-    .toLowerCase()
-    .replace(/["']/g, "")
-    .replace(/\s+/g, "")
-    .replace(/[_-]/g, "");
-}
-
-function buildNormalizedRecord(record: RawRecord) {
-  const normalized: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(record)) {
-    normalized[normalizeKey(key)] = value;
-  }
-
-  return normalized;
-}
-
-function isMeaningfulValue(value: unknown) {
-  if (value === null || value === undefined) return false;
-  if (typeof value === "string") return value.trim() !== "";
-  return true;
-}
-
-function toDisplayString(value: unknown) {
-  if (value === null || value === undefined) return "—";
-
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed ? trimmed : "—";
-  }
-
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return "—";
-    return String(value);
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-
-  return String(value);
-}
-
-function findValue(record: RawRecord | null, candidates: string[]) {
-  if (!record) return null;
-
-  const normalized = buildNormalizedRecord(record);
-
-  for (const candidate of candidates) {
-    const value = normalized[normalizeKey(candidate)];
-    if (isMeaningfulValue(value)) {
-      return value;
+function pickString(raw: RawRecord, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
     }
   }
-
-  return null;
+  return "";
 }
 
-function compactJson(value: unknown) {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "—";
+function pickNumberLike(raw: RawRecord, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "number") return String(value);
+    if (typeof value === "string" && value.trim()) return value.trim();
   }
+  return "";
 }
 
-function formatConfidence(value: number | string | null | undefined) {
-  if (value === null || value === undefined) return "—";
-
-  const numeric = typeof value === "number" ? value : Number(value);
-
-  if (!Number.isFinite(numeric)) return "—";
-
-  return `${Math.round(numeric * 100)}%`;
+function formatPercent(value: number) {
+  return `${value.toFixed(1)}%`;
 }
 
-function extractReviewFields(raw: unknown): ReviewRow {
-  const record = asRecord(raw);
+function formatDate(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("sv-SE");
+}
 
-  if (!record) {
-    return {
-      title: "—",
-      artist: "—",
-      isrc: "—",
-      store: "—",
-      country: "—",
-      netAccountAmount: "—",
-      accountCurrency: "—",
-      grossSaleAmount: "—",
-      saleCurrency: "—",
-      period: "—",
-    };
-  }
-
-  const title = toDisplayString(
-    findValue(record, [
-      "track",
-      "TRACK",
-      "title",
-      "Title",
-      "product",
-      "PRODUCT",
-      "asset_title",
-      "Asset Title",
-      "song_title",
-      "track_title",
-      "work_title",
-      "release_title",
-      "name",
-    ])
-  );
-
-  const artist = toDisplayString(
-    findValue(record, [
-      "track_artist",
-      "TRACK ARTIST",
-      "product_artist",
-      "PRODUCT ARTIST",
-      "asset_artist",
-      "Asset Artist",
-      "artist",
-      "artist_name",
-      "main_artist",
-      "party_name",
-    ])
-  );
-
-  const isrc = toDisplayString(
-    findValue(record, ["isrc", "ISRC", "asset_isrc", "Asset ISRC"])
-  );
-
-  const store = toDisplayString(
-    findValue(record, [
-      "store",
-      "STORE",
-      "dsp",
-      "DSP",
-      "sale_store_name",
-      "Sale Store Name",
-      "service_detail",
-      "SERVICE DETAIL",
-    ])
-  );
-
-  const country = toDisplayString(
-    findValue(record, [
-      "sale_country",
-      "SALE COUNTRY",
-      "country",
-      "Country",
-      "territory",
-      "TERRITORY",
-    ])
-  );
-
-  const accountCurrency = toDisplayString(
-    findValue(record, ["account_currency", "ACCOUNT CURRENCY"])
-  );
-
-  const saleCurrency = toDisplayString(
-    findValue(record, [
-      "sale_currency",
-      "SALE CURRENCY",
-      "currency",
-      "Currency",
-      "currency_code",
-    ])
-  );
-
-  const netAccountAmount = toDisplayString(
-    findValue(record, [
-      "net_share_account_currency",
-      "NET SHARE ACCOUNT CURRENCY",
-      "net_amount_account_currency",
-    ])
-  );
-
-  const grossSaleAmount = toDisplayString(
-    findValue(record, [
-      "gross_revenue_sale_currency",
-      "GROSS REVENUE SALE CURRENCY",
-      "gross_sale_amount",
-      "unit_price_sale_currency",
-      "UNIT PRICE SALE CURRENCY",
-    ])
-  );
-
-  const periodStart = findValue(record, [
-    "sale_start_date",
-    "SALE START DATE",
-    "period_start",
-    "start_date",
-    "from",
-  ]);
-
-  const periodEnd = findValue(record, [
-    "sale_end_date",
-    "SALE END DATE",
-    "period_end",
-    "end_date",
-    "to",
-  ]);
-
-  let period = toDisplayString(
-    findValue(record, [
-      "statement_period",
-      "STATEMENT PERIOD",
-      "original_statement_period",
-      "ORIGINAL STATEMENT PERIOD",
-      "period",
-      "Period",
-      "period_name",
-      "sales_period",
-      "earning_period",
-      "month",
-      "date",
-    ])
-  );
-
-  if (
-    period === "—" &&
-    (isMeaningfulValue(periodStart) || isMeaningfulValue(periodEnd))
-  ) {
-    const start = toDisplayString(periodStart);
-    const end = toDisplayString(periodEnd);
-
-    if (start !== "—" && end !== "—") {
-      period = `${start} → ${end}`;
-    } else if (start !== "—") {
-      period = start;
-    } else if (end !== "—") {
-      period = end;
-    }
-  }
+function getRowView(rawValue: unknown) {
+  const raw = asRecord(rawValue);
 
   return {
-    title,
-    artist,
-    isrc,
-    store,
-    country,
-    netAccountAmount,
-    accountCurrency,
-    grossSaleAmount,
-    saleCurrency,
-    period,
+    title: pickString(raw, [
+      "title",
+      "track",
+      "track_title",
+      "song_title",
+      "work_title",
+      "release_title",
+      "product",
+    ]),
+    artist: pickString(raw, [
+      "artist",
+      "track_artist",
+      "artist_name",
+      "main_artist",
+      "product_artist",
+    ]),
+    isrc: pickString(raw, ["isrc", "track_isrc"]),
+    store: pickString(raw, ["store", "service", "provider", "retailer"]),
+    country: pickString(raw, ["country", "sale_country", "territory"]),
+    netRevenue: pickNumberLike(raw, [
+      "net_revenue",
+      "net_amount",
+      "netAccountAmount",
+      "amount",
+      "net_receipts",
+      "royalty_amount",
+    ]),
+    currency: pickString(raw, [
+      "currency",
+      "account_currency",
+      "sale_currency",
+      "accountCurrency",
+    ]),
+    period: pickString(raw, [
+      "period",
+      "statement_period",
+      "month",
+      "reporting_period",
+    ]),
   };
 }
 
-function normalizeMatchedWork(
-  work: MatchedWorkPreview | MatchedWorkPreview[] | null | undefined
-): MatchedWorkPreview | null {
-  if (!work) return null;
-  if (Array.isArray(work)) return work[0] ?? null;
-  return work;
-}
-
-function filterButtonClass(active: boolean) {
-  return active
-    ? "inline-flex rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
-    : "inline-flex rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50";
-}
-
-export default async function ImportDetailPage({
-  params,
-  searchParams,
+function StatCard({
+  label,
+  value,
+  sublabel,
 }: {
-  params: Promise<{ companySlug: string; importJobId: string }>;
-  searchParams?: Promise<{ filter?: string }>;
+  label: string;
+  value: string | number;
+  sublabel?: string;
 }) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-2 text-2xl font-bold text-zinc-900">{value}</div>
+      {sublabel ? <div className="mt-1 text-sm text-zinc-500">{sublabel}</div> : null}
+    </div>
+  );
+}
+
+export default async function ImportReviewPage({ params }: Params) {
   const { companySlug, importJobId } = await params;
-  const resolvedSearchParams = searchParams ? await searchParams : undefined;
 
-  const filter =
-    resolvedSearchParams?.filter === "matched" ||
-    resolvedSearchParams?.filter === "unmatched"
-      ? resolvedSearchParams.filter
-      : "all";
-
-  if (!isUuid(importJobId)) {
-    notFound();
+  if (
+    !importJobId ||
+    importJobId.includes("[") ||
+    importJobId.includes("]") ||
+    importJobId === "undefined"
+  ) {
+    throw new Error(`Invalid importJobId in route: ${importJobId}`);
   }
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id,name,slug")
+    .select("id, slug, name")
     .eq("slug", companySlug)
-    .maybeSingle();
+    .maybeSingle<CompanyRecord>();
 
   if (companyError) {
-    throw new Error(`load company failed: ${companyError.message}`);
+    throw new Error(`Failed to load company: ${companyError.message}`);
   }
 
   if (!company) {
     notFound();
   }
 
-  const typedCompany = company as CompanyRecord;
-
-  const { data: job, error: jobError } = await supabaseAdmin
+  const { data: importJob, error: importError } = await supabaseAdmin
     .from("import_jobs")
-    .select("id,file_name,filename,status,created_at,processed_at")
-    .eq("company_id", typedCompany.id)
+    .select("id, company_id, file_name, created_at")
     .eq("id", importJobId)
-    .maybeSingle();
+    .eq("company_id", company.id)
+    .maybeSingle<ImportJobRecord>();
 
-  if (jobError) {
-    throw new Error(`load import job failed: ${jobError.message}`);
+  if (importError) {
+    throw new Error(`Failed to load import job: ${importError.message}`);
   }
 
-  if (!job) {
+  if (!importJob) {
     notFound();
   }
 
-  const typedJob = job as ImportJobRecord;
-
-  const { count: totalRowsCount, error: countError } = await supabaseAdmin
-    .from("import_rows")
-    .select("*", { count: "exact", head: true })
-    .eq("import_id", importJobId);
-
-  if (countError) {
-    throw new Error(`count import rows failed: ${countError.message}`);
-  }
-
-  const reviewLimit = 200;
-
-  const { data: rows, error: rowsError } = await supabaseAdmin
-    .from("import_rows")
-    .select(`
-      id,
-      row_number,
-      raw,
-      created_at,
-      matched_work_id,
-      match_source,
-      match_confidence,
-      work:matched_work_id (
-        id,
-        title,
-        isrc
-      )
-    `)
-    .eq("import_id", importJobId)
-    .order("row_number", { ascending: true })
-    .limit(reviewLimit);
-
-  if (rowsError) {
-    throw new Error(`load import rows failed: ${rowsError.message}`);
-  }
-
-  async function deleteImport() {
-    "use server";
-
-    const { data: currentCompany, error: currentCompanyError } =
-      await supabaseAdmin
-        .from("companies")
-        .select("id,slug")
-        .eq("slug", companySlug)
-        .maybeSingle();
-
-    if (currentCompanyError) {
-      throw new Error(`load company failed: ${currentCompanyError.message}`);
-    }
-
-    if (!currentCompany) {
-      notFound();
-    }
-
-    const { error: deleteRowsError } = await supabaseAdmin
+  const [
+    totalRowsResult,
+    matchedRowsResult,
+    unmatchedRowsResult,
+    sourceCountsResult,
+    unmatchedRowsResultList,
+    recentMatchedRowsResult,
+    worksResult,
+    latestAllocationRun,
+  ] = await Promise.all([
+    supabaseAdmin
       .from("import_rows")
-      .delete()
-      .eq("import_id", importJobId);
+      .select("*", { count: "exact", head: true })
+      .eq("import_id", importJob.id),
 
-    if (deleteRowsError) {
-      throw new Error(`delete import rows failed: ${deleteRowsError.message}`);
-    }
+    supabaseAdmin
+      .from("import_rows")
+      .select("*", { count: "exact", head: true })
+      .eq("import_id", importJob.id)
+      .not("matched_work_id", "is", null),
 
-    const { error: deleteJobError } = await supabaseAdmin
-      .from("import_jobs")
-      .delete()
-      .eq("company_id", currentCompany.id)
-      .eq("id", importJobId);
+    supabaseAdmin
+      .from("import_rows")
+      .select("*", { count: "exact", head: true })
+      .eq("import_id", importJob.id)
+      .is("matched_work_id", null),
 
-    if (deleteJobError) {
-      throw new Error(`delete import failed: ${deleteJobError.message}`);
-    }
+    supabaseAdmin
+      .from("import_rows")
+      .select("match_source")
+      .eq("import_id", importJob.id)
+      .not("matched_work_id", "is", null),
 
-    revalidatePath(`/c/${companySlug}/imports`);
-    redirect(`/c/${companySlug}/imports`);
+    supabaseAdmin
+      .from("import_rows")
+      .select(
+        "id, row_number, raw, matched_work_id, match_source, match_confidence, created_at"
+      )
+      .eq("import_id", importJob.id)
+      .is("matched_work_id", null)
+      .order("row_number", { ascending: true })
+      .limit(200),
+
+    supabaseAdmin
+      .from("import_rows")
+      .select(
+        "id, row_number, raw, matched_work_id, match_source, match_confidence, created_at"
+      )
+      .eq("import_id", importJob.id)
+      .not("matched_work_id", "is", null)
+      .order("row_number", { ascending: true })
+      .limit(50),
+
+    supabaseAdmin
+      .from("works")
+      .select("id, title, artist, isrc")
+      .eq("company_id", company.id)
+      .order("title", { ascending: true })
+      .limit(1000),
+
+    getLatestAllocationRunForImport({
+      companyId: company.id,
+      importId: importJob.id,
+    }),
+  ]);
+
+  if (totalRowsResult.error) {
+    throw new Error(`Failed to load total rows: ${totalRowsResult.error.message}`);
   }
 
-  const typedRows = (rows ?? []) as ImportRowRecord[];
+  if (matchedRowsResult.error) {
+    throw new Error(`Failed to load matched rows: ${matchedRowsResult.error.message}`);
+  }
 
-  const parsedRows: ParsedImportRow[] = typedRows.map((row) => ({
-    ...row,
-    review: extractReviewFields(row.raw),
-    rawPreview: compactJson(row.raw),
-    matchedWork: normalizeMatchedWork(row.work),
-  }));
+  if (unmatchedRowsResult.error) {
+    throw new Error(
+      `Failed to load unmatched rows: ${unmatchedRowsResult.error.message}`
+    );
+  }
 
-  const fileName = typedJob.file_name || typedJob.filename || "—";
+  if (sourceCountsResult.error) {
+    throw new Error(`Failed to load match sources: ${sourceCountsResult.error.message}`);
+  }
 
-  const matchedRowsCount = parsedRows.filter((row) => !!row.matched_work_id).length;
-  const unmatchedRowsCount = parsedRows.length - matchedRowsCount;
-  const visibleMatchRate =
-    parsedRows.length > 0 ? (matchedRowsCount / parsedRows.length) * 100 : 0;
+  if (unmatchedRowsResultList.error) {
+    throw new Error(
+      `Failed to load unmatched row list: ${unmatchedRowsResultList.error.message}`
+    );
+  }
 
-  const filteredRows =
-    filter === "matched"
-      ? parsedRows.filter((row) => !!row.matched_work_id)
-      : filter === "unmatched"
-      ? parsedRows.filter((row) => !row.matched_work_id)
-      : parsedRows;
+  if (recentMatchedRowsResult.error) {
+    throw new Error(
+      `Failed to load recent matched row list: ${recentMatchedRowsResult.error.message}`
+    );
+  }
+
+  if (worksResult.error) {
+    throw new Error(`Failed to load works: ${worksResult.error.message}`);
+  }
+
+  const totalRows = totalRowsResult.count ?? 0;
+  const matchedRows = matchedRowsResult.count ?? 0;
+  const unmatchedRows = unmatchedRowsResult.count ?? 0;
+  const matchPct = totalRows > 0 ? (matchedRows / totalRows) * 100 : 0;
+
+  const sourceCounts = {
+    isrc_exact: 0,
+    title_artist_exact: 0,
+    fuzzy: 0,
+    manual: 0,
+    other: 0,
+  };
+
+  for (const row of sourceCountsResult.data ?? []) {
+    const source = row.match_source;
+    if (source === "isrc_exact") sourceCounts.isrc_exact += 1;
+    else if (source === "title_artist_exact") sourceCounts.title_artist_exact += 1;
+    else if (source === "fuzzy") sourceCounts.fuzzy += 1;
+    else if (source === "manual") sourceCounts.manual += 1;
+    else sourceCounts.other += 1;
+  }
+
+  const unmatchedRowsList = (unmatchedRowsResultList.data ?? []) as ImportRowRecord[];
+  const recentMatchedRows = (recentMatchedRowsResult.data ?? []) as ImportRowRecord[];
+  const works = (worksResult.data ?? []) as WorkRecord[];
+
+  const allocationPartyTotals = latestAllocationRun
+    ? await listAllocationTotalsByParty({
+        allocationRunId: latestAllocationRun.id,
+      })
+    : [];
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">Import review</h1>
-          <p className="text-sm text-slate-500">
-            Review imported rows for company:{" "}
-            {typedCompany.name || typedCompany.slug}
-          </p>
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <div className="text-sm text-zinc-500">
+            <Link
+              href={`/c/${companySlug}/imports`}
+              className="hover:text-zinc-900 hover:underline"
+            >
+              Imports
+            </Link>{" "}
+            / <span className="text-zinc-900">{importJob.id}</span>
+          </div>
+
+          <h1 className="text-3xl font-bold tracking-tight text-zinc-900">
+            Import review
+          </h1>
+
+          <div className="text-sm text-zinc-600">
+            <span className="font-medium">{company.name ?? company.slug}</span>
+            {" · "}
+            {importJob.file_name ?? "Unnamed file"}
+            {" · "}
+            {formatDate(importJob.created_at)}
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <form action={deleteImport}>
-            <button
-              type="submit"
-              className="inline-flex rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 shadow-sm hover:bg-red-50"
-            >
-              Delete import
-            </button>
-          </form>
+        <div className="flex flex-col items-stretch gap-3">
+          <BootstrapWorksButton
+            companySlug={companySlug}
+            companyId={company.id}
+            importJobId={importJobId}
+          />
 
-          <Link
-            href={`/c/${companySlug}/imports`}
-            className="inline-flex rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-          >
-            Back to imports
-          </Link>
+          <RunMatchingV3Button
+            companySlug={companySlug}
+            importJobId={importJobId}
+          />
+
+          <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm shadow-sm">
+            <div className="font-medium text-zinc-900">Current goal</div>
+            <div className="mt-1 text-zinc-600">
+              Bootstrap missing works, then max out match coverage before
+              splits/allocation.
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div className="grid flex-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Total rows" value={totalRows} />
+        <StatCard label="Matched rows" value={matchedRows} />
+        <StatCard label="Unmatched rows" value={unmatchedRows} />
+        <StatCard label="Match %" value={formatPercent(matchPct)} />
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <StatCard label="ISRC exact" value={sourceCounts.isrc_exact} />
+        <StatCard
+          label="Title/artist exact"
+          value={sourceCounts.title_artist_exact}
+        />
+        <StatCard label="Fuzzy" value={sourceCounts.fuzzy} />
+        <StatCard label="Manual" value={sourceCounts.manual} />
+        <StatCard label="Other source" value={sourceCounts.other} />
+      </section>
+
+      <section className="space-y-4">
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="text-sm text-slate-500">Import ID</div>
-              <div className="mt-1 break-all text-sm font-medium text-slate-900">
-                {typedJob.id}
-              </div>
+              <h2 className="text-xl font-semibold text-zinc-900">
+                Allocation engine
+              </h2>
+              <p className="mt-1 text-sm text-zinc-600">
+                Allocate matched rows to parties using work splits.
+              </p>
             </div>
 
-            <div>
-              <div className="text-sm text-slate-500">File</div>
-              <div className="mt-1 break-all text-sm font-medium text-slate-900">
-                {fileName}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-slate-500">Status</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
-                {typedJob.status || "—"}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-slate-500">Created</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
-                {typedJob.created_at
-                  ? new Date(typedJob.created_at)
-                      .toISOString()
-                      .slice(0, 19)
-                      .replace("T", " ")
-                  : "—"}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-slate-500">Rows shown</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
-                {parsedRows.length.toLocaleString("en-US")}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-sm text-slate-500">Total rows</div>
-              <div className="mt-1 text-sm font-medium text-slate-900">
-                {(totalRowsCount ?? 0).toLocaleString("en-US")}
-              </div>
-            </div>
-          </div>
-
-          <div className="shrink-0">
-            <RunWorkMatchingButton
+            <RunAllocationButton
               companySlug={companySlug}
               importJobId={importJobId}
             />
           </div>
-        </div>
-      </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm text-slate-500">Visible matched rows</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">
-            {matchedRowsCount.toLocaleString("en-US")}
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm text-slate-500">Visible unmatched rows</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">
-            {unmatchedRowsCount.toLocaleString("en-US")}
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-sm text-slate-500">Visible match rate</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">
-            {visibleMatchRate.toFixed(2)}%
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-6 py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Parsed row review
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Showing {filteredRows.length.toLocaleString("en-US")} of{" "}
-                {parsedRows.length.toLocaleString("en-US")} visible rows.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href={`/c/${companySlug}/imports/${importJobId}?filter=all`}
-                className={filterButtonClass(filter === "all")}
-              >
-                All
-              </Link>
-              <Link
-                href={`/c/${companySlug}/imports/${importJobId}?filter=matched`}
-                className={filterButtonClass(filter === "matched")}
-              >
-                Matched
-              </Link>
-              <Link
-                href={`/c/${companySlug}/imports/${importJobId}?filter=unmatched`}
-                className={filterButtonClass(filter === "unmatched")}
-              >
-                Unmatched
-              </Link>
-            </div>
-          </div>
-        </div>
-
-        {!filteredRows.length ? (
-          <div className="px-6 py-8 text-sm text-slate-500">
-            No import rows found for this filter.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <div className="min-w-[2050px]">
-              <div className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_140px_110px_220px_130px_110px_1.2fr] gap-3 border-b border-slate-200 px-4 py-4 text-xs font-medium uppercase tracking-wide text-slate-500">
-                <div>Row</div>
-                <div>Title</div>
-                <div>Artist</div>
-                <div>ISRC</div>
-                <div>Store</div>
-                <div>Country</div>
-                <div>Net account</div>
-                <div>Account curr</div>
-                <div>Gross sale</div>
-                <div>Sale curr</div>
-                <div>Period</div>
-                <div>Match</div>
-                <div>Matched work</div>
-                <div>Match source</div>
-                <div>Confidence</div>
-                <div>Raw preview</div>
+          {!latestAllocationRun ? (
+            <p className="mt-4 text-sm text-zinc-600">No allocation run yet.</p>
+          ) : (
+            <div className="mt-6 space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+                <StatCard label="Status" value={latestAllocationRun.status} />
+                <StatCard
+                  label="Total input rows"
+                  value={latestAllocationRun.total_input_rows}
+                />
+                <StatCard
+                  label="Eligible rows"
+                  value={latestAllocationRun.eligible_rows}
+                />
+                <StatCard
+                  label="Allocation rows"
+                  value={latestAllocationRun.allocated_rows}
+                />
+                <StatCard
+                  label="Skipped unmatched"
+                  value={latestAllocationRun.skipped_unmatched_rows}
+                />
+                <StatCard
+                  label="Skipped bad/missing splits"
+                  value={
+                    latestAllocationRun.skipped_missing_splits_rows +
+                    latestAllocationRun.skipped_invalid_split_rows
+                  }
+                />
               </div>
 
-              {filteredRows.map((row) => {
-                const isMatched = !!row.matched_work_id;
-                const matchedWorkTitle = row.matchedWork?.title?.trim() || "—";
+              <div className="rounded-xl border border-zinc-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-zinc-900">Party totals</h3>
 
-                return (
-                  <div
-                    key={row.id}
-                    className="grid grid-cols-[60px_1.1fr_1fr_130px_180px_100px_120px_110px_120px_90px_140px_110px_220px_130px_110px_1.2fr] gap-3 border-b border-slate-100 px-4 py-4 last:border-b-0"
-                  >
-                    <div className="text-sm text-slate-900">
-                      {row.row_number ?? "—"}
-                    </div>
-
-                    <div
-                      className="truncate text-sm text-slate-900"
-                      title={row.review.title}
-                    >
-                      {row.review.title}
-                    </div>
-
-                    <div
-                      className="truncate text-sm text-slate-700"
-                      title={row.review.artist}
-                    >
-                      {row.review.artist}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.review.isrc}
-                    </div>
-
-                    <div
-                      className="truncate text-sm text-slate-700"
-                      title={row.review.store}
-                    >
-                      {row.review.store}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.review.country}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.review.netAccountAmount}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.review.accountCurrency}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.review.grossSaleAmount}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.review.saleCurrency}
-                    </div>
-
-                    <div
-                      className="truncate text-sm text-slate-700"
-                      title={row.review.period}
-                    >
-                      {row.review.period}
-                    </div>
-
-                    <div className="text-sm">
-                      {isMatched ? (
-                        <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                          Matched
-                        </span>
-                      ) : (
-                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">
-                          Unmatched
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="min-w-0">
-                      {isMatched ? (
-                        <div className="space-y-1">
-                          <div
-                            className="truncate text-sm font-medium text-slate-900"
-                            title={matchedWorkTitle}
-                          >
-                            {matchedWorkTitle}
-                          </div>
-                          <div
-                            className="truncate text-xs text-slate-500"
-                            title={row.matched_work_id ?? ""}
-                          >
-                            {row.matched_work_id}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-slate-400">—</span>
-                      )}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {row.match_source ?? "—"}
-                    </div>
-
-                    <div className="text-sm text-slate-700">
-                      {formatConfidence(row.match_confidence)}
-                    </div>
-
-                    <div
-                      className="truncate text-xs text-slate-500"
-                      title={row.rawPreview}
-                    >
-                      {row.rawPreview}
-                    </div>
+                {allocationPartyTotals.length === 0 ? (
+                  <p className="mt-2 text-sm text-zinc-600">
+                    No allocations created yet.
+                  </p>
+                ) : (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-zinc-50 text-left">
+                        <tr className="border-b border-zinc-200">
+                          <th className="px-4 py-3 font-semibold text-zinc-700">
+                            Party
+                          </th>
+                          <th className="px-4 py-3 font-semibold text-zinc-700">
+                            Allocated amount
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allocationPartyTotals.map((row) => (
+                          <tr key={row.partyId} className="border-b border-zinc-100">
+                            <td className="px-4 py-3 text-zinc-900">
+                              {row.partyName}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-700">
+                              {row.allocatedAmount.toFixed(6)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                );
-              })}
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900">Unmatched rows</h2>
+          <p className="text-sm text-zinc-600">
+            First 200 unmatched rows for this import. Manual matches update coverage
+            directly.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-zinc-50 text-left">
+              <tr className="border-b border-zinc-200">
+                <th className="px-4 py-3 font-semibold text-zinc-700">Row</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Title</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Artist</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">ISRC</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Store</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Country</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Revenue</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Period</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {unmatchedRowsList.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="px-4 py-8 text-center text-sm text-zinc-500"
+                  >
+                    No unmatched rows. Coverage is complete for this page slice.
+                  </td>
+                </tr>
+              ) : (
+                unmatchedRowsList.map((row) => {
+                  const view = getRowView(row.raw);
+
+                  return (
+                    <tr key={row.id} className="border-b border-zinc-100 align-top">
+                      <td className="px-4 py-4 text-zinc-700">
+                        {row.row_number ?? "—"}
+                      </td>
+                      <td className="px-4 py-4 font-medium text-zinc-900">
+                        {view.title || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.artist || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.isrc || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.store || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.country || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.netRevenue || "—"}{" "}
+                        <span className="text-zinc-500">{view.currency}</span>
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.period || "—"}
+                      </td>
+                      <td className="px-4 py-4">
+                        <ManualMatchCell
+                          companySlug={companySlug}
+                          importJobId={importJobId}
+                          rowId={row.id}
+                          rowTitle={view.title}
+                          rowArtist={view.artist}
+                          rowIsrc={view.isrc}
+                          works={works}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900">Recently matched rows</h2>
+          <p className="text-sm text-zinc-600">
+            Quick audit view plus clear-match action if something was linked wrong.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-zinc-50 text-left">
+              <tr className="border-b border-zinc-200">
+                <th className="px-4 py-3 font-semibold text-zinc-700">Row</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Title</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Artist</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">ISRC</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Source</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Confidence</th>
+                <th className="px-4 py-3 font-semibold text-zinc-700">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentMatchedRows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-4 py-8 text-center text-sm text-zinc-500"
+                  >
+                    No matched rows yet.
+                  </td>
+                </tr>
+              ) : (
+                recentMatchedRows.map((row) => {
+                  const view = getRowView(row.raw);
+
+                  return (
+                    <tr key={row.id} className="border-b border-zinc-100">
+                      <td className="px-4 py-4 text-zinc-700">
+                        {row.row_number ?? "—"}
+                      </td>
+                      <td className="px-4 py-4 font-medium text-zinc-900">
+                        {view.title || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.artist || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {view.isrc || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {row.match_source || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-zinc-700">
+                        {row.match_confidence ?? "—"}
+                      </td>
+                      <td className="px-4 py-4">
+                        <ClearMatchButton
+                          companySlug={companySlug}
+                          importJobId={importJobId}
+                          rowId={row.id}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
