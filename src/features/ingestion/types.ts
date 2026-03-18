@@ -1,3 +1,10 @@
+export type PrimitiveValue = string | number | boolean | null | undefined;
+export type CanonicalExtraValue =
+  | PrimitiveValue
+  | Record<string, unknown>
+  | unknown[]
+  | Date;
+
 export type CanonicalImportRow = {
   provider: string;
 
@@ -15,6 +22,7 @@ export type CanonicalImportRow = {
 
   transaction_date?: string | undefined;
   statement_period?: string | undefined;
+  sale_date?: string | undefined;
 
   quantity?: number | undefined;
 
@@ -49,7 +57,9 @@ export type CanonicalImportRow = {
 
   label?: string | undefined;
 
-  [key: string]: string | number | boolean | null | undefined;
+  raw?: Record<string, unknown> | undefined;
+
+  [key: string]: CanonicalExtraValue;
 };
 
 export type NormalizedRow = CanonicalImportRow;
