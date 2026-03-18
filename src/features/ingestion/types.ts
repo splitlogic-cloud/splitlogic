@@ -4,6 +4,11 @@ export type CanonicalImportRow = {
   amount: number;
   currency: string;
 
+  title?: string | undefined;
+  track_title?: string | undefined;
+  release_title?: string | undefined;
+  artist?: string | undefined;
+
   isrc?: string | undefined;
   upc?: string | undefined;
   store?: string | undefined;
@@ -11,16 +16,18 @@ export type CanonicalImportRow = {
   transaction_date?: string | undefined;
   statement_period?: string | undefined;
 
-  track_title?: string | undefined;
-  release_title?: string | undefined;
-  artist?: string | undefined;
-
   quantity?: number | undefined;
 
   country?: string | undefined;
   territory?: string | undefined;
+  region?: string | undefined;
+  territory_code?: string | undefined;
+
   product_type?: string | undefined;
   sales_type?: string | undefined;
+  royalty_type?: string | undefined;
+  usage_type?: string | undefined;
+  service?: string | undefined;
 
   raw_title?: string | undefined;
   raw_artist?: string | undefined;
@@ -41,12 +48,8 @@ export type CanonicalImportRow = {
   product_id?: string | undefined;
 
   label?: string | undefined;
-  royalty_type?: string | undefined;
-  usage_type?: string | undefined;
-  service?: string | undefined;
 
-  region?: string | undefined;
-  territory_code?: string | undefined;
+  [key: string]: string | number | boolean | null | undefined;
 };
 
 export type NormalizedRow = CanonicalImportRow;
