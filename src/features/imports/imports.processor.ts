@@ -1,115 +1,147 @@
 import "server-only";
-import { supabaseAdmin } from "@/lib/supabase/admin";
-import { parseCsvText } from "./imports.parser";
 
-type ImportJobForProcessing = {
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { finalizeImportProcessing } from "@/features/ingestion/finalizeImportProcessing";
+
+type ImportJobRow = {
   id: string;
   company_id: string;
-  filename: string | null;
-  storage_bucket: string | null;
-  storage_path: string | null;
-  status: string | null;
+  file_name?: string | null;
+  storage_path?: string | null;
+  file_path?: string | null;
+  path?: string | null;
+  object_path?: string | null;
+  status?: string | null;
 };
 
-export async function processImportJob(importJobId: string) {
-  const { data: job, error: jobError } = await supabaseAdmin
+function getImportStorageBucket(): string {
+  return (
+    process.env.SUPABASE_IMPORTS_BUCKET ||
+    process.env.NEXT_PUBLIC_SUPABASE_IMPORTS_BUCKET ||
+    "imports"
+  );
+}
+
+function getStoragePath(job: ImportJobRow): string {
+  return (
+    job.storage_path ||
+    job.file_path ||
+    job.path ||
+    job.object_path ||
+    ""
+  );
+}
+
+function getFileName(job: ImportJobRow): string {
+  return job.file_name || "import.csv";
+}
+
+async function safeUpdateImportJob(
+  importJobId: string,
+  patch: Record<string, unknown>
+) {
+  const { error } = await supabaseAdmin
     .from("import_jobs")
-    .select("id, company_id, filename, storage_bucket, storage_path, status")
+    .update(patch)
+    .eq("id", importJobId);
+
+  if (error) {
+    console.error("[imports.processor] failed to update import_jobs", {
+      importJobId,
+      patch,
+      error: error.message,
+    });
+  }
+}
+
+export async function processImportJob(importJobId: string) {
+  const { data: importJobData, error: importJobError } = await supabaseAdmin
+    .from("import_jobs")
+    .select("*")
     .eq("id", importJobId)
     .maybeSingle();
 
-  if (jobError) {
-    throw new Error(`processImportJob load job: ${jobError.message}`);
+  if (importJobError || !importJobData) {
+    throw new Error(
+      `processImportJob: import job not found (${importJobError?.message ?? "no row"})`
+    );
   }
 
-  if (!job) {
-    throw new Error("Import job not found");
+  const importJob = importJobData as ImportJobRow;
+
+  const storagePath = getStoragePath(importJob);
+  const fileName = getFileName(importJob);
+
+  if (!storagePath) {
+    throw new Error("processImportJob: import job is missing storage path");
   }
 
-  const typedJob = job as ImportJobForProcessing;
-
-  if (!typedJob.storage_bucket || !typedJob.storage_path) {
-    throw new Error("Import job is missing storage location");
-  }
-
-  const { error: setProcessingError } = await supabaseAdmin
-    .from("import_jobs")
-    .update({
-      status: "processing",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", typedJob.id);
-
-  if (setProcessingError) {
-    throw new Error(`set processing status: ${setProcessingError.message}`);
-  }
+  await safeUpdateImportJob(importJobId, {
+    status: "processing",
+  });
 
   try {
-    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
-      .from(typedJob.storage_bucket)
-      .download(typedJob.storage_path);
-
-    if (downloadError || !fileData) {
-      throw new Error(downloadError?.message ?? "Could not download file from storage");
-    }
-
-    const text = await fileData.text();
-    const parsedRows = parseCsvText(text);
-
-    const { error: deleteError } = await supabaseAdmin
+    // Rensa gamla rows om denna import körs om
+    const { error: deleteRowsError } = await supabaseAdmin
       .from("import_rows")
       .delete()
-      .eq("import_id", typedJob.id);
+      .eq("import_id", importJobId);
 
-    if (deleteError) {
-      throw new Error(`delete existing import_rows: ${deleteError.message}`);
+    if (deleteRowsError) {
+      throw new Error(
+        `processImportJob: failed to clear old import_rows: ${deleteRowsError.message}`
+      );
     }
 
-    if (parsedRows.length > 0) {
-      const rowsToInsert = parsedRows.map((row, index) => ({
-        import_id: typedJob.id,
-        row_number: index + 1,
-        raw: row.raw,
-      }));
+    const bucket = getImportStorageBucket();
 
-      const { error: insertError } = await supabaseAdmin
-        .from("import_rows")
-        .insert(rowsToInsert);
+    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+      .from(bucket)
+      .download(storagePath);
 
-      if (insertError) {
-        throw new Error(`insert import_rows: ${insertError.message}`);
-      }
+    if (downloadError || !fileData) {
+      throw new Error(
+        `processImportJob: failed to download file from storage: ${downloadError?.message ?? "no file"}`
+      );
     }
 
-    const { error: updateDoneError } = await supabaseAdmin
-      .from("import_jobs")
-      .update({
-        status: "parsed",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", typedJob.id);
+    const arrayBuffer = await fileData.arrayBuffer();
+    const fileBuffer = Buffer.from(arrayBuffer);
 
-    if (updateDoneError) {
-      throw new Error(`update import_jobs after processing: ${updateDoneError.message}`);
-    }
+    const result = await finalizeImportProcessing({
+      importId: importJobId,
+      fileName,
+      fileBuffer,
+    });
 
-    return {
-      ok: true,
-      totalRows: parsedRows.length,
-      status: "parsed",
-    };
+    await safeUpdateImportJob(importJobId, {
+      status: "completed",
+    });
+
+    console.log("[imports.processor] import completed", {
+      importJobId,
+      fileName,
+      storagePath,
+      adapterKey: result.adapterKey,
+      sourceName: result.sourceName,
+      fileKind: result.fileKind,
+      insertedRows: result.insertedRows,
+    });
+
+    return result;
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown processing error";
+    await safeUpdateImportJob(importJobId, {
+      status: "failed",
+    });
 
-    await supabaseAdmin
-      .from("import_jobs")
-      .update({
-        status: "failed",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", typedJob.id);
+    if (error instanceof Error) {
+      console.error("[imports.processor] import failed", {
+        importJobId,
+        message: error.message,
+      });
+      throw error;
+    }
 
-    throw new Error(message);
+    throw new Error("processImportJob: unknown failure");
   }
 }

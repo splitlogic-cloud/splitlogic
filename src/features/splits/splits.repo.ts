@@ -1,85 +1,53 @@
 import "server-only";
-
 import { supabaseAdmin } from "@/lib/supabase/admin";
-
-export type SplitRow = {
-  id: string;
-  company_id: string;
-  work_id: string;
-  party_id: string;
-  role: string | null;
-  share_percent: number | string;
-  created_at: string;
-  updated_at: string;
-  party_name?: string | null;
-  party_type?: string | null;
-};
 
 export async function listSplitsForWork(workId: string) {
   const { data, error } = await supabaseAdmin
     .from("splits")
-    .select(`
-      id,
-      company_id,
-      work_id,
-      party_id,
-      role,
-      share_percent,
-      created_at,
-      updated_at,
-      parties:party_id (
-        name,
-        type
-      )
-    `)
-    .eq("work_id", workId)
-    .order("created_at", { ascending: true });
+    .select("id, party_id, share_percent")
+    .eq("work_id", workId);
 
-  if (error) {
-    throw new Error(`Failed to load splits: ${error.message}`);
-  }
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    company_id: row.company_id,
-    work_id: row.work_id,
-    party_id: row.party_id,
-    role: row.role,
-    share_percent: row.share_percent,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    party_name: row.parties?.name ?? null,
-    party_type: row.parties?.type ?? null,
-  })) as SplitRow[];
-}
-
-export async function listPartiesForCompany(companyId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("parties")
-    .select("id, name, type")
-    .eq("company_id", companyId)
-    .order("name", { ascending: true });
-
-  if (error) {
-    throw new Error(`Failed to load parties: ${error.message}`);
-  }
-
+  if (error) throw new Error(error.message);
   return data ?? [];
 }
 
-export async function getSplitTotalForWork(workId: string) {
-  const { data, error } = await supabaseAdmin
+export async function createSplit(params: {
+  companyId: string;
+  workId: string;
+  partyId: string;
+  sharePercent: number;
+}) {
+  const { error } = await supabaseAdmin.from("splits").insert({
+    company_id: params.companyId,
+    work_id: params.workId,
+    party_id: params.partyId,
+    share_percent: params.sharePercent,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function updateSplit(params: {
+  splitId: string;
+  sharePercent: number;
+}) {
+  const { error } = await supabaseAdmin
     .from("splits")
-    .select("share_percent")
-    .eq("work_id", workId);
+    .update({ share_percent: params.sharePercent })
+    .eq("id", params.splitId);
 
-  if (error) {
-    throw new Error(`Failed to calculate split total: ${error.message}`);
-  }
+  if (error) throw new Error(error.message);
+}
 
-  const total = (data ?? []).reduce((sum, row: any) => {
-    return sum + Number(row.share_percent ?? 0);
-  }, 0);
+export async function deleteSplit(splitId: string) {
+  const { error } = await supabaseAdmin
+    .from("splits")
+    .delete()
+    .eq("id", splitId);
 
-  return total;
+  if (error) throw new Error(error.message);
+}
+
+export function getSplitTotal(splits: any[]) {
+  return splits.reduce((sum, s) => sum + Number(s.share_percent), 0);
 }

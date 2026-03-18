@@ -2,47 +2,67 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { saveWorkAlias } from "@/features/matching/work-alias.repo";
 
-type VerifyContextResult =
-  | {
-      ok: true;
-      companyId: string;
-      importId: string;
+type CompanyRecord = {
+  id: string;
+  slug: string | null;
+};
+
+type ImportJobRecord = {
+  id: string;
+  company_id: string;
+};
+
+type ImportRowRecord = {
+  id: string;
+  import_id: string;
+  raw: Record<string, unknown> | null;
+};
+
+function pickString(raw: Record<string, unknown> | null, keys: string[]): string {
+  if (!raw) return "";
+
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
     }
-  | {
-      ok: false;
-      message: string;
-    };
+  }
 
-async function verifyContext(
-  companySlug: string,
-  importJobId: string
-): Promise<VerifyContextResult> {
+  return "";
+}
+
+async function verifyContext(params: {
+  companySlug: string;
+  importJobId: string;
+}) {
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
     .select("id, slug")
-    .eq("slug", companySlug)
+    .eq("slug", params.companySlug)
     .maybeSingle();
 
   if (companyError || !company) {
-    return { ok: false, message: "Company not found" };
+    throw new Error("Company not found");
   }
 
-  const { data: importJob, error: importError } = await supabaseAdmin
+  const typedCompany = company as CompanyRecord;
+
+  const { data: importJob, error: importJobError } = await supabaseAdmin
     .from("import_jobs")
     .select("id, company_id")
-    .eq("id", importJobId)
-    .eq("company_id", company.id)
+    .eq("id", params.importJobId)
+    .eq("company_id", typedCompany.id)
     .maybeSingle();
 
-  if (importError || !importJob) {
-    return { ok: false, message: "Import job not found for company" };
+  if (importJobError || !importJob) {
+    throw new Error("Import job not found");
   }
 
   return {
-    ok: true,
-    companyId: company.id,
-    importId: importJob.id,
+    company: typedCompany,
+    importJob: importJob as ImportJobRecord,
   };
 }
 
@@ -53,47 +73,77 @@ export async function manualMatchImportRowAction(formData: FormData) {
   const workId = String(formData.get("workId") ?? "");
 
   if (!companySlug || !importJobId || !rowId || !workId) {
-    throw new Error("Missing required fields for manual match");
+    throw new Error("Missing companySlug, importJobId, rowId or workId");
   }
 
-  const ctx = await verifyContext(companySlug, importJobId);
-  if (!ctx.ok) {
-    throw new Error(ctx.message);
-  }
+  const { company, importJob } = await verifyContext({
+    companySlug,
+    importJobId,
+  });
 
-  const { data: row, error: rowError } = await supabaseAdmin
+  const { data: importRow, error: importRowError } = await supabaseAdmin
     .from("import_rows")
-    .select("id, import_id")
+    .select("id, import_id, raw")
     .eq("id", rowId)
-    .eq("import_id", ctx.importId)
+    .eq("import_id", importJob.id)
     .maybeSingle();
 
-  if (rowError || !row) {
-    throw new Error("Import row not found for import");
+  if (importRowError || !importRow) {
+    throw new Error("Import row not found");
   }
 
-  const { data: work, error: workError } = await supabaseAdmin
-    .from("works")
-    .select("id, company_id")
-    .eq("id", workId)
-    .eq("company_id", ctx.companyId)
-    .maybeSingle();
-
-  if (workError || !work) {
-    throw new Error("Work not found for company");
-  }
+  const typedImportRow = importRow as ImportRowRecord;
 
   const { error: updateError } = await supabaseAdmin
     .from("import_rows")
     .update({
-      matched_work_id: work.id,
+      matched_work_id: workId,
       match_source: "manual",
       match_confidence: 1,
     })
-    .eq("id", row.id);
+    .eq("id", rowId)
+    .eq("import_id", importJob.id);
 
   if (updateError) {
-    throw new Error(`Failed to save manual match: ${updateError.message}`);
+    throw new Error(`manual match failed: ${updateError.message}`);
+  }
+
+  const raw = typedImportRow.raw ?? {};
+
+  const title = pickString(raw, [
+    "title",
+    "track",
+    "track_title",
+    "trackTitle",
+    "song_title",
+    "songTitle",
+    "product",
+    "release_title",
+    "releaseTitle",
+  ]);
+
+  const artist = pickString(raw, [
+    "artist",
+    "track_artist",
+    "trackArtist",
+    "product_artist",
+    "productArtist",
+    "main_artist",
+    "mainArtist",
+  ]);
+
+  const isrc = pickString(raw, ["isrc", "ISRC"]);
+  const sourceName = pickString(raw, ["store", "service", "source_name", "source"]);
+
+  if (title || artist || isrc) {
+    await saveWorkAlias({
+      companyId: company.id,
+      workId,
+      title,
+      artist,
+      isrc: isrc || null,
+      sourceName: sourceName || null,
+    });
   }
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
@@ -105,36 +155,26 @@ export async function clearImportRowMatchAction(formData: FormData) {
   const rowId = String(formData.get("rowId") ?? "");
 
   if (!companySlug || !importJobId || !rowId) {
-    throw new Error("Missing required fields for clear match");
+    throw new Error("Missing companySlug, importJobId or rowId");
   }
 
-  const ctx = await verifyContext(companySlug, importJobId);
-  if (!ctx.ok) {
-    throw new Error(ctx.message);
-  }
+  const { importJob } = await verifyContext({
+    companySlug,
+    importJobId,
+  });
 
-  const { data: row, error: rowError } = await supabaseAdmin
-    .from("import_rows")
-    .select("id, import_id")
-    .eq("id", rowId)
-    .eq("import_id", ctx.importId)
-    .maybeSingle();
-
-  if (rowError || !row) {
-    throw new Error("Import row not found for import");
-  }
-
-  const { error: updateError } = await supabaseAdmin
+  const { error } = await supabaseAdmin
     .from("import_rows")
     .update({
       matched_work_id: null,
       match_source: null,
       match_confidence: null,
     })
-    .eq("id", row.id);
+    .eq("id", rowId)
+    .eq("import_id", importJob.id);
 
-  if (updateError) {
-    throw new Error(`Failed to clear match: ${updateError.message}`);
+  if (error) {
+    throw new Error(`clear match failed: ${error.message}`);
   }
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);

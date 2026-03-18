@@ -1,161 +1,89 @@
-import "server-only";
-
-import Link from "next/link";
-import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
-  getSplitTotalForWork,
-  listPartiesForCompany,
   listSplitsForWork,
+  getSplitTotal,
 } from "@/features/splits/splits.repo";
-import CreateSplitForm from "./CreateSplitForm";
-import DeleteSplitButton from "./DeleteSplitButton";
+import {
+  createSplitAction,
+  updateSplitAction,
+  deleteSplitAction,
+} from "@/features/splits/splits.actions";
 
-export const dynamic = "force-dynamic";
+export default async function Page({ params }: any) {
+  const { workId } = await params;
 
-type Params = {
-  params: Promise<{
-    companySlug: string;
-    workId: string;
-  }>;
-};
+  const splits = await listSplitsForWork(workId);
 
-function formatPercent(value: number) {
-  return `${value.toFixed(2)}%`;
-}
+  const total = getSplitTotal(splits);
 
-export default async function WorkSplitsPage({ params }: Params) {
-  const { companySlug, workId } = await params;
-
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, slug, name")
-    .eq("slug", companySlug)
-    .maybeSingle();
-
-  if (companyError) {
-    throw new Error(`Failed to load company: ${companyError.message}`);
-  }
-
-  if (!company) {
-    notFound();
-  }
-
-  const { data: work, error: workError } = await supabaseAdmin
-    .from("works")
-    .select("id, company_id, title, artist, isrc")
-    .eq("id", workId)
-    .eq("company_id", company.id)
-    .maybeSingle();
-
-  if (workError) {
-    throw new Error(`Failed to load work: ${workError.message}`);
-  }
-
-  if (!work) {
-    notFound();
-  }
-
-  const [splits, parties, splitTotal] = await Promise.all([
-    listSplitsForWork(work.id),
-    listPartiesForCompany(company.id),
-    getSplitTotalForWork(work.id),
-  ]);
-
-  const isComplete = Math.abs(splitTotal - 100) < 0.000001;
+  const { data: parties } = await supabaseAdmin
+    .from("parties")
+    .select("id,name");
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2">
-          <div className="text-sm text-zinc-500">
-            <Link
-              href={`/c/${companySlug}/works`}
-              className="hover:text-zinc-900 hover:underline"
-            >
-              Works
-            </Link>{" "}
-            / <span className="text-zinc-900">{work.id}</span> / Splits
-          </div>
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold">Splits</h1>
 
-          <h1 className="text-3xl font-bold tracking-tight text-zinc-900">
-            Work splits
-          </h1>
-
-          <div className="text-sm text-zinc-600">
-            <span className="font-medium">{work.title ?? "Untitled"}</span>
-            {" · "}
-            {work.artist ?? "Unknown artist"}
-            {" · "}
-            {work.isrc ?? "No ISRC"}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Split total
-          </div>
-          <div className="mt-2 text-2xl font-bold text-zinc-900">
-            {formatPercent(splitTotal)}
-          </div>
-          <div className={`mt-1 text-sm ${isComplete ? "text-emerald-600" : "text-amber-600"}`}>
-            {isComplete ? "Ready for allocation" : "Must equal 100%"}
-          </div>
-        </div>
+      <div>
+        Total:{" "}
+        <span
+          className={
+            total === 100 ? "text-green-600" : "text-red-600"
+          }
+        >
+          {total}%
+        </span>
       </div>
 
-      <CreateSplitForm
-        companySlug={companySlug}
-        workId={work.id}
-        parties={parties as any[]}
-      />
-
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-zinc-50 text-left">
-            <tr className="border-b border-zinc-200">
-              <th className="px-4 py-3 font-semibold text-zinc-700">Party</th>
-              <th className="px-4 py-3 font-semibold text-zinc-700">Type</th>
-              <th className="px-4 py-3 font-semibold text-zinc-700">Role</th>
-              <th className="px-4 py-3 font-semibold text-zinc-700">Share %</th>
-              <th className="px-4 py-3 font-semibold text-zinc-700">Action</th>
+      <table>
+        <thead>
+          <tr>
+            <th>Party</th>
+            <th>%</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {splits.map((s) => (
+            <tr key={s.id}>
+              <td>{s.party_id}</td>
+              <td>
+                <form action={updateSplitAction}>
+                  <input type="hidden" name="splitId" value={s.id} />
+                  <input
+                    name="sharePercent"
+                    defaultValue={s.share_percent}
+                  />
+                  <button>Save</button>
+                </form>
+              </td>
+              <td>
+                <form action={deleteSplitAction}>
+                  <input type="hidden" name="splitId" value={s.id} />
+                  <button>Delete</button>
+                </form>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {splits.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-zinc-500">
-                  No splits yet.
-                </td>
-              </tr>
-            ) : (
-              splits.map((split) => (
-                <tr key={split.id} className="border-b border-zinc-100">
-                  <td className="px-4 py-4 font-medium text-zinc-900">
-                    {split.party_name ?? "Unknown party"}
-                  </td>
-                  <td className="px-4 py-4 text-zinc-700">
-                    {split.party_type ?? "—"}
-                  </td>
-                  <td className="px-4 py-4 text-zinc-700">
-                    {split.role ?? "—"}
-                  </td>
-                  <td className="px-4 py-4 text-zinc-700">
-                    {formatPercent(Number(split.share_percent))}
-                  </td>
-                  <td className="px-4 py-4">
-                    <DeleteSplitButton
-                      companySlug={companySlug}
-                      workId={work.id}
-                      splitId={split.id}
-                    />
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
+
+      <h2>Add split</h2>
+
+      <form action={createSplitAction}>
+        <input type="hidden" name="workId" value={workId} />
+
+        <select name="partyId">
+          {parties?.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+
+        <input name="sharePercent" placeholder="%" />
+        <button>Add</button>
+      </form>
     </div>
   );
 }
