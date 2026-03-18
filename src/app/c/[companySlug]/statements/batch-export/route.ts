@@ -112,11 +112,11 @@ export async function GET(req: Request): Promise<Response> {
 
   await createAuditEvent({
     companyId: company.id,
-    entityType: "statement",
-    entityId: headers.id,
-    action: "statement.export.pdf",
+    entityType: "statement_batch",
+    entityId: "batch-export",
+    action: "statement.batch_export.zip",
     payload: {
-      lineCount: lines.length,
+      statementCount: selectedStatements.length,
     },
   });
 
