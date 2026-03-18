@@ -60,7 +60,7 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
       currency: line.currency ?? header.currency ?? "",
     })),
   });
-
+  
   await createAuditEvent({
     companyId: company.id,
     entityType: "statement",
@@ -71,7 +71,12 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
     },
   });
 
-  return new Response(pdfBytes, {
+  const pdfBuffer = pdfBytes.buffer.slice(
+    pdfBytes.byteOffset,
+    pdfBytes.byteOffset + pdfBytes.byteLength
+  ) as ArrayBuffer;
+
+  return new Response(pdfBuffer, {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
