@@ -1,6 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createAuditEvent } from "@/features/audit/audit.repo";
-import { getStatementHeader, listStatementLines } from "@/features/statements/statements.repo";
+import {
+  getStatementHeader,
+  listStatementLines,
+} from "@/features/statements/statements.repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,15 +11,17 @@ export const dynamic = "force-dynamic";
 type Ctx = {
   params: Promise<{
     companySlug: string;
-    statementId: string;
+    id: string;
   }>;
 };
 
 function csvEscape(value: unknown): string {
   const str = value == null ? "" : String(value);
+
   if (/[",\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }
+
   return str;
 }
 
@@ -25,7 +30,7 @@ function buildCsv(rows: string[][]): string {
 }
 
 export async function GET(_req: Request, context: Ctx): Promise<Response> {
-  const { companySlug, statementId } = await context.params;
+  const { companySlug, id } = await context.params;
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
@@ -37,12 +42,13 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
     return new Response("Company not found", { status: 404 });
   }
 
-  const header = await getStatementHeader(company.id, statementId);
+  const header = await getStatementHeader(company.id, id);
+
   if (!header) {
     return new Response("Statement not found", { status: 404 });
   }
 
-  const lines = await listStatementLines(company.id, statementId);
+  const lines = await listStatementLines(company.id, id);
 
   const csvRows: string[][] = [
     [
@@ -89,7 +95,7 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="statement-${statementId}.csv"`,
+      "Content-Disposition": `attachment; filename="statement-${id}.csv"`,
     },
   });
 }
