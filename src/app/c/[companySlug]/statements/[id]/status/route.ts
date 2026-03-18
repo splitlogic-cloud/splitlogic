@@ -7,13 +7,19 @@ export const dynamic = "force-dynamic";
 type Ctx = {
   params: Promise<{
     companySlug: string;
-    statementId: string;
+    id: string;
   }>;
 };
 
 export async function POST(req: Request, context: Ctx): Promise<Response> {
-  const { companySlug, statementId } = await context.params;
-  const body = (await req.json()) as { status?: string };
+  const { companySlug, id } = await context.params;
+
+  let body: { status?: string } = {};
+  try {
+    body = (await req.json()) as { status?: string };
+  } catch {
+    body = {};
+  }
 
   const nextStatus = String(body.status ?? "");
 
@@ -35,7 +41,7 @@ export async function POST(req: Request, context: Ctx): Promise<Response> {
     .from("statements")
     .select("id, status")
     .eq("company_id", company.id)
-    .eq("id", statementId)
+    .eq("id", id)
     .maybeSingle();
 
   if (statementError || !statement) {
@@ -53,7 +59,7 @@ export async function POST(req: Request, context: Ctx): Promise<Response> {
   const { error: updateError } = await supabaseAdmin
     .from("statements")
     .update(patch)
-    .eq("id", statementId)
+    .eq("id", id)
     .eq("company_id", company.id);
 
   if (updateError) {
@@ -63,7 +69,7 @@ export async function POST(req: Request, context: Ctx): Promise<Response> {
   await createAuditEvent({
     companyId: company.id,
     entityType: "statement",
-    entityId: statementId,
+    entityId: id,
     action: `statement.status.${nextStatus}`,
     payload: {
       previousStatus: statement.status,
