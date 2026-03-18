@@ -112,20 +112,24 @@ export async function GET(req: Request): Promise<Response> {
 
   await createAuditEvent({
     companyId: company.id,
-    entityType: "statement_batch_export",
-    entityId: company.id,
-    action: "statement.batch_export.zip",
+    entityType: "statement",
+    entityId: header.id,
+    action: "statement.export.pdf",
     payload: {
-      count: statements.length,
-      statusFilter: status || null,
+      lineCount: lines.length,
     },
   });
 
-  return new Response(content, {
+  const pdfBuffer = pdfBytes.buffer.slice(
+    pdfBytes.byteOffset,
+    pdfBytes.byteOffset + pdfBytes.byteLength
+  ) as ArrayBuffer;
+
+  return new Response(pdfBuffer, {
     status: 200,
     headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="statements-${company.slug}.zip"`,
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="statement-${id}.pdf"`,
     },
   });
 }
