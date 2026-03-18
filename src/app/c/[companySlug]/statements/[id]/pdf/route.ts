@@ -57,6 +57,7 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
       sourceAmount: Number(line.source_amount ?? 0),
       sharePercent: Number(line.share_percent ?? 0),
       allocatedAmount: Number(line.allocated_amount ?? 0),
+      currency: line.currency ?? header.currency ?? "",
     })),
   });
 
