@@ -113,7 +113,7 @@ export async function GET(req: Request): Promise<Response> {
   await createAuditEvent({
     companyId: company.id,
     entityType: "statement",
-    entityId: header.id,
+    entityId: headers.id,
     action: "statement.export.pdf",
     payload: {
       lineCount: lines.length,
