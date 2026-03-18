@@ -1,6 +1,10 @@
 import JSZip from "jszip";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { listStatementsByCompany, getStatementHeader, listStatementLines } from "@/features/statements/statements.repo";
+import {
+  listStatementsByCompany,
+  getStatementHeader,
+  listStatementLines,
+} from "@/features/statements/statements.repo";
 import { buildStatementPdf } from "@/features/statements/pdf";
 import { createAuditEvent } from "@/features/audit/audit.repo";
 
@@ -39,6 +43,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   let statements = await listStatementsByCompany(company.id, 500);
+
   if (status) {
     statements = statements.filter((s) => s.status === status);
   }
@@ -74,38 +79,38 @@ export async function GET(req: Request): Promise<Response> {
         header.currency ?? "",
         String(header.total_amount ?? 0),
         line.work_title ?? "",
-        String(line.source_amount),
-        String(line.share_percent),
-        String(line.allocated_amount),
+        String(line.source_amount ?? 0),
+        String(line.share_percent ?? 0),
+        String(line.allocated_amount ?? 0),
       ]),
     ];
 
     const csv = buildCsv(csvRows);
 
-    const pdf = await buildStatementPdf({
+    const pdfBytes = await buildStatementPdf({
       header: {
         statementId: header.id,
         companyName: company.name ?? company.slug ?? "Company",
         partyName: header.party_name ?? "Unnamed party",
-        periodStart: header.period_start ?? null,
-        periodEnd: header.period_end ?? null,
-        currency: header.currency ?? null,
-        totalAmount: header.total_amount ?? 0,
-        status: header.status ?? null,
-        createdAt: header.created_at ?? null,
+        periodStart: header.period_start ?? "",
+        periodEnd: header.period_end ?? "",
+        currency: header.currency ?? "",
+        totalAmount: Number(header.total_amount ?? 0),
+        status: header.status ?? "",
+        createdAt: header.created_at ?? new Date().toISOString(),
       },
       lines: lines.map((line) => ({
-        workTitle: line.work_title ?? null,
-        sourceAmount: line.source_amount,
-        sharePercent: line.share_percent,
-        allocatedAmount: line.allocated_amount,
-        currency: line.currency ?? null,
+        workTitle: line.work_title ?? "",
+        sourceAmount: Number(line.source_amount ?? 0),
+        sharePercent: Number(line.share_percent ?? 0),
+        allocatedAmount: Number(line.allocated_amount ?? 0),
+        currency: line.currency ?? header.currency ?? "",
       })),
     });
 
     const base = `statement-${statement.id}`;
     zip.file(`${base}.csv`, csv);
-    zip.file(`${base}.pdf`, pdf);
+    zip.file(`${base}.pdf`, pdfBytes);
   }
 
   const content = await zip.generateAsync({ type: "uint8array" });
@@ -116,20 +121,21 @@ export async function GET(req: Request): Promise<Response> {
     entityId: "batch-export",
     action: "statement.batch_export.zip",
     payload: {
-      statementCount: selectedStatements.length,
+      statementCount: statements.length,
+      statusFilter: status || null,
     },
   });
 
-  const pdfBuffer = pdfBytes.buffer.slice(
-    pdfBytes.byteOffset,
-    pdfBytes.byteOffset + pdfBytes.byteLength
+  const zipBuffer = content.buffer.slice(
+    content.byteOffset,
+    content.byteOffset + content.byteLength
   ) as ArrayBuffer;
 
-  return new Response(pdfBuffer, {
+  return new Response(zipBuffer, {
     status: 200,
     headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="statement-${id}.pdf"`,
+      "Content-Type": "application/zip",
+      "Content-Disposition": 'attachment; filename="statements-batch-export.zip"',
     },
   });
 }
