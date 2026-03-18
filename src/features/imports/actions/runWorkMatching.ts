@@ -8,6 +8,8 @@ import {
   type WorkCandidate,
 } from "@/features/works/work-matching";
 
+type RawRecord = Record<string, unknown>;
+
 type ImportRowRecord = {
   id: string;
   raw: unknown;
@@ -15,7 +17,6 @@ type ImportRowRecord = {
 
 type WorkRow = {
   id: string;
-  company_id: string | null;
   title: string | null;
   isrc: string | null;
   artist: string | null;
@@ -27,6 +28,42 @@ type WorkRow = {
 
 const BATCH_SIZE = 500;
 
+function asRecord(value: unknown): RawRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as RawRecord;
+}
+
+function pickString(raw: RawRecord, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = raw[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function getRowMatchInput(rawValue: unknown): {
+  title: string | null;
+  artist: string | null;
+  isrc: string | null;
+} {
+  const raw = asRecord(rawValue);
+
+  return {
+    title: pickString(raw, ["title", "track", "track_title", "product"]),
+    artist: pickString(raw, [
+      "artist",
+      "track_artist",
+      "product_artist",
+      "main_artist",
+    ]),
+    isrc: pickString(raw, ["isrc", "ISRC"]),
+  };
+}
+
 export async function runWorkMatching(
   importJobId: string,
   companyId: string
@@ -34,7 +71,7 @@ export async function runWorkMatching(
   const { data: works, error: worksError } = await supabaseAdmin
     .from("works")
     .select(
-      "id, company_id, title, isrc, artist, normalized_isrc, normalized_title, normalized_artist, normalized_title_artist"
+      "id, title, isrc, artist, normalized_isrc, normalized_title, normalized_artist, normalized_title_artist"
     )
     .eq("company_id", companyId)
     .returns<WorkRow[]>();
@@ -45,7 +82,6 @@ export async function runWorkMatching(
 
   const workCandidates: WorkCandidate[] = (works ?? []).map((work) => ({
     id: work.id,
-    company_id: work.company_id,
     title: work.title,
     isrc: work.isrc,
     artist: work.artist,
@@ -81,21 +117,25 @@ export async function runWorkMatching(
 
     for (const row of importRows) {
       processed += 1;
-      
+
+      const input = getRowMatchInput(row.raw);
+
       const result = matchImportRowFast(index, {
-        title: row.title ?? null,
-        artist: row.artist ?? null,
-        isrc: row.isrc ?? null,
+        title: input.title,
+        artist: input.artist,
+        isrc: input.isrc,
       });
 
-      if (!result.matchedWorkId) continue;
+      if (!result.matchedWorkId) {
+        continue;
+      }
 
       const { error: updateError } = await supabaseAdmin
         .from("import_rows")
         .update({
           matched_work_id: result.matchedWorkId,
-          match_source: result.matchSource,
-          match_confidence: result.matchConfidence,
+          match_source: result.source,
+          match_confidence: result.confidence,
         })
         .eq("id", row.id);
 
