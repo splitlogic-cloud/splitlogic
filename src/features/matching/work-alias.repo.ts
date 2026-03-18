@@ -67,6 +67,7 @@ export async function createAlias(params: {
   title: string;
   artist: string;
   isrc: string | null;
+  sourceName?: string | null;
 }) {
   const k = key(params.title, params.artist);
 
@@ -87,15 +88,13 @@ export async function createAlias(params: {
   }
 }
 
-/**
- * Backwards-compatible alias for older code that imports saveWorkAlias.
- */
 export async function saveWorkAlias(params: {
   companyId: string;
   workId: string;
   title: string;
   artist: string;
   isrc: string | null;
+  sourceName?: string | null;
 }) {
   return createAlias(params);
 }
