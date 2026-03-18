@@ -15,34 +15,45 @@ export async function findWorkByAlias(params: {
 }) {
   const k = key(params.title, params.artist);
 
-  // blacklist först
-  const { data: blocked } = await supabaseAdmin
+  const { data: blocked, error: blockedError } = await supabaseAdmin
     .from("work_alias_blacklist")
     .select("id")
     .eq("company_id", params.companyId)
     .eq("key", k)
     .maybeSingle();
 
+  if (blockedError) {
+    throw new Error(`findWorkByAlias blacklist lookup failed: ${blockedError.message}`);
+  }
+
   if (blocked) return null;
 
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("work_aliases")
     .select("work_id")
     .eq("company_id", params.companyId)
     .eq("key", k)
     .maybeSingle();
 
+  if (error) {
+    throw new Error(`findWorkByAlias key lookup failed: ${error.message}`);
+  }
+
   if (data?.work_id) return data.work_id;
 
   if (params.isrc) {
     const isrc = normalizeIsrc(params.isrc);
 
-    const { data: isrcMatch } = await supabaseAdmin
+    const { data: isrcMatch, error: isrcError } = await supabaseAdmin
       .from("work_aliases")
       .select("work_id")
       .eq("company_id", params.companyId)
       .eq("isrc", isrc)
       .maybeSingle();
+
+    if (isrcError) {
+      throw new Error(`findWorkByAlias ISRC lookup failed: ${isrcError.message}`);
+    }
 
     if (isrcMatch?.work_id) return isrcMatch.work_id;
   }
@@ -59,7 +70,7 @@ export async function createAlias(params: {
 }) {
   const k = key(params.title, params.artist);
 
-  await supabaseAdmin.from("work_aliases").upsert(
+  const { error } = await supabaseAdmin.from("work_aliases").upsert(
     {
       company_id: params.companyId,
       work_id: params.workId,
@@ -70,6 +81,23 @@ export async function createAlias(params: {
     },
     { onConflict: "company_id,key" }
   );
+
+  if (error) {
+    throw new Error(`createAlias failed: ${error.message}`);
+  }
+}
+
+/**
+ * Backwards-compatible alias for older code that imports saveWorkAlias.
+ */
+export async function saveWorkAlias(params: {
+  companyId: string;
+  workId: string;
+  title: string;
+  artist: string;
+  isrc: string | null;
+}) {
+  return createAlias(params);
 }
 
 export async function addToBlacklist(params: {
@@ -79,11 +107,15 @@ export async function addToBlacklist(params: {
 }) {
   const k = key(params.title, params.artist);
 
-  await supabaseAdmin.from("work_alias_blacklist").upsert(
+  const { error } = await supabaseAdmin.from("work_alias_blacklist").upsert(
     {
       company_id: params.companyId,
       key: k,
     },
     { onConflict: "company_id,key" }
   );
+
+  if (error) {
+    throw new Error(`addToBlacklist failed: ${error.message}`);
+  }
 }
