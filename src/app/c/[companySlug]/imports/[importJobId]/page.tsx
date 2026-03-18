@@ -52,6 +52,7 @@ type ImportRowRecord = {
 type WorkOption = {
   id: string;
   title: string | null;
+  artist: string | null;
   isrc: string | null;
 };
 
@@ -319,7 +320,7 @@ export default async function ImportReviewPage({ params }: Params) {
       .order("row_number", { ascending: true })
       .limit(200),
 
-      supabaseAdmin
+    supabaseAdmin
       .from("works")
       .select("id, title, artist, isrc")
       .eq("company_id", typedCompany.id)
@@ -361,6 +362,13 @@ export default async function ImportReviewPage({ params }: Params) {
   const invalidBlockers = blockers.filter(
     (b) => b.status === "invalid_split_total"
   );
+
+  const manualMatchWorks = workOptions.map((work) => ({
+    id: work.id,
+    title: work.title ?? "Untitled",
+    artist: work.artist ?? null,
+    isrc: work.isrc ?? null,
+  }));
 
   return (
     <div className="space-y-8">
@@ -708,17 +716,12 @@ export default async function ImportReviewPage({ params }: Params) {
                       <td className="px-4 py-3">{view.period || "—"}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-2">
-                        <ManualMatchCell
-  companySlug={companySlug}
-  importJobId={typedImportJob.id}
-  rowId={row.id}
-  works={workOptions.map((work) => ({
-    id: work.id,
-    title: work.title ?? "Untitled",
-    artist: work.artist ?? null,
-    isrc: work.isrc ?? null,
-  }))}
-/>
+                          <ManualMatchCell
+                            companySlug={companySlug}
+                            importJobId={typedImportJob.id}
+                            rowId={row.id}
+                            works={manualMatchWorks}
+                          />
                           {row.matched_work_id ? (
                             <ClearMatchButton rowId={row.id} />
                           ) : null}
