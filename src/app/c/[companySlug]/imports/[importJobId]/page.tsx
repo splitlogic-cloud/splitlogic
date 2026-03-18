@@ -708,18 +708,17 @@ export default async function ImportReviewPage({ params }: Params) {
                       <td className="px-4 py-3">{view.period || "—"}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-2">
-                          <ManualMatchCell
-                            companySlug={companySlug}
-                            importJobId={typedImportJob.id}
-                            rowId={row.id}
-                            matchedWorkId={row.matched_work_id}
-                            works={workOptions.map((work) => ({
-                              id: work.id,
-                              title: work.title ?? "Untitled",
-                              artist: work.artist ?? null,
-                              isrc: work.isrc ?? null,
-                            }))}
-                          />
+                        <ManualMatchCell
+  companySlug={companySlug}
+  importJobId={typedImportJob.id}
+  rowId={row.id}
+  works={workOptions.map((work) => ({
+    id: work.id,
+    title: work.title ?? "Untitled",
+    artist: work.artist ?? null,
+    isrc: work.isrc ?? null,
+  }))}
+/>
                           {row.matched_work_id ? (
                             <ClearMatchButton rowId={row.id} />
                           ) : null}
