@@ -131,7 +131,7 @@ export type MatchInput = {
   isrc: string;
 };
 
-export type MatchCandidate = {
+export type WorkCandidate = {
   id: string;
   title: string | null;
   artist: string | null;
@@ -141,6 +141,8 @@ export type MatchCandidate = {
   normalized_isrc?: string | null;
   normalized_title_artist?: string | null;
 };
+
+export type MatchCandidate = WorkCandidate;
 
 export type MatchDecision =
   | {
@@ -153,6 +155,18 @@ export type MatchDecision =
       source: null;
       confidence: 0;
     };
+
+export type FastMatchInput = {
+  title: string | null | undefined;
+  artist: string | null | undefined;
+  isrc: string | null | undefined;
+};
+
+export type WorkMatcherIndex = {
+  all: WorkCandidate[];
+  byIsrc: Map<string, WorkCandidate[]>;
+  byTitleArtistKey: Map<string, WorkCandidate[]>;
+};
 
 function hasVersionConflict(a: string, b: string): boolean {
   const versionWords = ["remix", "live", "acoustic", "instrumental", "edit"];
@@ -282,4 +296,77 @@ export function decideBestWorkMatch(
     source: null,
     confidence: 0,
   };
+}
+
+export function buildWorkMatcherIndex(
+  works: WorkCandidate[]
+): WorkMatcherIndex {
+  const byIsrc = new Map<string, WorkCandidate[]>();
+  const byTitleArtistKey = new Map<string, WorkCandidate[]>();
+
+  for (const work of works) {
+    const normalizedIsrc =
+      work.normalized_isrc && work.normalized_isrc.trim()
+        ? normalizeIsrc(work.normalized_isrc)
+        : normalizeIsrc(work.isrc);
+
+    if (normalizedIsrc) {
+      const existing = byIsrc.get(normalizedIsrc) ?? [];
+      existing.push(work);
+      byIsrc.set(normalizedIsrc, existing);
+    }
+
+    const key =
+      work.normalized_title_artist && work.normalized_title_artist.trim()
+        ? work.normalized_title_artist
+        : buildTitleArtistKey(work.title, work.artist);
+
+    if (key && key !== "__") {
+      const existing = byTitleArtistKey.get(key) ?? [];
+      existing.push(work);
+      byTitleArtistKey.set(key, existing);
+    }
+  }
+
+  return {
+    all: works,
+    byIsrc,
+    byTitleArtistKey,
+  };
+}
+
+export function matchImportRowFast(
+  index: WorkMatcherIndex,
+  input: FastMatchInput
+): MatchDecision {
+  const title = input.title ?? "";
+  const artist = input.artist ?? "";
+  const isrc = input.isrc ?? "";
+
+  const normalizedIsrc = normalizeIsrc(isrc);
+  if (normalizedIsrc) {
+    const isrcCandidates = index.byIsrc.get(normalizedIsrc) ?? [];
+    if (isrcCandidates.length > 0) {
+      return decideBestWorkMatch(
+        { title, artist, isrc: normalizedIsrc },
+        isrcCandidates
+      );
+    }
+  }
+
+  const key = buildTitleArtistKey(title, artist);
+  if (key && key !== "__") {
+    const exactCandidates = index.byTitleArtistKey.get(key) ?? [];
+    if (exactCandidates.length > 0) {
+      return decideBestWorkMatch(
+        { title, artist, isrc: normalizedIsrc },
+        exactCandidates
+      );
+    }
+  }
+
+  return decideBestWorkMatch(
+    { title, artist, isrc: normalizedIsrc },
+    index.all
+  );
 }
