@@ -21,7 +21,7 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, slug")
+    .select("id, slug, name")
     .eq("slug", companySlug)
     .maybeSingle();
 
@@ -40,13 +40,17 @@ export async function GET(_req: Request, context: Ctx): Promise<Response> {
   const pdfBytes = await buildStatementPdf({
     header: {
       statementId: header.id,
-      companyName: company.slug ?? companySlug,
+      companyName: company.name ?? company.slug ?? companySlug,
       partyName: header.party_name ?? "Unknown party",
       periodStart: header.period_start ?? "",
       periodEnd: header.period_end ?? "",
       currency: header.currency ?? "",
       totalAmount: Number(header.total_amount ?? 0),
       status: header.status ?? "",
+      createdAt:
+        typeof header.created_at === "string"
+          ? header.created_at
+          : new Date().toISOString(),
     },
     lines: lines.map((line) => ({
       workTitle: line.work_title ?? "",
