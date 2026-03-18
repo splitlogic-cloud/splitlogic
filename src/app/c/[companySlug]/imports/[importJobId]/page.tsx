@@ -725,9 +725,13 @@ export default async function ImportReviewPage({ params }: Params) {
                              rowIsrc={view.isrc || ""}
                              works={manualMatchWorks}
                           />
-                         {row.matched_work_id ? (
-                           <ClearMatchButton rowId={row.id} />
-                         ) : null}
+                        {row.matched_work_id ? (
+                          <ClearMatchButton
+                             companySlug={companySlug}
+                             importJobId={typedImportJob.id}
+                             rowId={row.id}
+                          />
+                        ) : null}
                        </div>
                       </td>
                     </tr>
