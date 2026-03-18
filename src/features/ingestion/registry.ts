@@ -9,7 +9,7 @@ export const adapters: ImportAdapter[] = [
   believeAdapter,
   fugaAdapter,
   genericAdapter,
-  fallbackAdapter, // 👈 viktigt: alltid sist
+  fallbackAdapter,
 ];
 
 export function getAdapterByKey(key: string): ImportAdapter | null {

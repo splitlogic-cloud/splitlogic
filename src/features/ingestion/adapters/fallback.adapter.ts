@@ -2,7 +2,7 @@ import type {
   ImportAdapter,
   NormalizeResult,
   NormalizedRow,
-} from "../registry";
+} from "../types";
 
 function normHeader(header: string): string {
   return String(header ?? "").trim().toLowerCase();
@@ -197,3 +197,4 @@ export const fallbackAdapter: ImportAdapter = {
     };
   },
 };
+
