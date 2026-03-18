@@ -81,8 +81,12 @@ export async function runWorkMatching(
 
     for (const row of importRows) {
       processed += 1;
-
-      const result = matchImportRowFast(row, index, 0.9);
+      
+      const result = matchImportRowFast(index, {
+        title: row.title ?? null,
+        artist: row.artist ?? null,
+        isrc: row.isrc ?? null,
+      });
 
       if (!result.matchedWorkId) continue;
 
