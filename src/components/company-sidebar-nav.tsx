@@ -18,6 +18,7 @@ export default function CompanySidebarNav({
   const navItems: NavItem[] = [
     { label: "Dashboard", href: `/c/${companySlug}/dashboard` },
     { label: "Imports", href: `/c/${companySlug}/imports` },
+    { label: "Allocations", href: `/c/${companySlug}/allocations` },
     { label: "Works", href: `/c/${companySlug}/works` },
     { label: "Parties", href: `/c/${companySlug}/parties` },
     { label: "Statements", href: `/c/${companySlug}/statements` },

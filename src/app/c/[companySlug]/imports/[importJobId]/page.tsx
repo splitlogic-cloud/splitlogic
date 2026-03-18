@@ -188,6 +188,26 @@ function blockerBadge(blocker: AllocationBlockerRow) {
   );
 }
 
+function StepLink({
+  href,
+  label,
+  sublabel,
+}: {
+  href: string;
+  label: string;
+  sublabel: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:bg-slate-50"
+    >
+      <div className="text-sm font-medium text-slate-900">{label}</div>
+      <div className="mt-1 text-sm text-slate-500">{sublabel}</div>
+    </Link>
+  );
+}
+
 export default async function ImportReviewPage({ params }: Params) {
   const { companySlug, importJobId } = await params;
 
@@ -283,7 +303,11 @@ export default async function ImportReviewPage({ params }: Params) {
       .from("import_rows")
       .select("id", { count: "exact", head: true })
       .eq("import_id", typedImportJob.id)
-      .not("match_source", "in", '("isrc_exact","title_artist_exact","fuzzy","manual")'),
+      .not(
+        "match_source",
+        "in",
+        '("isrc_exact","title_artist_exact","fuzzy","manual")'
+      ),
 
     supabaseAdmin
       .from("import_rows")
@@ -340,7 +364,7 @@ export default async function ImportReviewPage({ params }: Params) {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <div className="text-sm text-slate-500">
             Imports / {typedImportJob.id}
@@ -356,23 +380,24 @@ export default async function ImportReviewPage({ params }: Params) {
         </div>
 
         <div className="flex w-full max-w-xl flex-col gap-3">
-          <div className="flex justify-end">
+          <div className="grid gap-3 md:grid-cols-2">
             <BootstrapWorksButton
+              companyId={typedCompany.id}
+              companySlug={companySlug}
+              importJobId={typedImportJob.id}
+            />
+
+            <RunMatchingV3Button
               companySlug={companySlug}
               importJobId={typedImportJob.id}
             />
           </div>
 
-          <RunMatchingV3Button
-            companySlug={companySlug}
-            importJobId={typedImportJob.id}
-          />
-
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-sm font-medium text-slate-900">Current goal</div>
             <div className="mt-1 text-sm text-slate-600">
-              Bootstrap missing works, then max out match coverage before
-              splits/allocation.
+              Bootstrap missing works, run matching, fix split blockers, then
+              allocate and generate statements.
             </div>
           </div>
         </div>
@@ -394,6 +419,46 @@ export default async function ImportReviewPage({ params }: Params) {
       </div>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
+            Next steps
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Use this import as the control center for the whole workflow.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StepLink
+            href={`/c/${companySlug}/works`}
+            label="Open works"
+            sublabel="Review works and prepare split setup."
+          />
+          <StepLink
+            href={`/c/${companySlug}/statements`}
+            label="Open statements"
+            sublabel="Review generated statements and exports."
+          />
+          <StepLink
+            href={`/c/${companySlug}/audit`}
+            label="Open audit"
+            sublabel="Verify system events and traceability."
+          />
+          {latestAllocationRun ? (
+            <StepLink
+              href={`/c/${companySlug}/allocations/${latestAllocationRun.id}`}
+              label="Open allocation QA"
+              sublabel="Inspect latest allocation run for this import."
+            />
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+              Run allocation first to unlock direct QA access for this import.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
@@ -404,10 +469,21 @@ export default async function ImportReviewPage({ params }: Params) {
             </p>
           </div>
 
-          <RunAllocationButton
-            companySlug={companySlug}
-            importJobId={typedImportJob.id}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            {latestAllocationRun ? (
+              <Link
+                href={`/c/${companySlug}/allocations/${latestAllocationRun.id}`}
+                className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
+              >
+                View QA
+              </Link>
+            ) : null}
+
+            <RunAllocationButton
+              companySlug={companySlug}
+              importJobId={typedImportJob.id}
+            />
+          </div>
         </div>
 
         {latestAllocationRun ? (
@@ -497,14 +573,23 @@ export default async function ImportReviewPage({ params }: Params) {
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-            Allocation blockers
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Works that block allocation because they have missing or invalid
-            splits.
-          </p>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
+              Allocation blockers
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Works that block allocation because they have missing or invalid
+              splits.
+            </p>
+          </div>
+
+          <Link
+            href={`/c/${companySlug}/works`}
+            className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
+          >
+            Open works
+          </Link>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -549,7 +634,9 @@ export default async function ImportReviewPage({ params }: Params) {
                         {blocker.blockedRows}
                       </td>
                       <td className="px-4 py-3">{blocker.splitCount}</td>
-                      <td className="px-4 py-3">{blocker.splitTotal.toFixed(6)}</td>
+                      <td className="px-4 py-3">
+                        {blocker.splitTotal.toFixed(6)}
+                      </td>
                       <td className="px-4 py-3">
                         <Link
                           href={`/c/${companySlug}/works/${blocker.workId}/splits`}
@@ -643,10 +730,7 @@ export default async function ImportReviewPage({ params }: Params) {
                 })
               ) : (
                 <tr>
-                  <td
-                    className="px-4 py-6 text-sm text-slate-500"
-                    colSpan={9}
-                  >
+                  <td className="px-4 py-6 text-sm text-slate-500" colSpan={9}>
                     No unmatched rows.
                   </td>
                 </tr>
