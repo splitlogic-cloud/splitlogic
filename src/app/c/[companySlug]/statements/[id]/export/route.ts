@@ -1,69 +1,95 @@
-import "server-only";
-
-import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createAuditEvent } from "@/features/audit/audit.repo";
+import { getStatementHeader, listStatementLines } from "@/features/statements/statements.repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * GET /c/[companySlug]/statements/[id]/export
- *
- * Returns CSV (text/csv) built from statement_lines_v1 view.
- * Your view columns include: company_id, work_id, work_title, party_id, party_name, currency, earned_net, ...
- */
-export async function GET(req: Request, context: any): Promise<Response> {
-  const companySlug = String(context?.params?.companySlug ?? "");
-  const statementId = String(context?.params?.id ?? "");
+type Ctx = {
+  params: Promise<{
+    companySlug: string;
+    statementId: string;
+  }>;
+};
 
-  if (!companySlug || !statementId) {
-    return new Response("Missing params", { status: 400 });
+function csvEscape(value: unknown): string {
+  const str = value == null ? "" : String(value);
+  if (/[",\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function buildCsv(rows: string[][]): string {
+  return rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+}
+
+export async function GET(_req: Request, context: Ctx): Promise<Response> {
+  const { companySlug, statementId } = await context.params;
+
+  const { data: company, error: companyError } = await supabaseAdmin
+    .from("companies")
+    .select("id, slug")
+    .eq("slug", companySlug)
+    .maybeSingle();
+
+  if (companyError || !company) {
+    return new Response("Company not found", { status: 404 });
   }
 
-  const company = await requireCompanyBySlugForUser(companySlug);
-  const supabase = await createSupabaseServerClient();
-
-  // Pull statement lines from view
-  const { data, error } = await supabase
-    .from("statement_lines_v1")
-    .select("work_title,party_name,currency,earned_net,work_id,party_id")
-    .eq("company_id", company.id)
-    .eq("statement_id", statementId)
-    .order("party_name", { ascending: true })
-    .order("work_title", { ascending: true });
-
-  if (error) {
-    return new Response(JSON.stringify({ ok: false, error: error.message }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+  const header = await getStatementHeader(company.id, statementId);
+  if (!header) {
+    return new Response("Statement not found", { status: 404 });
   }
 
-  const rows = (data ?? []) as any[];
+  const lines = await listStatementLines(company.id, statementId);
 
-  // CSV helpers (simple, safe escaping)
-  const esc = (v: any) => {
-    const s = v == null ? "" : String(v);
-    if (/[,"\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-
-  const header = ["party_name", "work_title", "currency", "earned_net"];
-  const lines = [
-    header.join(","),
-    ...rows.map((r) =>
-      [esc(r.party_name), esc(r.work_title), esc(r.currency), esc(r.earned_net)].join(",")
-    ),
+  const csvRows: string[][] = [
+    [
+      "statement_id",
+      "party_name",
+      "status",
+      "period_start",
+      "period_end",
+      "currency",
+      "total_amount",
+      "work_title",
+      "source_amount",
+      "share_percent",
+      "allocated_amount",
+    ],
+    ...lines.map((line) => [
+      header.id,
+      header.party_name ?? "",
+      header.status ?? "",
+      header.period_start ?? "",
+      header.period_end ?? "",
+      header.currency ?? "",
+      String(header.total_amount ?? 0),
+      line.work_title ?? "",
+      String(line.source_amount),
+      String(line.share_percent),
+      String(line.allocated_amount),
+    ]),
   ];
 
-  const csv = lines.join("\n");
+  const csv = buildCsv(csvRows);
+
+  await createAuditEvent({
+    companyId: company.id,
+    entityType: "statement",
+    entityId: header.id,
+    action: "statement.export.csv",
+    payload: {
+      lineCount: lines.length,
+    },
+  });
 
   return new Response(csv, {
     status: 200,
     headers: {
-      "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="statement-${statementId}.csv"`,
-      "cache-control": "no-store",
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="statement-${statementId}.csv"`,
     },
   });
 }

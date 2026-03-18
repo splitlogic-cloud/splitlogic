@@ -46,8 +46,14 @@ type SplitRecord = {
   company_id: string;
   work_id: string;
   party_id: string;
-  share_percent: number | string;
+  share_percent: number | string | null;
   created_at?: string | null;
+};
+
+type WorkRecord = {
+  id: string;
+  title: string | null;
+  isrc: string | null;
 };
 
 export type AllocationRunSummary = {
@@ -66,10 +72,21 @@ export type AllocationPartyTotal = {
   allocatedAmount: number;
 };
 
+export type AllocationBlockerStatus = "missing_splits" | "invalid_split_total";
+
+export type AllocationBlockerRow = {
+  workId: string;
+  workTitle: string;
+  workIsrc: string | null;
+  status: AllocationBlockerStatus;
+  blockedRows: number;
+  splitCount: number;
+  splitTotal: number;
+};
+
 const READ_BATCH_SIZE = 1000;
 const INSERT_BATCH_SIZE = 1000;
 const IN_CHUNK_SIZE = 500;
-const DEBUG_SAMPLE_LIMIT = 25;
 
 function parseOptionalNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
@@ -173,82 +190,15 @@ function extractRowCurrency(raw: Record<string, unknown> | null): string | null 
   return null;
 }
 
-function pickDebugTitle(raw: Record<string, unknown> | null): string {
-  if (!raw) return "";
-
-  const candidates: unknown[] = [
-    raw.title,
-    raw.track,
-    raw.track_title,
-    raw.trackTitle,
-    raw.song_title,
-    raw.songTitle,
-    raw.product,
-    raw.release_title,
-    raw.releaseTitle,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-      return candidate.trim();
-    }
-  }
-
-  return "";
-}
-
-function pickDebugArtist(raw: Record<string, unknown> | null): string {
-  if (!raw) return "";
-
-  const candidates: unknown[] = [
-    raw.artist,
-    raw.track_artist,
-    raw.trackArtist,
-    raw.product_artist,
-    raw.productArtist,
-    raw.main_artist,
-    raw.mainArtist,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-      return candidate.trim();
-    }
-  }
-
-  return "";
-}
-
-function pickDebugIsrc(raw: Record<string, unknown> | null): string {
-  if (!raw) return "";
-
-  const candidates: unknown[] = [raw.isrc, raw.ISRC];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-      return candidate.trim();
-    }
-  }
-
-  return "";
-}
-
 function hasValid100PercentSplit(splits: SplitRecord[]): boolean {
   if (splits.length === 0) return false;
-
-  const total = round6(
-    splits.reduce((sum, split) => sum + toNumber(split.share_percent), 0)
-  );
-
-  return total === 100;
+  return getSplitTotal(splits) === 100;
 }
 
-function buildSplitDebugShape(splits: SplitRecord[]) {
-  return splits.map((split) => ({
-    splitId: split.id,
-    partyId: split.party_id,
-    sharePercent: toNumber(split.share_percent),
-  }));
+function getSplitTotal(splits: SplitRecord[]): number {
+  return round6(
+    splits.reduce((sum, split) => sum + toNumber(split.share_percent), 0)
+  );
 }
 
 async function createAllocationRun(params: {
@@ -391,6 +341,35 @@ async function loadSplitsForWorks(params: {
   return map;
 }
 
+async function loadWorksByIds(params: {
+  workIds: string[];
+}): Promise<Map<string, WorkRecord>> {
+  const map = new Map<string, WorkRecord>();
+
+  if (params.workIds.length === 0) {
+    return map;
+  }
+
+  const chunks = chunkArray(params.workIds, IN_CHUNK_SIZE);
+
+  for (const ids of chunks) {
+    const { data, error } = await supabaseAdmin
+      .from("works")
+      .select("id, title, isrc")
+      .in("id", ids);
+
+    if (error) {
+      throw new Error(`load works failed: ${error.message}`);
+    }
+
+    for (const row of (data ?? []) as WorkRecord[]) {
+      map.set(row.id, row);
+    }
+  }
+
+  return map;
+}
+
 async function insertAllocationRows(rows: AllocationRowInsert[]): Promise<void> {
   if (rows.length === 0) return;
 
@@ -419,13 +398,6 @@ export async function runAllocationEngineV1(params: {
       importId: params.importId,
     });
 
-    console.log("[allocation] run started", {
-      runId,
-      companyId: params.companyId,
-      importId: params.importId,
-      importRowsLoaded: importRows.length,
-    });
-
     const totalInputRows = importRows.length;
 
     const unmatchedRows = importRows.filter((row) => !row.matched_work_id);
@@ -444,108 +416,32 @@ export async function runAllocationEngineV1(params: {
       workIds,
     });
 
-    console.log("[allocation] split coverage loaded", {
-      distinctMatchedWorks: workIds.length,
-      worksWithAnySplits: splitsByWorkId.size,
-    });
-
     const allocationRowsToInsert: AllocationRowInsert[] = [];
 
     let eligibleRows = 0;
     let skippedMissingSplitsRows = 0;
     let skippedInvalidSplitRows = 0;
 
-    const missingSplitWorkCounts = new Map<string, number>();
-    const invalidSplitWorkCounts = new Map<string, number>();
-
-    const missingSplitSamples: Array<{
-      importRowId: string;
-      workId: string;
-      title: string;
-      artist: string;
-      isrc: string;
-      amount: number;
-      currency: string | null;
-    }> = [];
-
-    const invalidSplitSamples: Array<{
-      importRowId: string;
-      workId: string;
-      title: string;
-      artist: string;
-      isrc: string;
-      amount: number;
-      currency: string | null;
-      splitTotal: number;
-      splits: Array<{
-        splitId: string;
-        partyId: string;
-        sharePercent: number;
-      }>;
-    }> = [];
-
     for (const row of matchedRows) {
       const workId = row.matched_work_id;
       if (!workId) continue;
 
       const splits = splitsByWorkId.get(workId) ?? [];
-      const sourceAmount = extractRowAmount(row.raw);
-      const currency = extractRowCurrency(row.raw);
-      const title = pickDebugTitle(row.raw);
-      const artist = pickDebugArtist(row.raw);
-      const isrc = pickDebugIsrc(row.raw);
 
       if (splits.length === 0) {
         skippedMissingSplitsRows += 1;
-        missingSplitWorkCounts.set(
-          workId,
-          (missingSplitWorkCounts.get(workId) ?? 0) + 1
-        );
-
-        if (missingSplitSamples.length < DEBUG_SAMPLE_LIMIT) {
-          missingSplitSamples.push({
-            importRowId: row.id,
-            workId,
-            title,
-            artist,
-            isrc,
-            amount: sourceAmount,
-            currency,
-          });
-        }
-
         continue;
       }
 
-      const splitTotal = round6(
-        splits.reduce((sum, split) => sum + toNumber(split.share_percent), 0)
-      );
-
       if (!hasValid100PercentSplit(splits)) {
         skippedInvalidSplitRows += 1;
-        invalidSplitWorkCounts.set(
-          workId,
-          (invalidSplitWorkCounts.get(workId) ?? 0) + 1
-        );
-
-        if (invalidSplitSamples.length < DEBUG_SAMPLE_LIMIT) {
-          invalidSplitSamples.push({
-            importRowId: row.id,
-            workId,
-            title,
-            artist,
-            isrc,
-            amount: sourceAmount,
-            currency,
-            splitTotal,
-            splits: buildSplitDebugShape(splits),
-          });
-        }
-
         continue;
       }
 
       eligibleRows += 1;
+
+      const sourceAmount = extractRowAmount(row.raw);
+      const currency = extractRowCurrency(row.raw);
 
       for (const split of splits) {
         const sharePercent = toNumber(split.share_percent);
@@ -578,37 +474,6 @@ export async function runAllocationEngineV1(params: {
       skippedMissingSplitsRows,
       skippedInvalidSplitRows,
     };
-
-    const topMissingWorks = Array.from(missingSplitWorkCounts.entries())
-      .map(([workId, count]) => ({ workId, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 20);
-
-    const topInvalidWorks = Array.from(invalidSplitWorkCounts.entries())
-      .map(([workId, count]) => ({ workId, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 20);
-
-    console.log("[allocation] run summary", summary);
-
-    if (missingSplitSamples.length > 0) {
-      console.log("[allocation] sample rows with NO splits", missingSplitSamples);
-    }
-
-    if (invalidSplitSamples.length > 0) {
-      console.log(
-        "[allocation] sample rows with INVALID splits",
-        invalidSplitSamples
-      );
-    }
-
-    if (topMissingWorks.length > 0) {
-      console.log("[allocation] top works missing splits", topMissingWorks);
-    }
-
-    if (topInvalidWorks.length > 0) {
-      console.log("[allocation] top works with invalid splits", topInvalidWorks);
-    }
 
     await completeAllocationRun(runId, {
       totalInputRows: summary.totalInputRows,
@@ -736,4 +601,79 @@ export async function listAllocationTotalsByParty(params: {
       allocatedAmount: round6(totals.get(partyId) ?? 0),
     }))
     .sort((a, b) => b.allocatedAmount - a.allocatedAmount);
+}
+
+export async function listAllocationBlockersForImport(params: {
+  companyId: string;
+  importId: string;
+}): Promise<AllocationBlockerRow[]> {
+  const importRows = await loadImportRows({
+    importId: params.importId,
+  });
+
+  const matchedRows = importRows.filter(
+    (row): row is ImportRowRecord & { matched_work_id: string } =>
+      !!row.matched_work_id
+  );
+
+  const workIds = Array.from(new Set(matchedRows.map((row) => row.matched_work_id)));
+
+  const [splitsByWorkId, worksById] = await Promise.all([
+    loadSplitsForWorks({
+      companyId: params.companyId,
+      workIds,
+    }),
+    loadWorksByIds({
+      workIds,
+    }),
+  ]);
+
+  const blockedCountByWork = new Map<string, number>();
+
+  for (const row of matchedRows) {
+    const workId = row.matched_work_id;
+    const splits = splitsByWorkId.get(workId) ?? [];
+
+    if (splits.length === 0 || !hasValid100PercentSplit(splits)) {
+      blockedCountByWork.set(workId, (blockedCountByWork.get(workId) ?? 0) + 1);
+    }
+  }
+
+  const blockers: AllocationBlockerRow[] = [];
+
+  for (const workId of workIds) {
+    const blockedRows = blockedCountByWork.get(workId) ?? 0;
+    if (blockedRows <= 0) continue;
+
+    const splits = splitsByWorkId.get(workId) ?? [];
+    const work = worksById.get(workId);
+
+    const splitCount = splits.length;
+    const splitTotal = getSplitTotal(splits);
+
+    blockers.push({
+      workId,
+      workTitle:
+        work?.title && work.title.trim() !== ""
+          ? work.title
+          : "Untitled work",
+      workIsrc: work?.isrc ?? null,
+      status: splitCount === 0 ? "missing_splits" : "invalid_split_total",
+      blockedRows,
+      splitCount,
+      splitTotal,
+    });
+  }
+
+  return blockers.sort((a, b) => {
+    if (b.blockedRows !== a.blockedRows) {
+      return b.blockedRows - a.blockedRows;
+    }
+
+    if (a.status !== b.status) {
+      return a.status === "missing_splits" ? -1 : 1;
+    }
+
+    return a.workTitle.localeCompare(b.workTitle, "sv");
+  });
 }

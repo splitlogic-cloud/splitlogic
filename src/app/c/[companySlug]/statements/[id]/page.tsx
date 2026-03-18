@@ -78,9 +78,15 @@ export default async function StatementDetailPage({ params }: PageProps) {
           </Link>
           <a
             href={`/c/${companySlug}/statements/${statementId}/export`}
-            className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white"
+            className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
           >
             Export CSV
+          </a>
+          <a
+            href={`/c/${companySlug}/statements/${statementId}/pdf`}
+            className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white"
+          >
+            Export PDF
           </a>
         </div>
       </div>
@@ -92,6 +98,7 @@ export default async function StatementDetailPage({ params }: PageProps) {
         sentAt={header.sent_at ?? null}
         paidAt={header.paid_at ?? null}
         voidedAt={header.voided_at ?? null}
+        lockedAt={(header as any).locked_at ?? null}
       />
 
       <div className="grid gap-4 md:grid-cols-4">
