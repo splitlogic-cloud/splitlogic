@@ -720,6 +720,9 @@ export default async function ImportReviewPage({ params }: Params) {
                             companySlug={companySlug}
                             importJobId={typedImportJob.id}
                             rowId={row.id}
+                            rowTitle={view.title || ""}
+                            rowArtist={view.artist || ""}
+                            rowIsrc={view.isrc || ""}
                             works={manualMatchWorks}
                           />
                           {row.matched_work_id ? (
