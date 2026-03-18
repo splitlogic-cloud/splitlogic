@@ -1,4 +1,4 @@
-export type NormalizedRow = {
+export type CanonicalImportRow = {
   provider: string;
 
   amount: number;
@@ -16,7 +16,16 @@ export type NormalizedRow = {
   artist?: string | undefined;
 
   quantity?: number | undefined;
+
+  country?: string | undefined;
+  territory?: string | undefined;
+  product_type?: string | undefined;
+  sales_type?: string | undefined;
+  raw_title?: string | undefined;
+  raw_artist?: string | undefined;
 };
+
+export type NormalizedRow = CanonicalImportRow;
 
 export type NormalizeResult =
   | {
@@ -30,8 +39,20 @@ export type NormalizeResult =
       error: string;
     };
 
+export type AdapterContext = {
+  companyId?: string;
+  companySlug?: string;
+  importJobId?: string;
+  sourceName?: string;
+  sourceFileType?: string;
+  adapterKey?: string;
+};
+
 export type ImportAdapter = {
   key: string;
   sniff: (headers: string[]) => number;
-  normalize: (raw: Record<string, unknown>) => NormalizeResult;
+  normalize: (
+    raw: Record<string, unknown>,
+    context?: AdapterContext
+  ) => NormalizeResult;
 };
