@@ -319,9 +319,9 @@ export default async function ImportReviewPage({ params }: Params) {
       .order("row_number", { ascending: true })
       .limit(200),
 
-    supabaseAdmin
+      supabaseAdmin
       .from("works")
-      .select("id, title, isrc")
+      .select("id, title, artist, isrc")
       .eq("company_id", typedCompany.id)
       .order("title", { ascending: true })
       .limit(2000),
@@ -715,9 +715,9 @@ export default async function ImportReviewPage({ params }: Params) {
                             matchedWorkId={row.matched_work_id}
                             works={workOptions.map((work) => ({
                               id: work.id,
-                              label: `${work.title ?? "Untitled"}${
-                                work.isrc ? ` · ${work.isrc}` : ""
-                              }`,
+                              title: work.title ?? "Untitled",
+                              artist: work.artist ?? null,
+                              isrc: work.isrc ?? null,
                             }))}
                           />
                           {row.matched_work_id ? (
