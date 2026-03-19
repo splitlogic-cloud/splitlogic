@@ -7,6 +7,12 @@ export type CanonicalExtraValue =
 
 export type FileKind = "csv" | "txt" | "xlsx" | "pdf" | "unknown";
 
+export type ParsedMatrix = {
+  rows: string[][];
+  headerRowIndex: number;
+  headers: string[];
+};
+
 export type CanonicalImportRow = {
   provider?: string | null;
 
