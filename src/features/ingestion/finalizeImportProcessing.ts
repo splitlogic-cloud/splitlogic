@@ -5,7 +5,7 @@ import { detectImportSource } from "./detect-source";
 import { getAdapterByKey } from "./registry";
 import { parseDelimitedText } from "./parse-delimited";
 import { parseWorkbook } from "./parse-xlsx";
-import { AdapterContext, FileKind } from "./types";
+import type { AdapterContext, FileKind } from "./types";
 
 function getFileKind(fileName: string): FileKind {
   const lower = fileName.toLowerCase();

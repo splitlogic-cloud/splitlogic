@@ -5,6 +5,8 @@ export type CanonicalExtraValue =
   | unknown[]
   | Date;
 
+export type FileKind = "csv" | "txt" | "xlsx" | "pdf" | "unknown";
+
 export type CanonicalImportRow = {
   provider?: string | null;
 
@@ -85,13 +87,17 @@ export type AdapterContext = {
   headers: string[];
   rows: string[][];
   headerRowIndex: number;
+
+  fileKind?: FileKind;
+  fileName?: string;
+
   companyId?: string;
   companySlug?: string;
   importJobId?: string;
+
   sourceName?: string;
   sourceFileType?: string;
   adapterKey?: string;
-  fileKind?: string;
 };
 
 export type ImportAdapter = {
