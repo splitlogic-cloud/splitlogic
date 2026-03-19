@@ -1,198 +1,167 @@
+import "server-only";
+
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import {
-  getStatementHeader,
-  listStatementLines,
-} from "@/features/statements/statements.repo";
-import { listAuditEventsForEntity } from "@/features/audit/audit.repo";
-import StatementActionsClient from "./StatementActionsClient";
-import { addStatementNoteAction } from "@/features/statements/statements.actions";
+import { getStatementById } from "@/features/statements/statements.repo";
 
 export const dynamic = "force-dynamic";
 
-type PageProps = {
+type Params = {
   params: Promise<{
     companySlug: string;
-    statementId: string;
+    id: string;
   }>;
 };
 
-function money(n: number, currency = "SEK") {
-  return `${n.toFixed(2)} ${currency}`;
+function formatMoney(amount: number | null, currency: string | null) {
+  if (amount == null) return "—";
+
+  const rounded = new Intl.NumberFormat("sv-SE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+
+  return currency ? `${rounded} ${currency}` : rounded;
 }
 
-export default async function StatementDetailPage({ params }: PageProps) {
-  const { companySlug, statementId } = await params;
+export default async function StatementDetailPage({ params }: Params) {
+  const { companySlug, id } = await params;
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, name, slug")
+    .select("id,slug,name")
     .eq("slug", companySlug)
     .maybeSingle();
 
-  if (companyError || !company) {
-    throw new Error("Company not found");
+  if (companyError) {
+    throw new Error(`Failed to load company: ${companyError.message}`);
   }
 
-  async function saveNote(formData: FormData) {
-    "use server";
-    formData.set("companySlug", companySlug);
-    formData.set("statementId", statementId);
-    await addStatementNoteAction(formData);
+  if (!company) {
+    notFound();
   }
 
-  const [header, lines, auditEvents] = await Promise.all([
-    getStatementHeader(company.id, statementId),
-    listStatementLines(company.id, statementId),
-    listAuditEventsForEntity({
-      companyId: company.id,
-      entityType: "statement",
-      entityId: statementId,
-      limit: 50,
-    }),
-  ]);
+  const statement = await getStatementById(company.id, id);
 
-  if (!header) {
-    throw new Error("Statement not found");
+  if (!statement) {
+    notFound();
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between gap-4">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm text-slate-500">Statements / {statementId}</div>
-          <h1 className="mt-1 text-4xl font-semibold tracking-tight text-slate-950">
-            Statement detail
+          <div className="text-sm text-neutral-500">
+            <Link href={`/c/${companySlug}/statements`} className="underline">
+              Statements
+            </Link>{" "}
+            / Detail
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {statement.party_name ?? "Statement"}
           </h1>
-          <div className="mt-2 text-sm text-slate-600">
-            {header.party_name ?? "Unnamed party"} · {header.status ?? "draft"}
+          <p className="mt-1 text-sm text-neutral-600">
+            {statement.period_start ?? "—"} → {statement.period_end ?? "—"}
+          </p>
+        </div>
+
+        <div className="text-right">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Total
+          </div>
+          <div className="text-2xl font-semibold">
+            {formatMoney(statement.total_amount, statement.currency)}
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/c/${companySlug}/statements`}
-            className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-          >
-            Back
-          </Link>
-          <a
-            href={`/c/${companySlug}/statements/${statementId}/export`}
-            className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-          >
-            Export CSV
-          </a>
-          <a
-            href={`/c/${companySlug}/statements/${statementId}/pdf`}
-            className="inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white"
-          >
-            Export PDF
-          </a>
-        </div>
       </div>
-
-      <StatementActionsClient
-        companySlug={companySlug}
-        statementId={statementId}
-        status={header.status ?? "draft"}
-        sentAt={header.sent_at ?? null}
-        paidAt={header.paid_at ?? null}
-        voidedAt={header.voided_at ?? null}
-        lockedAt={(header as any).locked_at ?? null}
-      />
 
       <div className="grid gap-4 md:grid-cols-4">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs uppercase tracking-wide text-slate-500">Party</div>
-          <div className="mt-2 text-xl font-semibold">{header.party_name ?? "—"}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs uppercase tracking-wide text-slate-500">Period</div>
-          <div className="mt-2 text-xl font-semibold">
-            {header.period_start ?? "—"} → {header.period_end ?? "—"}
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Status
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.status ?? "—"}
           </div>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs uppercase tracking-wide text-slate-500">Currency</div>
-          <div className="mt-2 text-xl font-semibold">{header.currency ?? "—"}</div>
+
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Source
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.generated_from ?? "—"}
+          </div>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="text-xs uppercase tracking-wide text-slate-500">Total</div>
-          <div className="mt-2 text-xl font-semibold">
-            {money(header.total_amount ?? 0, header.currency ?? "SEK")}
+
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Currency
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.currency ?? "Mixed / none"}
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Created
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.created_at ?? "—"}
           </div>
         </div>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-950">Internal note</h2>
-        <form action={saveNote} className="mt-4 space-y-3">
-          <textarea
-            name="note"
-            defaultValue={header.note ?? ""}
-            rows={4}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2"
-            placeholder="Internal note for this statement"
-          />
-          <button className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50">
-            Save note
-          </button>
-        </form>
-      </section>
+      {statement.note ? (
+        <div className="rounded-2xl border bg-white p-4">
+          <div className="text-sm font-medium">Note</div>
+          <div className="mt-2 text-sm text-neutral-700">{statement.note}</div>
+        </div>
+      ) : null}
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-500">
+      <div className="overflow-hidden rounded-2xl border bg-white">
+        <table className="min-w-full divide-y divide-neutral-200 text-sm">
+          <thead className="bg-neutral-50">
             <tr>
-              <th className="px-4 py-3 font-medium">Work</th>
-              <th className="px-4 py-3 font-medium">Source amount</th>
-              <th className="px-4 py-3 font-medium">Share %</th>
-              <th className="px-4 py-3 font-medium">Allocated</th>
-              <th className="px-4 py-3 font-medium">Currency</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Line
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Work
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Row count
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Amount
+              </th>
             </tr>
           </thead>
-          <tbody>
-            {lines.length > 0 ? (
-              lines.map((line) => (
-                <tr key={line.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3">{line.work_title ?? "Untitled work"}</td>
-                  <td className="px-4 py-3">{line.source_amount.toFixed(6)}</td>
-                  <td className="px-4 py-3">{line.share_percent.toFixed(6)}</td>
-                  <td className="px-4 py-3 font-medium">
-                    {line.allocated_amount.toFixed(6)}
-                  </td>
-                  <td className="px-4 py-3">{line.currency ?? "—"}</td>
-                </tr>
-              ))
-            ) : (
+
+          <tbody className="divide-y divide-neutral-100">
+            {statement.lines.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-slate-500">
-                  No statement lines.
+                <td colSpan={4} className="px-4 py-8 text-center text-neutral-500">
+                  No statement lines found.
                 </td>
               </tr>
+            ) : (
+              statement.lines.map((line) => (
+                <tr key={line.id}>
+                  <td className="px-4 py-3">{line.line_label}</td>
+                  <td className="px-4 py-3">{line.work_title ?? "—"}</td>
+                  <td className="px-4 py-3">{line.row_count ?? 0}</td>
+                  <td className="px-4 py-3">
+                    {formatMoney(line.amount, line.currency)}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
       </div>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-950">Audit</h2>
-        <div className="mt-4 space-y-3">
-          {auditEvents.length > 0 ? (
-            auditEvents.map((event) => (
-              <div key={event.id} className="rounded-xl border border-slate-200 p-4">
-                <div className="text-sm font-medium text-slate-900">{event.action}</div>
-                <div className="mt-1 text-xs text-slate-500">{event.created_at}</div>
-                <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-600">
-                  {JSON.stringify(event.payload ?? {}, null, 2)}
-                </pre>
-              </div>
-            ))
-          ) : (
-            <div className="text-sm text-slate-500">No audit events for this statement.</div>
-          )}
-        </div>
-      </section>
     </div>
   );
 }
