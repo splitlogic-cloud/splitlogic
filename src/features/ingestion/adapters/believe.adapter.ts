@@ -1,4 +1,9 @@
-import { AdapterContext, CanonicalImportRow, ImportAdapter, NormalizedRow } from "../types";
+import {
+  AdapterContext,
+  CanonicalImportRow,
+  ImportAdapter,
+  NormalizedRow,
+} from "../types";
 
 function normHeader(value: string): string {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_");
@@ -26,7 +31,10 @@ function rowToObject(headers: string[], row: string[]): Record<string, unknown> 
   return out;
 }
 
-function pickFirst(raw: Record<string, unknown>, aliases: string[]): string | undefined {
+function pickFirst(
+  raw: Record<string, unknown>,
+  aliases: string[]
+): string | undefined {
   for (const alias of aliases) {
     const value = raw[alias];
     if (typeof value === "string" && value.trim() !== "") {
@@ -40,14 +48,28 @@ function toCanonical(
   ctx: AdapterContext,
   raw: Record<string, unknown>
 ): CanonicalImportRow {
+  const netAmount = asNumber(
+    pickFirst(raw, ["net_receipts", "net_amount", "earnings", "amount"])
+  );
+  const currency = asString(
+    pickFirst(raw, ["currency", "account_currency"])
+  );
+
   return {
-    source_file_type: ctx.fileKind,
+    provider: "believe",
+    amount: netAmount,
+    currency,
+
+    source_file_type: ctx.fileKind ?? null,
     source_name: "Believe",
+    adapter_key: "believe",
+
     statement_period: asString(
       pickFirst(raw, ["statement_period", "sales_month", "period"])
     ),
 
-    title: asString(
+    title: asString(pickFirst(raw, ["track_title", "title", "track_name"])),
+    track_title: asString(
       pickFirst(raw, ["track_title", "title", "track_name"])
     ),
     artist: asString(
@@ -60,17 +82,25 @@ function toCanonical(
     isrc: asString(pickFirst(raw, ["isrc"])),
     upc: asString(pickFirst(raw, ["upc", "ean"])),
     territory: asString(pickFirst(raw, ["territory", "country"])),
+    country: asString(pickFirst(raw, ["country", "territory"])),
     store: asString(pickFirst(raw, ["store", "service", "platform"])),
+    service: asString(pickFirst(raw, ["service", "store", "platform"])),
 
-    quantity: asNumber(pickFirst(raw, ["quantity", "units", "sales_quantity"])),
-    net_amount: asNumber(
-      pickFirst(raw, ["net_receipts", "net_amount", "earnings", "amount"])
+    quantity: asNumber(
+      pickFirst(raw, ["quantity", "units", "sales_quantity"])
     ),
+    net_amount: netAmount,
     gross_amount: asNumber(
       pickFirst(raw, ["gross_receipts", "gross_amount", "gross"])
     ),
-    currency: asString(pickFirst(raw, ["currency", "account_currency"])),
-    sale_date: asString(pickFirst(raw, ["sale_date", "transaction_date", "date"])),
+    account_currency: currency,
+    sale_date: asString(
+      pickFirst(raw, ["sale_date", "transaction_date", "date"])
+    ),
+    transaction_date: asString(
+      pickFirst(raw, ["sale_date", "transaction_date", "date"])
+    ),
+
     raw,
   };
 }

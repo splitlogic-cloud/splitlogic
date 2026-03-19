@@ -1,4 +1,9 @@
-import { AdapterContext, CanonicalImportRow, ImportAdapter, NormalizedRow } from "../types";
+import {
+  AdapterContext,
+  CanonicalImportRow,
+  ImportAdapter,
+  NormalizedRow,
+} from "../types";
 
 function normHeader(value: string): string {
   return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_");
@@ -26,7 +31,10 @@ function rowToObject(headers: string[], row: string[]): Record<string, unknown> 
   return out;
 }
 
-function pickFirst(raw: Record<string, unknown>, aliases: string[]): string | undefined {
+function pickFirst(
+  raw: Record<string, unknown>,
+  aliases: string[]
+): string | undefined {
   for (const alias of aliases) {
     const value = raw[alias];
     if (typeof value === "string" && value.trim() !== "") {
@@ -40,14 +48,36 @@ function toCanonical(
   ctx: AdapterContext,
   raw: Record<string, unknown>
 ): CanonicalImportRow {
+  const netAmount = asNumber(
+    pickFirst(raw, [
+      "net_amount",
+      "net_revenue",
+      "earnings",
+      "amount",
+      "net_share_account_currency",
+    ])
+  );
+  const currency = asString(
+    pickFirst(raw, ["currency", "account_currency", "sale_currency"])
+  );
+
   return {
-    source_file_type: ctx.fileKind,
-    source_name: null,
+    provider: "generic",
+    amount: netAmount,
+    currency,
+
+    source_file_type: ctx.fileKind ?? null,
+    source_name: ctx.sourceName ?? null,
+    adapter_key: "generic",
+
     statement_period: asString(
       pickFirst(raw, ["statement_period", "period", "month", "reporting_period"])
     ),
 
     title: asString(
+      pickFirst(raw, ["title", "track", "track_title", "song_title", "product"])
+    ),
+    track_title: asString(
       pickFirst(raw, ["title", "track", "track_title", "song_title", "product"])
     ),
     artist: asString(
@@ -60,18 +90,12 @@ function toCanonical(
     isrc: asString(pickFirst(raw, ["isrc"])),
     upc: asString(pickFirst(raw, ["upc", "ean"])),
     territory: asString(pickFirst(raw, ["territory", "country", "sale_country"])),
+    country: asString(pickFirst(raw, ["country", "territory", "sale_country"])),
     store: asString(pickFirst(raw, ["store", "service", "platform"])),
+    service: asString(pickFirst(raw, ["store", "service", "platform"])),
 
     quantity: asNumber(pickFirst(raw, ["quantity", "units", "streams"])),
-    net_amount: asNumber(
-      pickFirst(raw, [
-        "net_amount",
-        "net_revenue",
-        "earnings",
-        "amount",
-        "net_share_account_currency",
-      ])
-    ),
+    net_amount: netAmount,
     gross_amount: asNumber(
       pickFirst(raw, [
         "gross_amount",
@@ -80,12 +104,17 @@ function toCanonical(
         "gross",
       ])
     ),
-    currency: asString(
-      pickFirst(raw, ["currency", "account_currency", "sale_currency"])
+    account_currency: currency,
+    sale_currency: asString(
+      pickFirst(raw, ["sale_currency", "currency", "account_currency"])
     ),
     sale_date: asString(
       pickFirst(raw, ["sale_date", "transaction_date", "date", "period_start"])
     ),
+    transaction_date: asString(
+      pickFirst(raw, ["sale_date", "transaction_date", "date", "period_start"])
+    ),
+
     raw,
   };
 }
@@ -121,4 +150,4 @@ export const genericAdapter: ImportAdapter = {
         };
       });
   },
-};  
+};

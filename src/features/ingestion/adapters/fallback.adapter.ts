@@ -1,200 +1,136 @@
-import type {
+import {
+  AdapterContext,
+  CanonicalImportRow,
   ImportAdapter,
-  NormalizeResult,
   NormalizedRow,
 } from "../types";
 
-function normHeader(header: string): string {
-  return String(header ?? "").trim().toLowerCase();
+function normHeader(value: string): string {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_");
 }
 
-function str(value: unknown): string {
-  return String(value ?? "").trim();
+function asString(v: string | undefined): string | null {
+  const s = (v ?? "").trim();
+  return s ? s : null;
 }
 
-function num(value: unknown): number | null {
-  const s = str(value);
+function asNumber(v: string | undefined): number | null {
+  const s = (v ?? "").trim();
   if (!s) return null;
 
-  const normalized = s.replace(",", ".");
-  const parsed = Number(normalized);
+  const normalized = s.replace(/\s+/g, "").replace(",", ".");
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
 
-  return Number.isFinite(parsed) ? parsed : null;
+function rowToObject(headers: string[], row: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  headers.forEach((header, idx) => {
+    out[normHeader(header)] = row[idx] ?? "";
+  });
+  return out;
 }
 
 function pickFirst(
-  headers: string[],
-  predicate: (normalizedHeader: string) => boolean
-): string | null {
-  for (const header of headers) {
-    if (predicate(normHeader(header))) {
-      return header;
-    }
-  }
-  return null;
-}
-
-function looksLikeCurrency(value: unknown): boolean {
-  const s = str(value).toUpperCase();
-  return /^[A-Z]{3}$/.test(s);
-}
-
-function pickAmountKey(headers: string[]): string | null {
-  return (
-    pickFirst(
-      headers,
-      (h) =>
-        h.includes("net share") &&
-        h.includes("account") &&
-        h.includes("currency")
-    ) ||
-    pickFirst(headers, (h) => h.includes("net") && h.includes("amount")) ||
-    pickFirst(headers, (h) => h.includes("net") && h.includes("revenue")) ||
-    pickFirst(headers, (h) => h.includes("amount")) ||
-    pickFirst(headers, (h) => h.includes("revenue")) ||
-    pickFirst(headers, (h) => h.includes("payout")) ||
-    null
-  );
-}
-
-function pickCurrencyKey(headers: string[]): string | null {
-  return (
-    pickFirst(headers, (h) => h.includes("account currency")) ||
-    pickFirst(headers, (h) => h === "currency") ||
-    pickFirst(headers, (h) => h.includes("currency")) ||
-    null
-  );
-}
-
-function inferCurrency(
   raw: Record<string, unknown>,
-  headers: string[],
-  currencyKey: string | null
-): string {
-  let currency = currencyKey ? str(raw[currencyKey]).toUpperCase() : "";
-
-  if (currency && !looksLikeCurrency(currency)) {
-    currency = "";
-  }
-
-  if (!currency) {
-    for (const header of headers) {
-      const value = raw[header];
-      if (looksLikeCurrency(value)) {
-        currency = str(value).toUpperCase();
-        break;
-      }
+  aliases: string[]
+): string | undefined {
+  for (const alias of aliases) {
+    const value = raw[alias];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
     }
   }
+  return undefined;
+}
 
-  return currency;
+function toCanonical(
+  ctx: AdapterContext,
+  raw: Record<string, unknown>
+): CanonicalImportRow {
+  const amount = asNumber(
+    pickFirst(raw, [
+      "net_share_account_currency",
+      "net_amount",
+      "amount",
+      "revenue",
+      "earnings",
+      "payout",
+    ])
+  );
+  const currency = asString(
+    pickFirst(raw, ["account_currency", "currency", "sale_currency"])
+  );
+
+  return {
+    provider: "fallback",
+    amount,
+    currency,
+
+    source_file_type: ctx.fileKind ?? null,
+    source_name: ctx.sourceName ?? null,
+    adapter_key: "fallback",
+
+    statement_period: asString(
+      pickFirst(raw, ["statement_period", "period", "month", "reporting_period"])
+    ),
+
+    title: asString(pickFirst(raw, ["title", "track", "track_title", "product"])),
+    track_title: asString(
+      pickFirst(raw, ["title", "track", "track_title", "product"])
+    ),
+    artist: asString(
+      pickFirst(raw, ["artist", "track_artist", "product_artist", "main_artist"])
+    ),
+    release_title: asString(
+      pickFirst(raw, ["release_title", "album", "release", "product_title"])
+    ),
+
+    isrc: asString(pickFirst(raw, ["isrc"])),
+    upc: asString(pickFirst(raw, ["upc", "ean"])),
+    territory: asString(pickFirst(raw, ["territory", "country", "sale_country"])),
+    country: asString(pickFirst(raw, ["country", "territory", "sale_country"])),
+    store: asString(pickFirst(raw, ["store", "service", "service_detail"])),
+    service: asString(pickFirst(raw, ["store", "service", "service_detail"])),
+
+    quantity: asNumber(pickFirst(raw, ["quantity", "qty", "units"])),
+    net_amount: amount,
+    account_currency: currency,
+    sale_currency: asString(
+      pickFirst(raw, ["sale_currency", "currency", "account_currency"])
+    ),
+    sale_date: asString(
+      pickFirst(raw, ["sale_date", "transaction_date", "date"])
+    ),
+    transaction_date: asString(
+      pickFirst(raw, ["sale_date", "transaction_date", "date"])
+    ),
+
+    raw,
+  };
 }
 
 export const fallbackAdapter: ImportAdapter = {
   key: "fallback",
+  displayName: "Fallback adapter",
 
-  sniff(_headers: string[]) {
+  canHandle(_ctx) {
     return 0.01;
   },
 
-  normalize(raw: Record<string, unknown>): NormalizeResult {
-    const headers = Object.keys(raw);
+  normalize(ctx): NormalizedRow[] {
+    const normalizedHeaders = ctx.headers.map(normHeader);
+    const bodyRows = ctx.rows.slice(ctx.headerRowIndex + 1);
 
-    const amountKey = pickAmountKey(headers);
-    const currencyKey = pickCurrencyKey(headers);
-
-    const isrcKey =
-      pickFirst(headers, (h) => h === "isrc" || h.includes("isrc")) || null;
-
-    const upcKey =
-      pickFirst(headers, (h) => h === "upc" || h.includes("upc")) || null;
-
-    const storeKey =
-      pickFirst(
-        headers,
-        (h) => h === "store" || h.includes("store") || h.includes("service")
-      ) || null;
-
-    const dateKey =
-      pickFirst(
-        headers,
-        (h) =>
-          h.includes("transaction date") || h === "date" || h.includes("date")
-      ) || null;
-
-    const periodKey =
-      pickFirst(
-        headers,
-        (h) => h.includes("statement period") || h.includes("period")
-      ) || null;
-
-    const trackKey =
-      pickFirst(
-        headers,
-        (h) =>
-          h === "track" ||
-          h.includes("track title") ||
-          h.includes("song") ||
-          h.includes("title")
-      ) || null;
-
-    const productKey =
-      pickFirst(
-        headers,
-        (h) => h === "product" || h.includes("release") || h.includes("album")
-      ) || null;
-
-    const artistKey =
-      pickFirst(headers, (h) => h.includes("artist")) || null;
-
-    const qtyKey =
-      pickFirst(
-        headers,
-        (h) => h.includes("quantity") || h.includes("qty") || h.includes("units")
-      ) || null;
-
-    const amount = amountKey ? num(raw[amountKey]) : null;
-    const currency = inferCurrency(raw, headers, currencyKey);
-
-    const warnings: string[] = ["heuristic_mapping_used"];
-
-    if (amount === null) {
-      return {
-        error: `Fallback could not find a valid amount column. First headers: ${headers
-          .slice(0, 15)
-          .join(", ")}`,
-        warnings,
-      };
-    }
-
-    if (!currency) {
-      return {
-        error: `Missing currency (fallback). Detected amountKey=${
-          amountKey ?? "none"
-        } currencyKey=${currencyKey ?? "none"}`,
-        warnings,
-      };
-    }
-
-    const normalized: NormalizedRow = {
-      provider: "unknown",
-      amount,
-      currency,
-      isrc: isrcKey ? str(raw[isrcKey]) || undefined : undefined,
-      upc: upcKey ? str(raw[upcKey]) || undefined : undefined,
-      store: storeKey ? str(raw[storeKey]) || undefined : undefined,
-      transaction_date: dateKey ? str(raw[dateKey]) || undefined : undefined,
-      statement_period: periodKey ? str(raw[periodKey]) || undefined : undefined,
-      track_title: trackKey ? str(raw[trackKey]) || undefined : undefined,
-      release_title: productKey ? str(raw[productKey]) || undefined : undefined,
-      artist: artistKey ? str(raw[artistKey]) || undefined : undefined,
-      quantity: qtyKey ? num(raw[qtyKey]) ?? undefined : undefined,
-    };
-
-    return {
-      normalized,
-      warnings,
-    };
+    return bodyRows
+      .filter((row) => row.some((cell) => (cell ?? "").trim() !== ""))
+      .map((row) => {
+        const raw = rowToObject(normalizedHeaders, row);
+        return {
+          raw,
+          canonical: toCanonical(ctx, raw),
+          warnings: ["heuristic_mapping_used"],
+        };
+      });
   },
 };
-

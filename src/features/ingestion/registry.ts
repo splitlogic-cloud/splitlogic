@@ -1,4 +1,4 @@
-import type { ImportAdapter } from "./types";
+import type { AdapterContext, ImportAdapter } from "./types";
 
 import { genericAdapter } from "./adapters/generic.adapter";
 import { believeAdapter } from "./adapters/believe.adapter";
@@ -16,12 +16,11 @@ export function getAdapterByKey(key: string): ImportAdapter | null {
   return adapters.find((adapter) => adapter.key === key) ?? null;
 }
 
-export function detectBestAdapter(headers: string[]): ImportAdapter {
+export function detectBestAdapter(ctx: AdapterContext): ImportAdapter {
   let best: { adapter: ImportAdapter; score: number } | null = null;
 
   for (const adapter of adapters) {
-    const score = adapter.sniff(headers);
-
+    const score = adapter.canHandle(ctx);
     if (!best || score > best.score) {
       best = { adapter, score };
     }

@@ -6,67 +6,72 @@ export type CanonicalExtraValue =
   | Date;
 
 export type CanonicalImportRow = {
-  provider: string;
+  provider?: string | null;
 
-  amount: number;
-  currency: string;
+  amount?: number | null;
+  currency?: string | null;
 
-  title?: string | undefined;
-  track_title?: string | undefined;
-  release_title?: string | undefined;
-  artist?: string | undefined;
+  title?: string | null;
+  track_title?: string | null;
+  release_title?: string | null;
+  artist?: string | null;
 
-  isrc?: string | undefined;
-  upc?: string | undefined;
-  store?: string | undefined;
+  isrc?: string | null;
+  upc?: string | null;
+  store?: string | null;
 
-  transaction_date?: string | undefined;
-  statement_period?: string | undefined;
-  sale_date?: string | undefined;
+  transaction_date?: string | null;
+  statement_period?: string | null;
+  sale_date?: string | null;
 
-  quantity?: number | undefined;
+  quantity?: number | null;
 
-  country?: string | undefined;
-  territory?: string | undefined;
-  region?: string | undefined;
-  territory_code?: string | undefined;
+  country?: string | null;
+  territory?: string | null;
+  region?: string | null;
+  territory_code?: string | null;
 
-  product_type?: string | undefined;
-  sales_type?: string | undefined;
-  royalty_type?: string | undefined;
-  usage_type?: string | undefined;
-  service?: string | undefined;
+  product_type?: string | null;
+  sales_type?: string | null;
+  royalty_type?: string | null;
+  usage_type?: string | null;
+  service?: string | null;
 
-  raw_title?: string | undefined;
-  raw_artist?: string | undefined;
+  raw_title?: string | null;
+  raw_artist?: string | null;
 
-  source_name?: string | undefined;
-  source_file_type?: string | undefined;
-  adapter_key?: string | undefined;
+  source_name?: string | null;
+  source_file_type?: string | null;
+  adapter_key?: string | null;
 
-  sale_currency?: string | undefined;
-  account_currency?: string | undefined;
+  sale_currency?: string | null;
+  account_currency?: string | null;
 
-  gross_sale?: number | undefined;
-  net_revenue?: number | undefined;
-  net_amount?: number | undefined;
+  gross_sale?: number | null;
+  gross_amount?: number | null;
+  net_revenue?: number | null;
+  net_amount?: number | null;
 
-  release_id?: string | undefined;
-  track_id?: string | undefined;
-  product_id?: string | undefined;
+  release_id?: string | null;
+  track_id?: string | null;
+  product_id?: string | null;
 
-  label?: string | undefined;
+  label?: string | null;
 
   raw?: Record<string, unknown> | undefined;
 
   [key: string]: CanonicalExtraValue;
 };
 
-export type NormalizedRow = CanonicalImportRow;
+export type NormalizedRow = {
+  raw: Record<string, unknown>;
+  canonical: CanonicalImportRow;
+  warnings?: string[];
+};
 
 export type NormalizeResult =
   | {
-      normalized: NormalizedRow;
+      normalized: CanonicalImportRow;
       warnings?: string[];
       error?: undefined;
     }
@@ -77,6 +82,9 @@ export type NormalizeResult =
     };
 
 export type AdapterContext = {
+  headers: string[];
+  rows: string[][];
+  headerRowIndex: number;
   companyId?: string;
   companySlug?: string;
   importJobId?: string;
@@ -88,9 +96,7 @@ export type AdapterContext = {
 
 export type ImportAdapter = {
   key: string;
-  sniff: (headers: string[]) => number;
-  normalize: (
-    raw: Record<string, unknown>,
-    context?: AdapterContext
-  ) => NormalizeResult;
+  displayName: string;
+  canHandle: (ctx: AdapterContext) => number;
+  normalize: (ctx: AdapterContext) => NormalizedRow[];
 };
