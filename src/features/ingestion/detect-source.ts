@@ -1,15 +1,16 @@
-import { AdapterContext, DetectSourceResult } from "./types";
+import type { AdapterContext, DetectSourceResult } from "./types";
 import { adapters } from "./registry";
 
 export function detectImportSource(ctx: AdapterContext): DetectSourceResult {
   let best: DetectSourceResult = {
-    adapterKey: "generic",
+    adapterKey: "fallback",
     sourceName: null,
     confidence: 0,
   };
 
   for (const adapter of adapters) {
     const confidence = adapter.canHandle(ctx);
+
     if (confidence > best.confidence) {
       best = {
         adapterKey: adapter.key,

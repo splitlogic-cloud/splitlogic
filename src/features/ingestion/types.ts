@@ -100,3 +100,9 @@ export type ImportAdapter = {
   canHandle: (ctx: AdapterContext) => number;
   normalize: (ctx: AdapterContext) => NormalizedRow[];
 };
+
+export type DetectSourceResult = {
+  adapterKey: string;
+  sourceName: string | null;
+  confidence: number;
+};
