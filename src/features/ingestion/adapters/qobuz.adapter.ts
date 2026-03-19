@@ -1,20 +1,94 @@
-import type { ImportAdapter, NormalizeResult } from "../registry";
+import {
+  AdapterContext,
+  CanonicalImportRow,
+  ImportAdapter,
+  NormalizedRow,
+} from "../types";
 
-function str(v: any) {
-  return (v ?? "").toString().trim();
+function normHeader(value: string): string {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_");
 }
-function num(v: any) {
-  const s = str(v);
+
+function str(v: unknown): string | null {
+  const s = (v ?? "").toString().trim();
+  return s ? s : null;
+}
+
+function num(v: unknown): number | null {
+  const s = (v ?? "").toString().trim();
   if (!s) return null;
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : null;
 }
 
+function rowToObject(headers: string[], row: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  headers.forEach((h, i) => {
+    out[h] = row[i] ?? "";
+  });
+  return out;
+}
+
+function toCanonical(
+  ctx: AdapterContext,
+  raw: Record<string, unknown>
+): CanonicalImportRow {
+  const amount =
+    num(raw["net_share_account_currency"]) ??
+    num(raw["gross_revenue_account_currency"]);
+
+  const currency = str(raw["account_currency"]);
+
+  return {
+    provider: "qobuz",
+    amount,
+    currency,
+
+    source_name: "Qobuz",
+    source_file_type: ctx.fileKind ?? null,
+    adapter_key: "qobuz",
+
+    store: str(raw["store"]),
+    service: str(raw["store"]),
+
+    transaction_date: str(raw["transaction_date"]),
+    sale_date: str(raw["transaction_date"]),
+    statement_period: str(raw["statement_period"]),
+
+    territory: str(raw["sale_country"]),
+    country: str(raw["sale_country"]),
+
+    quantity: num(raw["quantity"]),
+
+    net_amount: amount,
+    gross_amount: num(raw["gross_revenue_account_currency"]),
+
+    sale_currency: str(raw["sale_currency"]),
+    account_currency: currency,
+
+    isrc: str(raw["isrc"]),
+    upc: str(raw["display_upc"]),
+
+    track_title: str(raw["track"]),
+    title: str(raw["track"]),
+    release_title: str(raw["product"]),
+    artist:
+      str(raw["track_artist"]) ??
+      str(raw["product_artist"]),
+
+    label: str(raw["label_imprint"]),
+
+    raw,
+  };
+}
+
 export const qobuzAdapter: ImportAdapter = {
   key: "qobuz",
+  displayName: "Qobuz adapter",
 
-  sniff(headers: string[]) {
-    const set = new Set(headers.map((h) => h.trim().toUpperCase()));
+  canHandle(ctx) {
+    const headers = ctx.headers.map((h) => h.toUpperCase());
+
     const must = [
       "STORE",
       "ACCOUNT CURRENCY",
@@ -23,49 +97,24 @@ export const qobuzAdapter: ImportAdapter = {
       "TRANSACTION DATE",
       "STATEMENT PERIOD",
     ];
-    const hits = must.filter((k) => set.has(k)).length;
+
+    const hits = must.filter((k) => headers.includes(k)).length;
     return hits / must.length;
   },
 
-  normalize(raw: Record<string, any>): NormalizeResult {
-    const amount =
-      num(raw["NET SHARE ACCOUNT CURRENCY"]) ??
-      num(raw["GROSS REVENUE ACCOUNT CURRENCY"]);
+  normalize(ctx): NormalizedRow[] {
+    const headers = ctx.headers.map(normHeader);
+    const bodyRows = ctx.rows.slice(ctx.headerRowIndex + 1);
 
-    const currency = str(raw["ACCOUNT CURRENCY"]).toUpperCase();
+    return bodyRows
+      .filter((row) => row.some((cell) => (cell ?? "").trim() !== ""))
+      .map((row) => {
+        const raw = rowToObject(headers, row);
 
-    if (amount === null) return { error: "Missing amount (NET SHARE/GROSS REVENUE ACCOUNT CURRENCY)" };
-    if (!currency) return { error: "Missing currency (ACCOUNT CURRENCY)" };
-    if (currency.length !== 3) return { error: "Invalid currency (ACCOUNT CURRENCY)" };
-
-    const quantity = num(raw["QUANTITY"]);
-
-    return {
-      normalized: {
-        provider: "qobuz",
-        store: str(raw["STORE"]),
-        transaction_type: str(raw["TRANSACTION TYPE"]),
-        sale_country: str(raw["SALE COUNTRY"]),
-        transaction_date: str(raw["TRANSACTION DATE"]),
-        statement_period: str(raw["STATEMENT PERIOD"]),
-        amount,
-        currency,
-        gross_amount: num(raw["GROSS REVENUE ACCOUNT CURRENCY"]) ?? undefined,
-        sale_amount: num(raw["GROSS REVENUE SALE CURRENCY"]) ?? undefined,
-        sale_currency: str(raw["SALE CURRENCY"]).toUpperCase() || undefined,
-        fx_rate: num(raw["CURRENCY CONVERSION RATE"]) ?? undefined,
-        quantity: quantity ?? undefined,
-        isrc: str(raw["ISRC"]) || undefined,
-        upc: str(raw["DISPLAY UPC"]) || undefined,
-        track_title: str(raw["TRACK"]) || undefined,
-        release_title: str(raw["PRODUCT"]) || undefined,
-        artist: str(raw["TRACK ARTIST"]) || str(raw["PRODUCT ARTIST"]) || undefined,
-        label: str(raw["LABEL IMPRINT"]) || undefined,
-        account_id: str(raw["ACCOUNT ID"]) || undefined,
-        contract_id: str(raw["CONTRACT ID"]) || undefined,
-        account_name: str(raw["ACCOUNT NAME"]) || undefined,
-      },
-      warnings: [],
-    };
+        return {
+          raw,
+          canonical: toCanonical(ctx, raw),
+        };
+      });
   },
 };
