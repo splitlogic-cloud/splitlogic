@@ -72,6 +72,18 @@ function toNumber(value: unknown): number | null {
   return null;
 }
 
+function toRowCount(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function mapStatementRow(row: any): StatementListRow {
   return {
     id: row.id,
@@ -104,12 +116,7 @@ function mapStatementLineRow(row: any): StatementLineRow {
     line_label: row.line_label ?? "—",
     amount: toNumber(row.amount),
     currency: row.currency ?? null,
-    row_count:
-      typeof row.row_count === "number"
-        ? row.row_count
-        : row.row_count == null
-          ? null
-          : Number(row.row_count),
+    row_count: toRowCount(row.row_count),
     created_at: row.created_at ?? null,
   };
 }
@@ -161,7 +168,7 @@ export async function getStatementById(
     return null;
   }
 
-  const lines = await listStatementLines(statementId);
+  const lines = await listStatementLines(companyId, statementId);
 
   return {
     ...header,
@@ -212,10 +219,24 @@ export async function getStatementHeader(
   return mapStatementRow(data);
 }
 
+// Backward-compatible:
+// - listStatementLines(statementId)
+// - listStatementLines(companyId, statementId)
 export async function listStatementLines(
   statementId: string,
+): Promise<StatementLineRow[]>;
+export async function listStatementLines(
+  companyId: string,
+  statementId: string,
+): Promise<StatementLineRow[]>;
+export async function listStatementLines(
+  arg1: string,
+  arg2?: string,
 ): Promise<StatementLineRow[]> {
-  const { data, error } = await supabaseAdmin
+  const companyId = arg2 ? arg1 : null;
+  const statementId = arg2 ?? arg1;
+
+  let query = supabaseAdmin
     .from("statement_lines")
     .select(
       `
@@ -236,6 +257,12 @@ export async function listStatementLines(
     )
     .eq("statement_id", statementId)
     .order("amount", { ascending: false });
+
+  if (companyId) {
+    query = query.eq("company_id", companyId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`listStatementLines failed: ${error.message}`);
