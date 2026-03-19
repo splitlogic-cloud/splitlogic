@@ -46,6 +46,49 @@ export type GenerateStatementResult = {
   statementIds: string[];
 };
 
+type StatementRowDb = {
+  id: string;
+  company_id: string;
+  party_id?: string | null;
+  allocation_run_id?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  status?: string | null;
+  sent_at?: string | null;
+  paid_at?: string | null;
+  voided_at?: string | null;
+  note?: string | null;
+  export_hash?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  currency?: string | null;
+  total_amount?: string | number | null;
+};
+
+type StatementLineDb = {
+  id: string;
+  statement_id: string;
+  allocation_row_id: string;
+  import_row_id: string;
+  work_id: string;
+  party_id: string;
+  source_amount: string | number;
+  share_percent: string | number;
+  allocated_amount: string | number;
+  currency: string | null;
+};
+
+type AllocationRowDb = {
+  id: string;
+  import_row_id: string;
+  work_id: string;
+  party_id: string;
+  source_amount: string | number;
+  share_percent: string | number;
+  allocated_amount: string | number;
+  currency: string | null;
+};
+
 function clampLimit(n: number, min = 1, max = 500) {
   return Math.max(min, Math.min(max, n));
 }
@@ -65,73 +108,11 @@ function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-export async function listStatementsByCompany(
-  companyId: string,
-  limit = 200
-): Promise<StatementListRow[]> {
-  const safeLimit = clampLimit(limit);
-
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select(
-      "id, company_id, party_id, allocation_run_id, period_start, period_end, status, sent_at, paid_at, voided_at, note, export_hash, created_at, created_by, total_amount"
-    )
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(safeLimit);
-
-  if (error) {
-    throw new Error(`listStatementsByCompany failed: ${error.message}`);
-  }
-
-  const rows = (data ?? []) as Array<{
-    id: string;
-    company_id: string;
-    party_id?: string | null;
-    allocation_run_id?: string | null;
-    period_start?: string | null;
-    period_end?: string | null;
-    status?: string | null;
-    sent_at?: string | null;
-    paid_at?: string | null;
-    voided_at?: string | null;
-    note?: string | null;
-    export_hash?: string | null;
-    created_at?: string | null;
-    created_by?: string | null;
-    total_amount?: string | number | null;
-  }>;
-
-  const partyIds = Array.from(
-    new Set(rows.map((row) => row.party_id).filter(Boolean))
-  ) as string[];
-
-  let partyMap = new Map<string, string>();
-
-  if (partyIds.length > 0) {
-    const { data: parties, error: partiesError } = await supabaseAdmin
-      .from("parties")
-      .select("id, name")
-      .in("id", partyIds);
-
-    if (partiesError) {
-      throw new Error(
-        `listStatementsByCompany parties failed: ${partiesError.message}`
-      );
-    }
-
-    partyMap = new Map<string, string>();
-    for (const party of parties ?? []) {
-      partyMap.set(
-        String(party.id),
-        typeof party.name === "string" && party.name.trim() !== ""
-          ? party.name
-          : "Unnamed party"
-      );
-    }
-  }
-
-  return rows.map((row) => ({
+function normalizeStatementRow(
+  row: StatementRowDb,
+  partyName: string | null
+): StatementListRow {
+  return {
     id: row.id,
     company_id: row.company_id,
     party_id: row.party_id ?? null,
@@ -146,10 +127,68 @@ export async function listStatementsByCompany(
     export_hash: row.export_hash ?? null,
     created_at: row.created_at ?? null,
     created_by: row.created_by ?? null,
-    party_name: row.party_id ? partyMap.get(row.party_id) ?? "Unnamed party" : null,
-    currency: null,
-    total_amount: row.total_amount != null ? round6(toNumber(row.total_amount)) : 0,
-  }));
+    party_name: partyName,
+    currency: row.currency ?? null,
+    total_amount:
+      row.total_amount != null ? round6(toNumber(row.total_amount)) : 0,
+  };
+}
+
+export async function listStatementsByCompany(
+  companyId: string,
+  limit = 200
+): Promise<StatementListRow[]> {
+  const safeLimit = clampLimit(limit);
+
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select(
+      "id, company_id, party_id, allocation_run_id, period_start, period_end, status, sent_at, paid_at, voided_at, note, export_hash, created_at, created_by, currency, total_amount"
+    )
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    throw new Error(`listStatementsByCompany failed: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as StatementRowDb[];
+
+  const partyIds = Array.from(
+    new Set(rows.map((row) => row.party_id).filter(Boolean))
+  ) as string[];
+
+  const partyMap = new Map<string, string>();
+
+  if (partyIds.length > 0) {
+    const { data: parties, error: partiesError } = await supabaseAdmin
+      .from("parties")
+      .select("id, name")
+      .in("id", partyIds);
+
+    if (partiesError) {
+      throw new Error(
+        `listStatementsByCompany parties failed: ${partiesError.message}`
+      );
+    }
+
+    for (const party of parties ?? []) {
+      partyMap.set(
+        String(party.id),
+        typeof party.name === "string" && party.name.trim() !== ""
+          ? party.name
+          : "Unnamed party"
+      );
+    }
+  }
+
+  return rows.map((row) =>
+    normalizeStatementRow(
+      row,
+      row.party_id ? partyMap.get(row.party_id) ?? "Unnamed party" : null
+    )
+  );
 }
 
 export async function getStatementHeader(
@@ -159,7 +198,7 @@ export async function getStatementHeader(
   const { data, error } = await supabaseAdmin
     .from("statements")
     .select(
-      "id, company_id, party_id, allocation_run_id, period_start, period_end, status, sent_at, paid_at, voided_at, note, export_hash, created_at, created_by, total_amount"
+      "id, company_id, party_id, allocation_run_id, period_start, period_end, status, sent_at, paid_at, voided_at, note, export_hash, created_at, created_by, currency, total_amount"
     )
     .eq("company_id", companyId)
     .eq("id", statementId)
@@ -171,23 +210,7 @@ export async function getStatementHeader(
 
   if (!data) return null;
 
-  const row = data as {
-    id: string;
-    company_id: string;
-    party_id?: string | null;
-    allocation_run_id?: string | null;
-    period_start?: string | null;
-    period_end?: string | null;
-    status?: string | null;
-    sent_at?: string | null;
-    paid_at?: string | null;
-    voided_at?: string | null;
-    note?: string | null;
-    export_hash?: string | null;
-    created_at?: string | null;
-    created_by?: string | null;
-    total_amount?: string | number | null;
-  };
+  const row = data as StatementRowDb;
 
   let partyName: string | null = null;
 
@@ -208,25 +231,7 @@ export async function getStatementHeader(
         : "Unnamed party";
   }
 
-  return {
-    id: row.id,
-    company_id: row.company_id,
-    party_id: row.party_id ?? null,
-    allocation_run_id: row.allocation_run_id ?? null,
-    period_start: row.period_start ?? null,
-    period_end: row.period_end ?? null,
-    status: row.status ?? null,
-    sent_at: row.sent_at ?? null,
-    paid_at: row.paid_at ?? null,
-    voided_at: row.voided_at ?? null,
-    note: row.note ?? null,
-    export_hash: row.export_hash ?? null,
-    created_at: row.created_at ?? null,
-    created_by: row.created_by ?? null,
-    party_name: partyName,
-    currency: null,
-    total_amount: row.total_amount != null ? round6(toNumber(row.total_amount)) : 0,
-  };
+  return normalizeStatementRow(row, partyName);
 }
 
 export async function listStatementLines(
@@ -260,22 +265,13 @@ export async function listStatementLines(
     throw new Error(`listStatementLines failed: ${error.message}`);
   }
 
-  const rows = (data ?? []) as Array<{
-    id: string;
-    statement_id: string;
-    allocation_row_id: string;
-    import_row_id: string;
-    work_id: string;
-    party_id: string;
-    source_amount: string | number;
-    share_percent: string | number;
-    allocated_amount: string | number;
-    currency: string | null;
-  }>;
+  const rows = (data ?? []) as StatementLineDb[];
 
-  const workIds = Array.from(new Set(rows.map((row) => row.work_id))).filter(Boolean);
+  const workIds = Array.from(
+    new Set(rows.map((row) => row.work_id).filter(Boolean))
+  ) as string[];
 
-  let workMap = new Map<string, string>();
+  const workMap = new Map<string, string>();
 
   if (workIds.length > 0) {
     const { data: works, error: worksError } = await supabaseAdmin
@@ -287,7 +283,6 @@ export async function listStatementLines(
       throw new Error(`listStatementLines works failed: ${worksError.message}`);
     }
 
-    workMap = new Map<string, string>();
     for (const work of works ?? []) {
       workMap.set(
         String(work.id),
@@ -333,16 +328,7 @@ export async function generateStatementsFromAllocationRun(params: {
     );
   }
 
-  const rows = (allocationRows ?? []) as Array<{
-    id: string;
-    import_row_id: string;
-    work_id: string;
-    party_id: string;
-    source_amount: string | number;
-    share_percent: string | number;
-    allocated_amount: string | number;
-    currency: string | null;
-  }>;
+  const rows = (allocationRows ?? []) as AllocationRowDb[];
 
   if (rows.length === 0) {
     return {
@@ -351,7 +337,7 @@ export async function generateStatementsFromAllocationRun(params: {
     };
   }
 
-  const rowsByParty = new Map<string, typeof rows>();
+  const rowsByParty = new Map<string, AllocationRowDb[]>();
 
   for (const row of rows) {
     const current = rowsByParty.get(row.party_id) ?? [];
@@ -370,11 +356,14 @@ export async function generateStatementsFromAllocationRun(params: {
       new Set(
         partyRows
           .map((row) => row.currency)
-          .filter((value): value is string => typeof value === "string" && value.trim() !== "")
+          .filter(
+            (value): value is string =>
+              typeof value === "string" && value.trim() !== ""
+          )
       )
     );
 
-    const derivedCurrency = currencies.length === 1 ? currencies[0] : null;
+    const currency = currencies.length === 1 ? currencies[0] : null;
 
     const { data: statement, error: statementError } = await supabaseAdmin
       .from("statements")
@@ -384,6 +373,7 @@ export async function generateStatementsFromAllocationRun(params: {
         allocation_run_id: params.allocationRunId,
         period_start: params.periodStart ?? null,
         period_end: params.periodEnd ?? null,
+        currency,
         status: "draft",
         total_amount: totalAmount,
         created_by: params.createdBy ?? null,
@@ -434,7 +424,7 @@ export async function generateStatementsFromAllocationRun(params: {
         partyId,
         lineCount: lineInserts.length,
         totalAmount,
-        currency: derivedCurrency,
+        currency,
       },
       createdBy: params.createdBy ?? null,
     });
