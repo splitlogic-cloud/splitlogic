@@ -41,6 +41,79 @@ export type StatementDetail = StatementListRow & {
   lines: StatementLineRow[];
 };
 
+export type StatementHeader = {
+  id: string;
+  company_id: string;
+  party_id: string | null;
+  party_name: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  status: string | null;
+  total_amount: number | null;
+  currency: string | null;
+  note: string | null;
+  sent_at: string | null;
+  paid_at: string | null;
+  voided_at: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  generated_from: string | null;
+};
+
+function toNumber(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function mapStatementRow(row: any): StatementListRow {
+  return {
+    id: row.id,
+    company_id: row.company_id,
+    party_id: row.party_id ?? null,
+    party_name: row.parties?.name ?? null,
+    period_start: row.period_start ?? null,
+    period_end: row.period_end ?? null,
+    status: row.status ?? null,
+    total_amount: toNumber(row.total_amount),
+    currency: row.currency ?? null,
+    note: row.note ?? null,
+    sent_at: row.sent_at ?? null,
+    paid_at: row.paid_at ?? null,
+    voided_at: row.voided_at ?? null,
+    created_at: row.created_at ?? null,
+    created_by: row.created_by ?? null,
+    generated_from: row.generated_from ?? null,
+  };
+}
+
+function mapStatementLineRow(row: any): StatementLineRow {
+  return {
+    id: row.id,
+    statement_id: row.statement_id,
+    company_id: row.company_id ?? null,
+    party_id: row.party_id ?? null,
+    work_id: row.work_id ?? null,
+    work_title: row.works?.title ?? null,
+    line_label: row.line_label ?? "—",
+    amount: toNumber(row.amount),
+    currency: row.currency ?? null,
+    row_count:
+      typeof row.row_count === "number"
+        ? row.row_count
+        : row.row_count == null
+          ? null
+          : Number(row.row_count),
+    created_at: row.created_at ?? null,
+  };
+}
+
 export async function listStatementsByCompany(
   companyId: string,
 ): Promise<StatementListRow[]> {
@@ -75,31 +148,32 @@ export async function listStatementsByCompany(
     throw new Error(`listStatementsByCompany failed: ${error.message}`);
   }
 
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    company_id: row.company_id,
-    party_id: row.party_id ?? null,
-    party_name: row.parties?.name ?? null,
-    period_start: row.period_start ?? null,
-    period_end: row.period_end ?? null,
-    status: row.status ?? null,
-    total_amount: row.total_amount == null ? null : Number(row.total_amount),
-    currency: row.currency ?? null,
-    note: row.note ?? null,
-    sent_at: row.sent_at ?? null,
-    paid_at: row.paid_at ?? null,
-    voided_at: row.voided_at ?? null,
-    created_at: row.created_at ?? null,
-    created_by: row.created_by ?? null,
-    generated_from: row.generated_from ?? null,
-  }));
+  return (data ?? []).map(mapStatementRow);
 }
 
 export async function getStatementById(
   companyId: string,
   statementId: string,
 ): Promise<StatementDetail | null> {
-  const { data: statement, error: statementError } = await supabaseAdmin
+  const header = await getStatementHeader(companyId, statementId);
+
+  if (!header) {
+    return null;
+  }
+
+  const lines = await listStatementLines(statementId);
+
+  return {
+    ...header,
+    lines,
+  };
+}
+
+export async function getStatementHeader(
+  companyId: string,
+  statementId: string,
+): Promise<StatementHeader | null> {
+  const { data, error } = await supabaseAdmin
     .from("statements")
     .select(
       `
@@ -127,15 +201,21 @@ export async function getStatementById(
     .eq("id", statementId)
     .maybeSingle();
 
-  if (statementError) {
-    throw new Error(`getStatementById failed: ${statementError.message}`);
+  if (error) {
+    throw new Error(`getStatementHeader failed: ${error.message}`);
   }
 
-  if (!statement) {
+  if (!data) {
     return null;
   }
 
-  const { data: lines, error: linesError } = await supabaseAdmin
+  return mapStatementRow(data);
+}
+
+export async function listStatementLines(
+  statementId: string,
+): Promise<StatementLineRow[]> {
+  const { data, error } = await supabaseAdmin
     .from("statement_lines")
     .select(
       `
@@ -157,41 +237,9 @@ export async function getStatementById(
     .eq("statement_id", statementId)
     .order("amount", { ascending: false });
 
-  if (linesError) {
-    throw new Error(`getStatementById lines failed: ${linesError.message}`);
+  if (error) {
+    throw new Error(`listStatementLines failed: ${error.message}`);
   }
 
-  const mappedLines: StatementLineRow[] = (lines ?? []).map((row: any) => ({
-    id: row.id,
-    statement_id: row.statement_id,
-    company_id: row.company_id ?? null,
-    party_id: row.party_id ?? null,
-    work_id: row.work_id ?? null,
-    work_title: row.works?.title ?? null,
-    line_label: row.line_label,
-    amount: row.amount == null ? null : Number(row.amount),
-    currency: row.currency ?? null,
-    row_count: row.row_count ?? null,
-    created_at: row.created_at ?? null,
-  }));
-
-  return {
-    id: statement.id,
-    company_id: statement.company_id,
-    party_id: statement.party_id ?? null,
-    party_name: statement.parties?.name ?? null,
-    period_start: statement.period_start ?? null,
-    period_end: statement.period_end ?? null,
-    status: statement.status ?? null,
-    total_amount: statement.total_amount == null ? null : Number(statement.total_amount),
-    currency: statement.currency ?? null,
-    note: statement.note ?? null,
-    sent_at: statement.sent_at ?? null,
-    paid_at: statement.paid_at ?? null,
-    voided_at: statement.voided_at ?? null,
-    created_at: statement.created_at ?? null,
-    created_by: statement.created_by ?? null,
-    generated_from: statement.generated_from ?? null,
-    lines: mappedLines,
-  };
+  return (data ?? []).map(mapStatementLineRow);
 }
