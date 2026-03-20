@@ -83,9 +83,16 @@ export type AllocationRunLineInsert = {
   created_at?: string | null;
 };
 
+export type AllocationBlockerStatus =
+  | "missing_amount"
+  | "missing_work"
+  | "missing_release"
+  | "missing_splits";
+
 export type AllocationBlockerRow = {
   import_row_id: string;
   row_number: number | null;
+  status: AllocationBlockerStatus;
   blocker_code: string;
   blocker_label: string;
   release_title: string | null;
@@ -428,6 +435,7 @@ export async function listAllocationBlockersForImport(
       blockers.push({
         import_row_id: row.id,
         row_number: row.row_number ?? null,
+        status: "missing_amount",
         blocker_code: "missing_amount",
         blocker_label: "Missing amount base",
         release_title: row.release_title ?? null,
@@ -443,6 +451,7 @@ export async function listAllocationBlockersForImport(
       blockers.push({
         import_row_id: row.id,
         row_number: row.row_number ?? null,
+        status: "missing_work",
         blocker_code: "missing_work",
         blocker_label: "Missing work",
         release_title: row.release_title ?? null,
@@ -458,8 +467,25 @@ export async function listAllocationBlockersForImport(
       blockers.push({
         import_row_id: row.id,
         row_number: row.row_number ?? null,
+        status: "missing_release",
         blocker_code: "missing_release",
         blocker_label: "Missing release",
+        release_title: row.release_title ?? null,
+        work_title: row.work_title ?? null,
+        currency: row.currency ?? null,
+        net_amount: row.net_amount ?? null,
+        gross_amount: row.gross_amount ?? null,
+        ppd_amount: row.ppd_amount ?? null,
+      });
+    }
+
+    if (!row.party_id) {
+      blockers.push({
+        import_row_id: row.id,
+        row_number: row.row_number ?? null,
+        status: "missing_splits",
+        blocker_code: "missing_splits",
+        blocker_label: "Missing splits",
         release_title: row.release_title ?? null,
         work_title: row.work_title ?? null,
         currency: row.currency ?? null,

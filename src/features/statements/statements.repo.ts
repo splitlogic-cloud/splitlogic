@@ -8,11 +8,24 @@ export type StatementRow = {
   id: string;
   company_id: string;
   party_id?: string | null;
+
   period_start?: string | null;
   period_end?: string | null;
+
   status?: StatementStatus | null;
   currency?: string | null;
   note?: string | null;
+
+  generated_from?: string | null;
+  generated_by?: string | null;
+
+  allocation_run_id?: string | null;
+  recoup_run_id?: string | null;
+
+  sent_at?: string | null;
+  paid_at?: string | null;
+  voided_at?: string | null;
+
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -25,17 +38,23 @@ export type StatementHeaderRow = StatementRow & {
 export type StatementLineRow = {
   id: string;
   statement_id: string;
+
   party_id?: string | null;
   party_name?: string | null;
+
   release_id?: string | null;
   release_title?: string | null;
+
   work_id?: string | null;
   work_title?: string | null;
+
   source_amount?: number | null;
   share_percent?: number | null;
   allocated_amount?: number | null;
+
   currency?: string | null;
   note?: string | null;
+
   created_at?: string | null;
 };
 
@@ -91,6 +110,13 @@ export async function listStatementsByCompany(
       status,
       currency,
       note,
+      generated_from,
+      generated_by,
+      allocation_run_id,
+      recoup_run_id,
+      sent_at,
+      paid_at,
+      voided_at,
       created_at,
       updated_at
     `)
@@ -153,6 +179,13 @@ export async function getStatementHeader(
       status,
       currency,
       note,
+      generated_from,
+      generated_by,
+      allocation_run_id,
+      recoup_run_id,
+      sent_at,
+      paid_at,
+      voided_at,
       created_at,
       updated_at
     `)

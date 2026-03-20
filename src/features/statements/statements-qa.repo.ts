@@ -27,20 +27,26 @@ export type GenerateStatementsQaSummary = {
 export type StatementQaDetail = {
   level: QaLevel;
   issues: string[];
+
   statementTotal: number;
   ledgerTotal: number;
   lineTotal: number;
+
   sourceRowCount: number;
+
   diffVsLedger: number;
   diffVsLines: number;
+
   rowsMissingWork: number;
   rowsMissingRelease: number;
   rowsMissingParty: number;
   zeroAmountRows: number;
+
   currencies: string[];
   workCount: number;
   releaseCount: number;
   partyCount: number;
+
   totals: {
     line_count: number;
     total_amount: number;
