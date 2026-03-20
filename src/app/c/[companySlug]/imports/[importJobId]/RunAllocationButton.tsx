@@ -1,29 +1,31 @@
 "use client";
 
-import { useTransition } from "react";
-import { runAllocationAction } from "./run-allocation-action";
+import { useFormStatus } from "react-dom";
+import { runAllocationAction } from "@/features/allocations/allocations.actions";
 
-export default function RunAllocationButton({
-  companySlug,
-  importJobId,
-}: {
-  companySlug: string;
-  importJobId: string;
-}) {
-  const [isPending, startTransition] = useTransition();
+function SubmitButton() {
+  const { pending } = useFormStatus();
 
   return (
     <button
-      type="button"
-      onClick={() =>
-        startTransition(async () => {
-          await runAllocationAction(companySlug, importJobId);
-        })
-      }
-      disabled={isPending}
-      className="inline-flex items-center rounded-lg bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+      type="submit"
+      disabled={pending}
+      className="inline-flex items-center rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
     >
-      {isPending ? "Running allocation..." : "Run allocation"}
+      {pending ? "Running allocation..." : "Run allocation"}
     </button>
+  );
+}
+
+export default function RunAllocationButton(props: {
+  companySlug: string;
+  importJobId: string;
+}) {
+  return (
+    <form action={runAllocationAction}>
+      <input type="hidden" name="companySlug" value={props.companySlug} />
+      <input type="hidden" name="importJobId" value={props.importJobId} />
+      <SubmitButton />
+    </form>
   );
 }

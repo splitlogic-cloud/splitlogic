@@ -3,16 +3,13 @@ import "server-only";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import ManualMatchCell from "./ManualMatchCell";
-import ClearMatchButton from "./ClearMatchButton";
-import RunMatchingV3Button from "./RunMatchingV3Button";
 import RunAllocationButton from "./RunAllocationButton";
-import BootstrapWorksButton from "./BootstrapWorksButton";
 import {
+  getCompanyBySlug,
+  getImportJobForCompany,
   getLatestAllocationRunForImport,
   listAllocationBlockersForImport,
   listAllocationTotalsByParty,
-  type AllocationBlockerRow,
 } from "@/features/allocations/allocations.repo";
 
 export const dynamic = "force-dynamic";
@@ -24,728 +21,271 @@ type Params = {
   }>;
 };
 
-type RawRecord = Record<string, unknown>;
-
-type CompanyRecord = {
-  id: string;
-  slug: string | null;
-  name: string | null;
-};
-
-type ImportJobRecord = {
-  id: string;
-  company_id: string;
-  file_name: string | null;
-  created_at: string | null;
-};
-
-type ImportRowRecord = {
-  id: string;
-  row_number: number | null;
-  raw: unknown;
-  created_at: string | null;
-  matched_work_id: string | null;
-  match_source: string | null;
-  match_confidence: number | string | null;
-};
-
-type WorkOption = {
-  id: string;
-  title: string | null;
-  artist: string | null;
-  isrc: string | null;
-};
-
-function asRecord(value: unknown): RawRecord {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
+function formatMoney(value: number, currency?: string | null) {
+  try {
+    return new Intl.NumberFormat("sv-SE", {
+      style: "currency",
+      currency: currency || "SEK",
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency ?? ""}`.trim();
   }
-  return value as RawRecord;
 }
 
-function pickString(raw: RawRecord, keys: string[]): string {
-  for (const key of keys) {
-    const value = raw[key];
-    if (typeof value === "string" && value.trim() !== "") {
-      return value.trim();
-    }
+async function getImportRowStats(companyId: string, importJobId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("import_rows")
+    .select("id, amount, matched_work_id, allocation_status", { count: "exact" })
+    .eq("company_id", companyId)
+    .eq("import_job_id", importJobId);
+
+  if (error) {
+    throw new Error(`Failed to load import row stats: ${error.message}`);
   }
-  return "";
-}
 
-function pickNumberLike(raw: RawRecord, keys: string[]): string {
-  for (const key of keys) {
-    const value = raw[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return String(value);
-    }
-    if (typeof value === "string" && value.trim() !== "") {
-      return value.trim();
-    }
-  }
-  return "";
-}
-
-function formatPercent(value: number): string {
-  return `${value.toFixed(1)}%`;
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("sv-SE", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function getRowView(rawValue: unknown) {
-  const raw = asRecord(rawValue);
+  const rows = data ?? [];
+  const rowCount = rows.length;
+  const matchedCount = rows.filter((row) => row.matched_work_id).length;
+  const totalAmount = rows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
 
   return {
-    title: pickString(raw, ["title", "track", "track_title", "product"]),
-    artist: pickString(raw, [
-      "artist",
-      "track_artist",
-      "product_artist",
-      "main_artist",
-    ]),
-    isrc: pickString(raw, ["isrc", "ISRC"]),
-    store: pickString(raw, ["store", "service", "service_detail"]),
-    country: pickString(raw, ["country", "sale_country", "territory"]),
-    revenue: pickNumberLike(raw, [
-      "net_share_account_currency",
-      "netShareAccountCurrency",
-      "netAccountAmount",
-      "net_account_amount",
-      "amount",
-      "revenue",
-      "earnings",
-    ]),
-    currency: pickString(raw, [
-      "account_currency",
-      "accountCurrency",
-      "currency",
-      "sale_currency",
-    ]),
-    period: pickString(raw, [
-      "statement_period",
-      "period",
-      "month",
-      "reporting_period",
-    ]),
+    rowCount,
+    matchedCount,
+    totalAmount,
   };
 }
 
-function StatCard({
-  title,
-  value,
-  hint,
-}: {
-  title: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-        {title}
-      </div>
-      <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-        {value}
-      </div>
-      {hint ? <div className="mt-1 text-sm text-slate-500">{hint}</div> : null}
-    </div>
-  );
-}
-
-function statusBadgeClass(status: string | null) {
-  if (status === "completed") {
-    return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
-  }
-  if (status === "running") {
-    return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
-  }
-  if (status === "failed") {
-    return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
-  }
-  return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
-}
-
-function blockerBadge(blocker: AllocationBlockerRow) {
-  if (blocker.status === "missing_splits") {
-    return (
-      <span className="inline-flex rounded-full bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 ring-1 ring-rose-200">
-        Missing splits
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-      Invalid split total
-    </span>
-  );
-}
-
-function StepLink({
-  href,
-  label,
-  sublabel,
-}: {
-  href: string;
-  label: string;
-  sublabel: string;
-}) {
-  return (
-    <Link
-      href={href}
-      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:bg-slate-50"
-    >
-      <div className="text-sm font-medium text-slate-900">{label}</div>
-      <div className="mt-1 text-sm text-slate-500">{sublabel}</div>
-    </Link>
-  );
-}
-
-export default async function ImportReviewPage({ params }: Params) {
+export default async function ImportDetailPage({ params }: Params) {
   const { companySlug, importJobId } = await params;
 
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, slug, name")
-    .eq("slug", companySlug)
-    .maybeSingle();
+  const company = await getCompanyBySlug(companySlug);
+  if (!company) notFound();
 
-  if (companyError) {
-    throw new Error(`load company failed: ${companyError.message}`);
-  }
+  const importJob = await getImportJobForCompany(company.id, importJobId);
+  if (!importJob) notFound();
 
-  if (!company) {
-    notFound();
-  }
-
-  const typedCompany = company as CompanyRecord;
-
-  const { data: importJob, error: importJobError } = await supabaseAdmin
-    .from("import_jobs")
-    .select("id, company_id, file_name, created_at")
-    .eq("id", importJobId)
-    .eq("company_id", typedCompany.id)
-    .maybeSingle();
-
-  if (importJobError) {
-    throw new Error(`load import job failed: ${importJobError.message}`);
-  }
-
-  if (!importJob) {
-    notFound();
-  }
-
-  const typedImportJob = importJob as ImportJobRecord;
-
-  const [
-    totalRowsResult,
-    matchedRowsResult,
-    unmatchedRowsResult,
-    isrcExactResult,
-    titleArtistExactResult,
-    fuzzyResult,
-    manualResult,
-    otherSourceResult,
-    unmatchedPreviewResult,
-    workOptionsResult,
-    latestAllocationRun,
-    blockers,
-  ] = await Promise.all([
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .not("matched_work_id", "is", null),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .is("matched_work_id", null),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .eq("match_source", "isrc_exact"),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .eq("match_source", "title_artist_exact"),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .eq("match_source", "fuzzy"),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .eq("match_source", "manual"),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select("id", { count: "exact", head: true })
-      .eq("import_id", typedImportJob.id)
-      .not(
-        "match_source",
-        "in",
-        '("isrc_exact","title_artist_exact","fuzzy","manual")'
-      ),
-
-    supabaseAdmin
-      .from("import_rows")
-      .select(
-        "id, row_number, raw, created_at, matched_work_id, match_source, match_confidence"
-      )
-      .eq("import_id", typedImportJob.id)
-      .is("matched_work_id", null)
-      .order("row_number", { ascending: true })
-      .limit(200),
-
-    supabaseAdmin
-      .from("works")
-      .select("id, title, artist, isrc")
-      .eq("company_id", typedCompany.id)
-      .order("title", { ascending: true })
-      .limit(2000),
-
-    getLatestAllocationRunForImport({
-      companyId: typedCompany.id,
-      importId: typedImportJob.id,
-    }),
-
-    listAllocationBlockersForImport({
-      companyId: typedCompany.id,
-      importId: typedImportJob.id,
-    }),
-  ]);
-
-  const totalRows = totalRowsResult.count ?? 0;
-  const matchedRows = matchedRowsResult.count ?? 0;
-  const unmatchedRows = unmatchedRowsResult.count ?? 0;
-  const matchPercent = totalRows > 0 ? (matchedRows / totalRows) * 100 : 0;
-
-  const isrcExact = isrcExactResult.count ?? 0;
-  const titleArtistExact = titleArtistExactResult.count ?? 0;
-  const fuzzy = fuzzyResult.count ?? 0;
-  const manual = manualResult.count ?? 0;
-  const otherSource = otherSourceResult.count ?? 0;
-
-  const unmatchedPreview = (unmatchedPreviewResult.data ?? []) as ImportRowRecord[];
-  const workOptions = (workOptionsResult.data ?? []) as WorkOption[];
-
-  const partyTotals = latestAllocationRun
-    ? await listAllocationTotalsByParty({
-        allocationRunId: latestAllocationRun.id,
-      })
-    : [];
-
-  const missingBlockers = blockers.filter((b) => b.status === "missing_splits");
-  const invalidBlockers = blockers.filter(
-    (b) => b.status === "invalid_split_total"
+  const stats = await getImportRowStats(company.id, importJobId);
+  const latestRun = await getLatestAllocationRunForImport(company.id, importJobId);
+  const totalsByParty = await listAllocationTotalsByParty(
+    company.id,
+    importJobId,
+    latestRun?.id ?? null
   );
-
-  const manualMatchWorks = workOptions.map((work) => ({
-    id: work.id,
-    title: work.title ?? "Untitled",
-    artist: work.artist ?? null,
-    isrc: work.isrc ?? null,
-  }));
+  const blockers = await listAllocationBlockersForImport(
+    company.id,
+    importJobId,
+    latestRun?.id ?? null
+  );
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-        <div>
-          <div className="text-sm text-slate-500">
-            Imports / {typedImportJob.id}
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <div className="text-sm text-neutral-500">
+            <Link href={`/c/${companySlug}/imports`} className="underline">
+              Imports
+            </Link>{" "}
+            / {importJob.file_name ?? importJob.id}
           </div>
-          <h1 className="mt-1 text-4xl font-semibold tracking-tight text-slate-950">
-            Import review
+
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Import allocation
           </h1>
-          <div className="mt-2 text-sm text-slate-600">
-            {typedCompany.name ?? typedCompany.slug ?? "Company"} ·{" "}
-            {typedImportJob.file_name ?? "Unnamed file"} ·{" "}
-            {formatDate(typedImportJob.created_at)}
-          </div>
-        </div>
 
-        <div className="flex w-full max-w-xl flex-col gap-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <BootstrapWorksButton
-              companyId={typedCompany.id}
-              companySlug={companySlug}
-              importJobId={typedImportJob.id}
-            />
-
-            <RunMatchingV3Button
-              companySlug={companySlug}
-              importJobId={typedImportJob.id}
-            />
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-sm font-medium text-slate-900">Current goal</div>
-            <div className="mt-1 text-sm text-slate-600">
-              Bootstrap missing works, run matching, fix split blockers, then
-              allocate and generate statements.
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Total rows" value={totalRows} />
-        <StatCard title="Matched rows" value={matchedRows} />
-        <StatCard title="Unmatched rows" value={unmatchedRows} />
-        <StatCard title="Match %" value={formatPercent(matchPercent)} />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard title="ISRC exact" value={isrcExact} />
-        <StatCard title="Title/artist exact" value={titleArtistExact} />
-        <StatCard title="Fuzzy" value={fuzzy} />
-        <StatCard title="Manual" value={manual} />
-        <StatCard title="Other source" value={otherSource} />
-      </div>
-
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-            Next steps
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Use this import as the control center for the whole workflow.
+          <p className="max-w-3xl text-sm text-neutral-600">
+            This page shows the full allocation status for the import. The engine
+            allocates each matched import row to work splits, stores a full run
+            history, and logs blockers for anything that cannot be safely allocated.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StepLink
-            href={`/c/${companySlug}/works`}
-            label="Open works"
-            sublabel="Review works and prepare split setup."
-          />
-          <StepLink
-            href={`/c/${companySlug}/statements`}
-            label="Open statements"
-            sublabel="Review generated statements and exports."
-          />
-          <StepLink
-            href={`/c/${companySlug}/audit`}
-            label="Open audit"
-            sublabel="Verify system events and traceability."
-          />
-          {latestAllocationRun ? (
-            <StepLink
-              href={`/c/${companySlug}/allocations/${latestAllocationRun.id}`}
-              label="Open allocation QA"
-              sublabel="Inspect latest allocation run for this import."
-            />
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-              Run allocation first to unlock direct QA access for this import.
-            </div>
-          )}
+        <RunAllocationButton
+          companySlug={companySlug}
+          importJobId={importJobId}
+        />
+      </div>
+
+      <section className="grid gap-4 md:grid-cols-4">
+        <div className="rounded-xl border p-4">
+          <div className="text-xs uppercase text-neutral-500">Import rows</div>
+          <div className="mt-2 text-2xl font-semibold">{stats.rowCount}</div>
+        </div>
+
+        <div className="rounded-xl border p-4">
+          <div className="text-xs uppercase text-neutral-500">Matched rows</div>
+          <div className="mt-2 text-2xl font-semibold">{stats.matchedCount}</div>
+        </div>
+
+        <div className="rounded-xl border p-4">
+          <div className="text-xs uppercase text-neutral-500">Gross imported</div>
+          <div className="mt-2 text-2xl font-semibold">
+            {formatMoney(stats.totalAmount, latestRun?.currency ?? "SEK")}
+          </div>
+        </div>
+
+        <div className="rounded-xl border p-4">
+          <div className="text-xs uppercase text-neutral-500">Latest run status</div>
+          <div className="mt-2 text-2xl font-semibold">
+            {latestRun?.status ?? "not run"}
+          </div>
         </div>
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-              Allocation engine
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Allocate matched rows to parties using work splits.
-            </p>
-          </div>
+      <section className="rounded-xl border p-5">
+        <h2 className="text-lg font-semibold">Latest allocation run</h2>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {latestAllocationRun ? (
-              <Link
-                href={`/c/${companySlug}/allocations/${latestAllocationRun.id}`}
-                className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-              >
-                View QA
-              </Link>
-            ) : null}
-
-            <RunAllocationButton
-              companySlug={companySlug}
-              importJobId={typedImportJob.id}
-            />
-          </div>
-        </div>
-
-        {latestAllocationRun ? (
-          <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                  Status
-                </div>
-                <div className="mt-3">
-                  <span
-                    className={`inline-flex rounded-full px-3 py-1.5 text-sm font-medium ${statusBadgeClass(
-                      latestAllocationRun.status
-                    )}`}
-                  >
-                    {latestAllocationRun.status}
-                  </span>
-                </div>
-              </div>
-
-              <StatCard
-                title="Total input rows"
-                value={latestAllocationRun.total_input_rows}
-              />
-              <StatCard
-                title="Eligible rows"
-                value={latestAllocationRun.eligible_rows}
-              />
-              <StatCard
-                title="Allocation rows"
-                value={latestAllocationRun.allocated_rows}
-              />
-              <StatCard
-                title="Skipped unmatched"
-                value={latestAllocationRun.skipped_unmatched_rows}
-              />
-              <StatCard
-                title="Skipped bad/missing splits"
-                value={
-                  latestAllocationRun.skipped_missing_splits_rows +
-                  latestAllocationRun.skipped_invalid_split_rows
-                }
-              />
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-slate-200">
-              <div className="border-b border-slate-200 px-4 py-3 text-sm font-medium text-slate-900">
-                Party totals
-              </div>
-
-              {partyTotals.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 text-left text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3 font-medium">Party</th>
-                        <th className="px-4 py-3 font-medium">Allocated amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {partyTotals.map((party) => (
-                        <tr
-                          key={party.partyId}
-                          className="border-t border-slate-100 text-slate-800"
-                        >
-                          <td className="px-4 py-3">{party.partyName}</td>
-                          <td className="px-4 py-3">
-                            {party.allocatedAmount.toFixed(6)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="px-4 py-5 text-sm text-slate-500">
-                  No allocation rows yet.
-                </div>
-              )}
-            </div>
-          </>
+        {!latestRun ? (
+          <p className="mt-3 text-sm text-neutral-600">
+            No allocation run exists yet.
+          </p>
         ) : (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-slate-600">
-            No allocation run yet for this import.
+          <div className="mt-4 grid gap-4 md:grid-cols-6">
+            <div>
+              <div className="text-xs uppercase text-neutral-500">Run ID</div>
+              <div className="mt-1 break-all text-sm">{latestRun.id}</div>
+            </div>
+
+            <div>
+              <div className="text-xs uppercase text-neutral-500">Engine</div>
+              <div className="mt-1 text-sm">{latestRun.engine_version}</div>
+            </div>
+
+            <div>
+              <div className="text-xs uppercase text-neutral-500">Rows allocated</div>
+              <div className="mt-1 text-sm">
+                {latestRun.allocated_row_count} / {latestRun.input_row_count}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs uppercase text-neutral-500">Blockers</div>
+              <div className="mt-1 text-sm">{latestRun.blocker_count}</div>
+            </div>
+
+            <div>
+              <div className="text-xs uppercase text-neutral-500">Allocated amount</div>
+              <div className="mt-1 text-sm">
+                {formatMoney(latestRun.allocated_amount, latestRun.currency)}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs uppercase text-neutral-500">Unallocated amount</div>
+              <div className="mt-1 text-sm">
+                {formatMoney(latestRun.unallocated_amount, latestRun.currency)}
+              </div>
+            </div>
           </div>
         )}
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-              Allocation blockers
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Works that block allocation because they have missing or invalid
-              splits.
-            </p>
+      <section className="rounded-xl border p-5">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Totals by party</h2>
+          <div className="text-sm text-neutral-500">
+            Latest run aggregation
           </div>
-
-          <Link
-            href={`/c/${companySlug}/works`}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-          >
-            Open works
-          </Link>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard title="Blocked works" value={blockers.length} />
-          <StatCard title="Missing splits" value={missingBlockers.length} />
-          <StatCard title="Invalid split total" value={invalidBlockers.length} />
-        </div>
-
-        <div className="mt-6 rounded-2xl border border-slate-200">
-          {blockers.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Work</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Blocked rows</th>
-                    <th className="px-4 py-3 font-medium">Split rows</th>
-                    <th className="px-4 py-3 font-medium">Split total</th>
-                    <th className="px-4 py-3 font-medium">Action</th>
+        {totalsByParty.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-600">
+            No allocated lines yet.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b text-left">
+                  <th className="py-2 pr-4 font-medium">Party</th>
+                  <th className="py-2 pr-4 font-medium">Currency</th>
+                  <th className="py-2 pr-4 font-medium">Allocated</th>
+                  <th className="py-2 pr-4 font-medium">Line count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {totalsByParty.map((row) => (
+                  <tr key={row.party_id} className="border-b last:border-0">
+                    <td className="py-2 pr-4">{row.party_name ?? row.party_id}</td>
+                    <td className="py-2 pr-4">{row.currency ?? "-"}</td>
+                    <td className="py-2 pr-4">
+                      {formatMoney(row.total_allocated_amount, row.currency)}
+                    </td>
+                    <td className="py-2 pr-4">{row.line_count}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {blockers.map((blocker) => (
-                    <tr
-                      key={blocker.workId}
-                      className="border-t border-slate-100 align-top text-slate-800"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-slate-900">
-                          {blocker.workTitle}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          Work ID: {blocker.workId}
-                        </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          ISRC: {blocker.workIsrc || "—"}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">{blockerBadge(blocker)}</td>
-                      <td className="px-4 py-3 font-medium">
-                        {blocker.blockedRows}
-                      </td>
-                      <td className="px-4 py-3">{blocker.splitCount}</td>
-                      <td className="px-4 py-3">
-                        {blocker.splitTotal.toFixed(6)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/c/${companySlug}/works/${blocker.workId}/splits`}
-                          className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                        >
-                          Fix splits
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="px-4 py-5 text-sm text-emerald-700">
-              No allocation blockers found. All matched works have valid splits.
-            </div>
-          )}
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4">
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-            Unmatched rows
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            First 200 unmatched rows for this import. Manual matches update
-            coverage directly.
-          </p>
+      <section className="rounded-xl border p-5">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Allocation blockers</h2>
+          <div className="text-sm text-neutral-500">
+            Rows the engine refused to allocate automatically
+          </div>
         </div>
 
-        <div className="overflow-x-auto rounded-2xl border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-medium">Row</th>
-                <th className="px-4 py-3 font-medium">Title</th>
-                <th className="px-4 py-3 font-medium">Artist</th>
-                <th className="px-4 py-3 font-medium">ISRC</th>
-                <th className="px-4 py-3 font-medium">Store</th>
-                <th className="px-4 py-3 font-medium">Country</th>
-                <th className="px-4 py-3 font-medium">Revenue</th>
-                <th className="px-4 py-3 font-medium">Period</th>
-                <th className="px-4 py-3 font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {unmatchedPreview.length > 0 ? (
-                unmatchedPreview.map((row) => {
-                  const view = getRowView(row.raw);
-
-                  return (
-                    <tr
-                      key={row.id}
-                      className="border-t border-slate-100 align-top text-slate-800"
-                    >
-                      <td className="px-4 py-3">{row.row_number ?? "—"}</td>
-                      <td className="px-4 py-3">{view.title || "—"}</td>
-                      <td className="px-4 py-3">{view.artist || "—"}</td>
-                      <td className="px-4 py-3">{view.isrc || "—"}</td>
-                      <td className="px-4 py-3">{view.store || "—"}</td>
-                      <td className="px-4 py-3">{view.country || "—"}</td>
-                      <td className="px-4 py-3">
-                        {view.revenue
-                          ? `${view.revenue} ${view.currency || ""}`.trim()
-                          : `— ${view.currency || ""}`.trim()}
-                      </td>
-                      <td className="px-4 py-3">{view.period || "—"}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-2">
-                          <ManualMatchCell
-                             companySlug={companySlug}
-                             importJobId={typedImportJob.id}
-                             rowId={row.id}
-                             rowTitle={view.title || ""}
-                             rowArtist={view.artist || ""}
-                             rowIsrc={view.isrc || ""}
-                             works={manualMatchWorks}
-                          />
-                        {row.matched_work_id ? (
-                          <ClearMatchButton
-                             companySlug={companySlug}
-                             importJobId={typedImportJob.id}
-                             rowId={row.id}
-                          />
-                        ) : null}
-                       </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-slate-500" colSpan={9}>
-                    No unmatched rows.
-                  </td>
+        {blockers.length === 0 ? (
+          <p className="mt-3 text-sm text-neutral-600">
+            No blockers in latest run.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b text-left">
+                  <th className="py-2 pr-4 font-medium">Severity</th>
+                  <th className="py-2 pr-4 font-medium">Code</th>
+                  <th className="py-2 pr-4 font-medium">Message</th>
+                  <th className="py-2 pr-4 font-medium">Row</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {blockers.map((blocker) => (
+                  <tr key={blocker.id} className="border-b last:border-0 align-top">
+                    <td className="py-2 pr-4">{blocker.severity}</td>
+                    <td className="py-2 pr-4">{blocker.blocker_code}</td>
+                    <td className="py-2 pr-4">{blocker.message}</td>
+                    <td className="py-2 pr-4">{blocker.import_row_id ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border p-5">
+        <h2 className="text-lg font-semibold">What this engine now does</h2>
+        <div className="mt-3 space-y-2 text-sm text-neutral-700">
+          <p>
+            1. Reads all normalized import rows for this import job.
+          </p>
+          <p>
+            2. Checks that each row has amount, currency, and a matched work.
+          </p>
+          <p>
+            3. Loads the active split setup for each matched work from{" "}
+            <code>work_splits</code>.
+          </p>
+          <p>
+            4. Refuses allocation if split setup is missing or does not total 100%.
+          </p>
+          <p>
+            5. Writes one allocation line per party share into{" "}
+            <code>allocation_run_lines</code>.
+          </p>
+          <p>
+            6. Logs every problem into <code>allocation_run_blockers</code> so QA
+            can see exactly what stopped.
+          </p>
+          <p>
+            7. Saves a full run record in <code>allocation_runs</code> so the system
+            is rerunnable and auditable.
+          </p>
         </div>
       </section>
     </div>
