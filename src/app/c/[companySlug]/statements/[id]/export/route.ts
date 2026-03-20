@@ -1,29 +1,42 @@
+import "server-only";
+
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getStatementWithLines } from "@/features/statements/statements.repo";
+import { getStatementById } from "@/features/statements/statements.repo";
 
-type Params = {
+type RouteContext = {
   params: Promise<{
     companySlug: string;
     id: string;
   }>;
 };
 
-function toStr(v: unknown) {
-  if (v === null || v === undefined) return "";
-  return String(v);
-}
-
-function csvEscape(v: unknown) {
-  const s = toStr(v);
-  if (s.includes('"') || s.includes(",") || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
+function escapeCsv(value: unknown): string {
+  if (value == null) return "";
+  const text = String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
   }
-  return s;
+  return text;
 }
 
-export async function GET(_: Request, { params }: Params) {
-  const { companySlug, id } = await params;
+function buildCsv(rows: Array<Record<string, unknown>>): string {
+  if (rows.length === 0) {
+    return "line_label,work_title,row_count,amount,currency";
+  }
+
+  const headers = ["line_label", "work_title", "row_count", "amount", "currency"];
+
+  const lines = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((header) => escapeCsv(row[header])).join(",")),
+  ];
+
+  return lines.join("\n");
+}
+
+export async function GET(_request: Request, context: RouteContext) {
+  const { companySlug, id } = await context.params;
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
@@ -39,85 +52,36 @@ export async function GET(_: Request, { params }: Params) {
     return new NextResponse("Company not found", { status: 404 });
   }
 
-  const { header, lines } = await getStatementWithLines(company.id, id);
+  const statement = await getStatementById(company.id, id);
 
-  const csvRows: string[] = [];
-
-  csvRows.push(
-    [
-      "Statement ID",
-      "Company",
-      "Period Start",
-      "Period End",
-      "Currency",
-      "Party",
-      "Status",
-      "Total Amount",
-    ]
-      .map(csvEscape)
-      .join(","),
-  );
-
-  csvRows.push(
-    [
-      header.id,
-      company.name ?? company.slug ?? "",
-      header.period_start,
-      header.period_end,
-      header.currency,
-      header.party_name,
-      header.status,
-      header.total_amount,
-    ]
-      .map(csvEscape)
-      .join(","),
-  );
-
-  csvRows.push("");
-
-  csvRows.push(
-    [
-      "Line ID",
-      "Release",
-      "Work",
-      "Party",
-      "Source Amount",
-      "Share %",
-      "Allocated Amount",
-      "Currency",
-      "Note",
-      "Created At",
-    ]
-      .map(csvEscape)
-      .join(","),
-  );
-
-  for (const line of lines) {
-    csvRows.push(
-      [
-        line.id,
-        line.release_title,
-        line.work_title,
-        line.party_name,
-        line.source_amount,
-        line.share_percent,
-        line.allocated_amount,
-        line.currency,
-        line.note,
-        line.created_at,
-      ]
-        .map(csvEscape)
-        .join(","),
-    );
+  if (!statement) {
+    return new NextResponse("Statement not found", { status: 404 });
   }
 
-  const csv = csvRows.join("\n");
+  const csvRows = statement.lines.map((line) => ({
+    line_label: line.line_label ?? "",
+    work_title: line.work_title ?? "",
+    row_count: line.row_count ?? 0,
+    amount: line.amount ?? "",
+    currency: line.currency ?? statement.currency ?? "",
+  }));
+
+  const csv = buildCsv(csvRows);
+
+  const safePartyName =
+    (statement.party_name ?? "statement")
+      .replace(/[^\p{L}\p{N}\-_]+/gu, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "statement";
+
+  const filename = `${safePartyName}-${id}.csv`;
 
   return new NextResponse(csv, {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="statement_${id}.csv"`,
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store",
     },
   });
 }
