@@ -37,6 +37,10 @@ export type StatementQaDetail = {
   rowsMissingRelease: number;
   rowsMissingParty: number;
   zeroAmountRows: number;
+  currencies: string[];
+  workCount: number;
+  releaseCount: number;
+  partyCount: number;
   totals: {
     line_count: number;
     total_amount: number;
@@ -61,6 +65,16 @@ function pickQaLevel(hasError: boolean, hasWarning: boolean): QaLevel {
   return "ok";
 }
 
+function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((v) => (v ?? "").trim())
+        .filter((v) => v.length > 0),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+}
+
 function summarizeStatementLines(lines: StatementLineRow[]) {
   const totalAmount = lines.reduce((sum, line) => {
     return sum + (toNumberOrNull(line.allocated_amount) ?? 0);
@@ -73,6 +87,23 @@ function summarizeStatementLines(lines: StatementLineRow[]) {
     (line) => (toNumberOrNull(line.allocated_amount) ?? 0) === 0,
   ).length;
 
+  const currencies = uniqueNonEmpty(lines.map((line) => line.currency));
+  const workCount = new Set(
+    lines
+      .map((line) => line.work_id ?? line.work_title ?? null)
+      .filter(Boolean),
+  ).size;
+  const releaseCount = new Set(
+    lines
+      .map((line) => line.release_id ?? line.release_title ?? null)
+      .filter(Boolean),
+  ).size;
+  const partyCount = new Set(
+    lines
+      .map((line) => line.party_id ?? line.party_name ?? null)
+      .filter(Boolean),
+  ).size;
+
   return {
     line_count: lines.length,
     total_amount: totalAmount,
@@ -80,6 +111,10 @@ function summarizeStatementLines(lines: StatementLineRow[]) {
     rowsMissingRelease,
     rowsMissingParty,
     zeroAmountRows,
+    currencies,
+    workCount,
+    releaseCount,
+    partyCount,
   };
 }
 
@@ -157,6 +192,10 @@ export async function getStatementQaDetail(
       rowsMissingRelease: 0,
       rowsMissingParty: 0,
       zeroAmountRows: 0,
+      currencies: [],
+      workCount: 0,
+      releaseCount: 0,
+      partyCount: 0,
       totals: {
         line_count: 0,
         total_amount: 0,
@@ -191,6 +230,10 @@ export async function getStatementQaDetail(
     issues.push(`${totals.rowsMissingParty} rad(er) saknar party`);
   }
 
+  if (totals.currencies.length > 1) {
+    issues.push(`Statement innehåller flera valutor: ${totals.currencies.join(", ")}`);
+  }
+
   const statementTotal = totals.total_amount;
   const ledgerTotal = totals.total_amount;
   const lineTotal = totals.total_amount;
@@ -207,7 +250,8 @@ export async function getStatementQaDetail(
     !hasError &&
     (totals.total_amount === 0 ||
       totals.rowsMissingWork > 0 ||
-      totals.rowsMissingRelease > 0);
+      totals.rowsMissingRelease > 0 ||
+      totals.currencies.length > 1);
 
   return {
     level: pickQaLevel(hasError, hasWarning),
@@ -222,6 +266,10 @@ export async function getStatementQaDetail(
     rowsMissingRelease: totals.rowsMissingRelease,
     rowsMissingParty: totals.rowsMissingParty,
     zeroAmountRows: totals.zeroAmountRows,
+    currencies: totals.currencies,
+    workCount: totals.workCount,
+    releaseCount: totals.releaseCount,
+    partyCount: totals.partyCount,
     totals: {
       line_count: totals.line_count,
       total_amount: totals.total_amount,
