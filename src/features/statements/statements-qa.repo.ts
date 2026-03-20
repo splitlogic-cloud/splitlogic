@@ -29,6 +29,7 @@ export type StatementQaDetail = {
   issues: string[];
   statementTotal: number;
   ledgerTotal: number;
+  lineTotal: number;
   totals: {
     line_count: number;
     total_amount: number;
@@ -130,6 +131,7 @@ export async function getStatementQaDetail(
       issues: ["Statement saknas"],
       statementTotal: 0,
       ledgerTotal: 0,
+      lineTotal: 0,
       totals: {
         line_count: 0,
         total_amount: 0,
@@ -155,6 +157,7 @@ export async function getStatementQaDetail(
 
   const statementTotal = totals.total_amount;
   const ledgerTotal = totals.total_amount;
+  const lineTotal = totals.total_amount;
 
   const hasError = !statement.party_id || !statement.lines.length;
   const hasWarning = !hasError && totals.total_amount === 0;
@@ -164,6 +167,7 @@ export async function getStatementQaDetail(
     issues,
     statementTotal,
     ledgerTotal,
+    lineTotal,
     totals,
   };
 }
