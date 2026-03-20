@@ -58,8 +58,7 @@ export async function listImportRowsForAllocation(
 ): Promise<ImportRowForAllocation[]> {
   const { data, error } = await supabaseAdmin
     .from("import_rows")
-    .select(
-      `
+    .select(`
       id,
       import_job_id,
       row_number,
@@ -70,8 +69,7 @@ export async function listImportRowsForAllocation(
       gross_amount,
       matched_work_id,
       match_confidence
-      `
-    )
+    `)
     .eq("import_job_id", importJobId)
     .order("row_number", { ascending: true });
 
@@ -231,6 +229,35 @@ export async function getLatestAllocationRunForImport(
     .maybeSingle();
 
   if (error) throw new Error(`Failed to load latest allocation run: ${error.message}`);
+  return (data as AllocationRunRecord | null) ?? null;
+}
+
+export async function listAllocationRunsByCompany(
+  companyId: string
+): Promise<AllocationRunRecord[]> {
+  const { data, error } = await supabaseAdmin
+    .from("allocation_runs")
+    .select("*")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) throw new Error(`load allocation runs failed: ${error.message}`);
+  return (data as AllocationRunRecord[]) ?? [];
+}
+
+export async function getAllocationRunById(
+  companyId: string,
+  allocationRunId: string
+): Promise<AllocationRunRecord | null> {
+  const { data, error } = await supabaseAdmin
+    .from("allocation_runs")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("id", allocationRunId)
+    .maybeSingle();
+
+  if (error) throw new Error(`load allocation run failed: ${error.message}`);
   return (data as AllocationRunRecord | null) ?? null;
 }
 
