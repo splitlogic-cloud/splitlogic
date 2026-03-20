@@ -80,24 +80,36 @@ function summarizeStatementLines(lines: StatementLineRow[]) {
     return sum + (toNumberOrNull(line.allocated_amount) ?? 0);
   }, 0);
 
-  const rowsMissingWork = lines.filter((line) => !line.work_id && !line.work_title).length;
-  const rowsMissingRelease = lines.filter((line) => !line.release_id && !line.release_title).length;
-  const rowsMissingParty = lines.filter((line) => !line.party_id && !line.party_name).length;
+  const rowsMissingWork = lines.filter(
+    (line) => !line.work_id && !line.work_title,
+  ).length;
+
+  const rowsMissingRelease = lines.filter(
+    (line) => !line.release_id && !line.release_title,
+  ).length;
+
+  const rowsMissingParty = lines.filter(
+    (line) => !line.party_id && !line.party_name,
+  ).length;
+
   const zeroAmountRows = lines.filter(
     (line) => (toNumberOrNull(line.allocated_amount) ?? 0) === 0,
   ).length;
 
   const currencies = uniqueNonEmpty(lines.map((line) => line.currency));
+
   const workCount = new Set(
     lines
       .map((line) => line.work_id ?? line.work_title ?? null)
       .filter(Boolean),
   ).size;
+
   const releaseCount = new Set(
     lines
       .map((line) => line.release_id ?? line.release_title ?? null)
       .filter(Boolean),
   ).size;
+
   const partyCount = new Set(
     lines
       .map((line) => line.party_id ?? line.party_name ?? null)
