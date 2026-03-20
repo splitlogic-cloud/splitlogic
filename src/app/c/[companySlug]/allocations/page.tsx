@@ -3,6 +3,7 @@ import "server-only";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { listAllocationRunsByCompany } from "@/features/allocations/allocations.repo";
 
 export const dynamic = "force-dynamic";
 
@@ -12,68 +13,54 @@ type PageProps = {
   }>;
 };
 
-type AllocationRunRow = {
+type ImportJobLookupRow = {
   id: string;
-  company_id: string;
-  import_id: string | null;
-  status: string | null;
-  total_input_rows: number | null;
-  eligible_rows: number | null;
-  allocated_rows: number | null;
-  skipped_unmatched_rows: number | null;
-  skipped_missing_splits_rows: number | null;
-  skipped_invalid_split_rows: number | null;
+  file_name: string | null;
   created_at: string | null;
 };
 
-type ImportJobRow = {
-  id: string;
-  file_name: string | null;
-};
+function formatMoney(value: number | null, currency: string | null) {
+  if (value == null) return "—";
 
-function formatDate(value: string | null): string {
+  try {
+    return new Intl.NumberFormat("sv-SE", {
+      style: "currency",
+      currency: currency || "SEK",
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${currency ?? ""}`.trim();
+  }
+}
+
+function formatDateTime(value: string | null) {
   if (!value) return "—";
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+
   return new Intl.DateTimeFormat("sv-SE", {
-    dateStyle: "medium",
-    timeStyle: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date);
 }
 
 function statusBadgeClass(status: string | null) {
-  if (status === "completed") {
-    return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
+  switch (status) {
+    case "completed":
+      return "border-green-200 bg-green-100 text-green-800";
+    case "processing":
+      return "border-blue-200 bg-blue-100 text-blue-800";
+    case "failed":
+      return "border-red-200 bg-red-100 text-red-800";
+    case "pending":
+      return "border-yellow-200 bg-yellow-100 text-yellow-800";
+    default:
+      return "border-neutral-200 bg-neutral-100 text-neutral-700";
   }
-  if (status === "running") {
-    return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
-  }
-  if (status === "failed") {
-    return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
-  }
-  return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
-}
-
-function StatCard({
-  title,
-  value,
-  hint,
-}: {
-  title: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-        {title}
-      </div>
-      <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-        {value}
-      </div>
-      {hint ? <div className="mt-1 text-sm text-slate-500">{hint}</div> : null}
-    </div>
-  );
 }
 
 export default async function AllocationsPage({ params }: PageProps) {
@@ -81,200 +68,231 @@ export default async function AllocationsPage({ params }: PageProps) {
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id, name, slug")
+    .select("id, slug, name")
     .eq("slug", companySlug)
     .maybeSingle();
 
   if (companyError) {
-    throw new Error(`load company failed: ${companyError.message}`);
+    throw new Error(`Failed to load company: ${companyError.message}`);
   }
 
   if (!company) {
     notFound();
   }
 
-  const { data: allocationRuns, error: allocationRunsError } = await supabaseAdmin
-    .from("allocation_runs")
-    .select(
-      `
-        id,
-        company_id,
-        import_id,
-        status,
-        total_input_rows,
-        eligible_rows,
-        allocated_rows,
-        skipped_unmatched_rows,
-        skipped_missing_splits_rows,
-        skipped_invalid_split_rows,
-        created_at
-      `
-    )
-    .eq("company_id", company.id)
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const runs = await listAllocationRunsByCompany(company.id);
 
-  if (allocationRunsError) {
-    throw new Error(`load allocation runs failed: ${allocationRunsError.message}`);
-  }
+  const importJobIds = [
+    ...new Set(
+      runs
+        .map((run) => run.import_job_id)
+        .filter((value): value is string => Boolean(value))
+    ),
+  ];
 
-  const typedRuns = (allocationRuns ?? []) as AllocationRunRow[];
-  const importIds = typedRuns
-    .map((run) => run.import_id)
-    .filter((value): value is string => Boolean(value));
+  let importsById = new Map<string, ImportJobLookupRow>();
 
-  const importsById = new Map<string, ImportJobRow>();
-
-  if (importIds.length > 0) {
+  if (importJobIds.length > 0) {
     const { data: importJobs, error: importJobsError } = await supabaseAdmin
       .from("import_jobs")
-      .select("id, file_name")
-      .in("id", importIds);
+      .select("id, file_name, created_at")
+      .eq("company_id", company.id)
+      .in("id", importJobIds);
 
     if (importJobsError) {
-      throw new Error(`load import jobs failed: ${importJobsError.message}`);
+      throw new Error(`Failed to load import jobs: ${importJobsError.message}`);
     }
 
-    for (const row of (importJobs ?? []) as ImportJobRow[]) {
-      importsById.set(row.id, row);
-    }
+    importsById = new Map(
+      (importJobs ?? []).map((job) => [
+        String(job.id),
+        {
+          id: String(job.id),
+          file_name: job.file_name ? String(job.file_name) : null,
+          created_at: job.created_at ? String(job.created_at) : null,
+        },
+      ])
+    );
   }
 
-  const totalRuns = typedRuns.length;
-  const completedRuns = typedRuns.filter((run) => run.status === "completed").length;
-  const runningRuns = typedRuns.filter((run) => run.status === "running").length;
-  const failedRuns = typedRuns.filter((run) => run.status === "failed").length;
+  const completedCount = runs.filter((run) => run.status === "completed").length;
+  const processingCount = runs.filter((run) => run.status === "processing").length;
+  const failedCount = runs.filter((run) => run.status === "failed").length;
 
   return (
-    <div className="space-y-8">
-      <div>
-        <div className="text-sm text-slate-500">Allocations</div>
-        <h1 className="mt-1 text-4xl font-semibold tracking-tight text-slate-950">
-          Allocation runs
-        </h1>
-        <div className="mt-2 text-sm text-slate-600">
-          {company.name ?? company.slug} · All allocation runs for this workspace
-        </div>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Total runs" value={totalRuns} />
-        <StatCard title="Completed" value={completedRuns} />
-        <StatCard title="Running" value={runningRuns} />
-        <StatCard title="Failed" value={failedRuns} />
-      </div>
-
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-              Recent runs
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Open a run to inspect QA and party totals.
-            </p>
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-sm text-neutral-500">
+            <Link href={`/c/${companySlug}/dashboard`} className="underline">
+              Dashboard
+            </Link>{" "}
+            / Allocations
           </div>
 
-          <Link
-            href={`/c/${companySlug}/imports`}
-            className="inline-flex items-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-          >
-            Go to imports
-          </Link>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+            Allocation runs
+          </h1>
+
+          <p className="mt-2 max-w-3xl text-sm text-neutral-600">
+            Review all allocation runs for this company, inspect their source
+            import jobs, and open detailed allocation output per run.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Total runs
+          </div>
+          <div className="mt-2 text-lg font-semibold">{runs.length}</div>
         </div>
 
-        <div className="overflow-x-auto rounded-2xl border border-slate-200">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-slate-500">
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Completed
+          </div>
+          <div className="mt-2 text-lg font-semibold">{completedCount}</div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Processing
+          </div>
+          <div className="mt-2 text-lg font-semibold">{processingCount}</div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Failed
+          </div>
+          <div className="mt-2 text-lg font-semibold">{failedCount}</div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border bg-white">
+        <div className="border-b px-4 py-3 text-sm font-medium">
+          Allocation run history
+        </div>
+
+        <table className="min-w-full divide-y divide-neutral-200 text-sm">
+          <thead className="bg-neutral-50">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Status
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Import job
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Engine
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Rows
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Allocated
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Unallocated
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Blockers
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Created
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Actions
+              </th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-neutral-100">
+            {runs.length === 0 ? (
               <tr>
-                <th className="px-4 py-3 font-medium">Created</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Import</th>
-                <th className="px-4 py-3 font-medium">Input rows</th>
-                <th className="px-4 py-3 font-medium">Eligible</th>
-                <th className="px-4 py-3 font-medium">Allocation rows</th>
-                <th className="px-4 py-3 font-medium">Skipped unmatched</th>
-                <th className="px-4 py-3 font-medium">Skipped bad/missing splits</th>
-                <th className="px-4 py-3 font-medium">Links</th>
+                <td colSpan={9} className="px-4 py-8 text-center text-neutral-500">
+                  No allocation runs found.
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {typedRuns.length > 0 ? (
-                typedRuns.map((run) => {
-                  const importJob = run.import_id ? importsById.get(run.import_id) : null;
+            ) : (
+              runs.map((run) => {
+                const importJob = run.import_job_id
+                  ? importsById.get(run.import_job_id)
+                  : null;
 
-                  return (
-                    <tr
-                      key={run.id}
-                      className="border-t border-slate-100 align-top text-slate-800"
-                    >
-                      <td className="px-4 py-3">{formatDate(run.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex rounded-full px-3 py-1.5 text-sm font-medium ${statusBadgeClass(
-                            run.status
-                          )}`}
-                        >
-                          {run.status ?? "unknown"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {run.import_id ? (
-                          <div className="space-y-1">
-                            <div className="font-medium text-slate-900">
-                              {importJob?.file_name ?? "Import file"}
-                            </div>
-                            <div className="text-xs text-slate-500">
-                              {run.import_id}
-                            </div>
+                return (
+                  <tr key={run.id}>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${statusBadgeClass(
+                          run.status
+                        )}`}
+                      >
+                        {run.status}
+                      </span>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {run.import_job_id ? (
+                        <div className="space-y-1">
+                          <div className="font-medium">
+                            {importJob?.file_name ?? run.import_job_id}
                           </div>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-4 py-3">{run.total_input_rows ?? 0}</td>
-                      <td className="px-4 py-3">{run.eligible_rows ?? 0}</td>
-                      <td className="px-4 py-3">{run.allocated_rows ?? 0}</td>
-                      <td className="px-4 py-3">
-                        {run.skipped_unmatched_rows ?? 0}
-                      </td>
-                      <td className="px-4 py-3">
-                        {(run.skipped_missing_splits_rows ?? 0) +
-                          (run.skipped_invalid_split_rows ?? 0)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Link
-                            href={`/c/${companySlug}/allocations/${run.id}`}
-                            className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                          >
-                            Open QA
-                          </Link>
-
-                          {run.import_id ? (
-                            <Link
-                              href={`/c/${companySlug}/imports/${run.import_id}`}
-                              className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                            >
-                              Open import
-                            </Link>
-                          ) : null}
+                          <div className="text-xs text-neutral-500">
+                            {run.import_job_id}
+                          </div>
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-slate-500" colSpan={9}>
-                    No allocation runs yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+
+                    <td className="px-4 py-3">{run.engine_version ?? "—"}</td>
+
+                    <td className="px-4 py-3">
+                      {run.allocated_row_count} / {run.input_row_count}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {formatMoney(run.allocated_amount, run.currency)}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {formatMoney(run.unallocated_amount, run.currency)}
+                    </td>
+
+                    <td className="px-4 py-3">{run.blocker_count}</td>
+
+                    <td className="px-4 py-3">{formatDateTime(run.created_at)}</td>
+
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Link
+                          href={`/c/${companySlug}/allocations/${run.id}`}
+                          className="underline"
+                        >
+                          Open
+                        </Link>
+
+                        {run.import_job_id ? (
+                          <Link
+                            href={`/c/${companySlug}/imports/${run.import_job_id}`}
+                            className="underline"
+                          >
+                            Import
+                          </Link>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
