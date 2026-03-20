@@ -4,99 +4,179 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { listAllocationBlockersForImport } from "@/features/allocations/allocations.repo";
 
 export type WorkSplitCoverageRow = {
-  workId: string;
-  workTitle: string;
-  workIsrc: string | null;
-  splitCount: number;
-  splitTotal: number;
-  status: "missing" | "invalid" | "valid";
-  blockedRows: number;
-};
-
-type WorkSplitStatusViewRow = {
   work_id: string;
-  company_id: string;
-  work_title: string;
-  isrc: string | null;
-  split_count: number | string | null;
-  split_total: number | string | null;
+  work_title: string | null;
+  split_count: number;
+  total_share_bps: number;
+  is_complete: boolean;
 };
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
+export type WorkSplitCoverageBlocker = {
+  id: string;
+  blocker_code: string;
+  severity: string;
+  message: string;
+  import_row_id: string | null;
+  created_at: string;
+};
+
+export type WorkSplitCoverageSummary = {
+  totalWorks: number;
+  worksWithAnySplits: number;
+  worksFullyCovered: number;
+  worksMissingSplits: number;
+  blockersCount: number;
+};
+
+type InternalCoverageResult = {
+  summary: WorkSplitCoverageSummary;
+  rows: WorkSplitCoverageRow[];
+  blockers: WorkSplitCoverageBlocker[];
+};
+
+function asString(value: unknown): string | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  return s.length > 0 ? s : null;
 }
 
-function round6(value: number): number {
-  return Math.round(value * 1_000_000) / 1_000_000;
+function asNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
-export async function listWorkSplitCoverage(params: {
+async function loadCoverageData(params: {
   companyId: string;
-  importId?: string | null;
-}): Promise<WorkSplitCoverageRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from("work_split_status_v")
-    .select("*")
+  importJobId?: string | null;
+  allocationRunId?: string | null;
+}): Promise<InternalCoverageResult> {
+  const { data: works, error: worksError } = await supabaseAdmin
+    .from("works")
+    .select("id, title")
     .eq("company_id", params.companyId)
-    .order("work_title", { ascending: true });
+    .order("title", { ascending: true });
 
-  if (error) {
-    throw new Error(`listWorkSplitCoverage failed: ${error.message}`);
+  if (worksError) {
+    throw new Error(`Failed to load works: ${worksError.message}`);
   }
 
-  const blockers = params.importId
-    ? await listAllocationBlockersForImport({
-        companyId: params.companyId,
-        importId: params.importId,
-      })
-    : [];
+  const workIds = (works ?? []).map((work) => String(work.id));
 
-  const blockedRowsByWork = new Map<string, number>();
-  for (const blocker of blockers) {
-    blockedRowsByWork.set(blocker.workId, blocker.blockedRows);
+  let splitRows:
+    | Array<{
+        work_id: string;
+        share_bps: number | null;
+      }>
+    | null = [];
+
+  if (workIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from("work_splits")
+      .select("work_id, share_bps")
+      .eq("company_id", params.companyId)
+      .in("work_id", workIds);
+
+    if (error) {
+      throw new Error(`Failed to load work splits: ${error.message}`);
+    }
+
+    splitRows = data;
   }
 
-  return ((data ?? []) as WorkSplitStatusViewRow[]).map((row) => {
-    const splitCount = toNumber(row.split_count);
-    const splitTotal = round6(toNumber(row.split_total));
+  const splitStats = new Map<
+    string,
+    {
+      split_count: number;
+      total_share_bps: number;
+    }
+  >();
 
-    let status: "missing" | "invalid" | "valid" = "valid";
-    if (splitCount === 0) status = "missing";
-    else if (splitTotal !== 100) status = "invalid";
+  for (const split of splitRows ?? []) {
+    const workId = String(split.work_id);
+    const current = splitStats.get(workId) ?? {
+      split_count: 0,
+      total_share_bps: 0,
+    };
+
+    current.split_count += 1;
+    current.total_share_bps += asNumber(split.share_bps);
+
+    splitStats.set(workId, current);
+  }
+
+  const rows: WorkSplitCoverageRow[] = (works ?? []).map((work) => {
+    const workId = String(work.id);
+    const stat = splitStats.get(workId) ?? {
+      split_count: 0,
+      total_share_bps: 0,
+    };
 
     return {
-      workId: row.work_id,
-      workTitle: row.work_title ?? "Untitled work",
-      workIsrc: row.isrc ?? null,
-      splitCount,
-      splitTotal,
-      status,
-      blockedRows: blockedRowsByWork.get(row.work_id) ?? 0,
+      work_id: workId,
+      work_title: asString(work.title),
+      split_count: stat.split_count,
+      total_share_bps: stat.total_share_bps,
+      is_complete: stat.split_count > 0 && stat.total_share_bps === 10000,
     };
   });
+
+  const worksWithAnySplits = rows.filter((row) => row.split_count > 0).length;
+  const worksFullyCovered = rows.filter((row) => row.is_complete).length;
+  const worksMissingSplits = rows.filter((row) => row.split_count === 0).length;
+
+  const rawBlockers = params.importJobId
+    ? await listAllocationBlockersForImport(
+        params.companyId,
+        params.importJobId,
+        params.allocationRunId ?? null
+      )
+    : [];
+
+  const blockers: WorkSplitCoverageBlocker[] = rawBlockers.map((blocker) => ({
+    id: blocker.id,
+    blocker_code: blocker.blocker_code,
+    severity: blocker.severity,
+    message: blocker.message,
+    import_row_id: blocker.import_row_id,
+    created_at: blocker.created_at,
+  }));
+
+  return {
+    summary: {
+      totalWorks: rows.length,
+      worksWithAnySplits,
+      worksFullyCovered,
+      worksMissingSplits,
+      blockersCount: blockers.length,
+    },
+    rows,
+    blockers,
+  };
 }
 
 export async function getWorkSplitCoverageSummary(params: {
   companyId: string;
-  importId?: string | null;
-}) {
-  const rows = await listWorkSplitCoverage(params);
+  importJobId?: string | null;
+  allocationRunId?: string | null;
+}): Promise<WorkSplitCoverageSummary> {
+  const result = await loadCoverageData(params);
+  return result.summary;
+}
 
-  const missing = rows.filter((r) => r.status === "missing").length;
-  const invalid = rows.filter((r) => r.status === "invalid").length;
-  const valid = rows.filter((r) => r.status === "valid").length;
-  const blockedRows = rows.reduce((sum, row) => sum + row.blockedRows, 0);
+export async function listWorkSplitCoverage(params: {
+  companyId: string;
+  importJobId?: string | null;
+  allocationRunId?: string | null;
+}): Promise<WorkSplitCoverageRow[]> {
+  const result = await loadCoverageData(params);
+  return result.rows;
+}
 
-  return {
-    totalWorks: rows.length,
-    missing,
-    invalid,
-    valid,
-    blockedRows,
-  };
+export async function listWorkSplitCoverageBlockers(params: {
+  companyId: string;
+  importJobId?: string | null;
+  allocationRunId?: string | null;
+}): Promise<WorkSplitCoverageBlocker[]> {
+  const result = await loadCoverageData(params);
+  return result.blockers;
 }

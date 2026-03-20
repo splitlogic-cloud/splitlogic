@@ -18,6 +18,41 @@ type Params = {
   }>;
 };
 
+type StatementLineViewModel = {
+  id: string;
+  line_label: string | null;
+  work_title: string | null;
+  row_count: number | null;
+  amount: number | null;
+  currency: string | null;
+};
+
+type StatementViewModel = {
+  id: string;
+  party_name: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  total_amount: number | null;
+  currency: string | null;
+  status: string | null;
+  generated_from: string | null;
+  created_at: string | null;
+  note: string | null;
+  lines: StatementLineViewModel[];
+};
+
+function asString(value: unknown): string | null {
+  if (value == null) return null;
+  const stringValue = String(value).trim();
+  return stringValue.length > 0 ? stringValue : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function formatMoney(amount: number | null, currency: string | null) {
   if (amount == null) return "—";
 
@@ -27,6 +62,23 @@ function formatMoney(amount: number | null, currency: string | null) {
   }).format(amount);
 
   return currency ? `${rounded} ${currency}` : rounded;
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("sv-SE", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function badgeClass(level: QaLevel) {
@@ -39,6 +91,61 @@ function badgeLabel(level: QaLevel) {
   if (level === "ok") return "OK";
   if (level === "warning") return "Needs review";
   return "Blocked";
+}
+
+function normalizeStatementLine(input: unknown): StatementLineViewModel {
+  const row = (input ?? {}) as Record<string, unknown>;
+
+  return {
+    id: asString(row.id) ?? cryptoRandomFallback(),
+    line_label:
+      asString(row.line_label) ??
+      asString(row.label) ??
+      asString(row.name) ??
+      null,
+    work_title:
+      asString(row.work_title) ??
+      asString(row.work_name) ??
+      asString(row.title) ??
+      null,
+    row_count:
+      asNumber(row.row_count) ??
+      asNumber(row.source_row_count) ??
+      asNumber(row.count) ??
+      0,
+    amount:
+      asNumber(row.amount) ??
+      asNumber(row.total_amount) ??
+      asNumber(row.payable_amount) ??
+      null,
+    currency: asString(row.currency),
+  };
+}
+
+function normalizeStatement(input: unknown): StatementViewModel {
+  const row = (input ?? {}) as Record<string, unknown>;
+  const rawLines = Array.isArray(row.lines) ? row.lines : [];
+
+  return {
+    id: asString(row.id) ?? "",
+    party_name: asString(row.party_name),
+    period_start: asString(row.period_start),
+    period_end: asString(row.period_end),
+    total_amount:
+      asNumber(row.total_amount) ??
+      asNumber(row.amount) ??
+      asNumber(row.payable_amount),
+    currency: asString(row.currency),
+    status: asString(row.status),
+    generated_from: asString(row.generated_from),
+    created_at: asString(row.created_at),
+    note: asString(row.note),
+    lines: rawLines.map(normalizeStatementLine),
+  };
+}
+
+function cryptoRandomFallback() {
+  return `line_${Math.random().toString(36).slice(2, 12)}`;
 }
 
 export default async function StatementDetailPage({ params }: Params) {
@@ -58,12 +165,13 @@ export default async function StatementDetailPage({ params }: Params) {
     notFound();
   }
 
-  const statement = await getStatementById(company.id, id);
+  const statementRaw = await getStatementById(company.id, id);
 
-  if (!statement) {
+  if (!statementRaw) {
     notFound();
   }
 
+  const statement = normalizeStatement(statementRaw);
   const qa = await getStatementQaDetail(company.id, id);
 
   return (
@@ -95,7 +203,7 @@ export default async function StatementDetailPage({ params }: Params) {
       </div>
 
       {qa ? (
-        <div className="rounded-2xl border bg-white p-6 space-y-4">
+        <div className="space-y-4 rounded-2xl border bg-white p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold">QA Summary</h2>
@@ -103,61 +211,81 @@ export default async function StatementDetailPage({ params }: Params) {
                 Validation of totals, linked ledger rows and basic anomalies.
               </p>
             </div>
-            <div className={`rounded-full border px-3 py-1 text-sm font-medium ${badgeClass(qa.level)}`}>
+            <div
+              className={`rounded-full border px-3 py-1 text-sm font-medium ${badgeClass(
+                qa.level
+              )}`}
+            >
               {badgeLabel(qa.level)}
             </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-4">
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Statement total</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Statement total
+              </div>
               <div className="mt-2 text-lg font-semibold">
                 {formatMoney(qa.statementTotal, statement.currency)}
               </div>
             </div>
 
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Ledger total</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Ledger total
+              </div>
               <div className="mt-2 text-lg font-semibold">
                 {formatMoney(qa.ledgerTotal, statement.currency)}
               </div>
             </div>
 
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Lines total</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Lines total
+              </div>
               <div className="mt-2 text-lg font-semibold">
                 {formatMoney(qa.lineTotal, statement.currency)}
               </div>
             </div>
 
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Linked source rows</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Linked source rows
+              </div>
               <div className="mt-2 text-lg font-semibold">{qa.sourceRowCount}</div>
             </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-4">
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Diff vs ledger</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Diff vs ledger
+              </div>
               <div className="mt-2 text-lg font-semibold">
                 {formatMoney(qa.diffVsLedger, statement.currency)}
               </div>
             </div>
 
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Diff vs lines</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Diff vs lines
+              </div>
               <div className="mt-2 text-lg font-semibold">
                 {formatMoney(qa.diffVsLines, statement.currency)}
               </div>
             </div>
 
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Missing work rows</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Missing work rows
+              </div>
               <div className="mt-2 text-lg font-semibold">{qa.rowsMissingWork}</div>
             </div>
 
             <div className="rounded-xl border p-4">
-              <div className="text-xs uppercase tracking-wide text-neutral-500">Currencies</div>
+              <div className="text-xs uppercase tracking-wide text-neutral-500">
+                Currencies
+              </div>
               <div className="mt-2 text-lg font-semibold">
                 {qa.currencies.length > 0 ? qa.currencies.join(", ") : "—"}
               </div>
@@ -167,7 +295,9 @@ export default async function StatementDetailPage({ params }: Params) {
           <div className="rounded-xl border p-4">
             <div className="text-sm font-medium">Issues</div>
             {qa.issues.length === 0 ? (
-              <div className="mt-2 text-sm text-neutral-600">No obvious issues detected.</div>
+              <div className="mt-2 text-sm text-neutral-600">
+                No obvious issues detected.
+              </div>
             ) : (
               <ul className="mt-2 space-y-2 text-sm text-neutral-700">
                 {qa.issues.map((issue) => (
@@ -181,23 +311,39 @@ export default async function StatementDetailPage({ params }: Params) {
 
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Status</div>
-          <div className="mt-2 text-lg font-semibold">{statement.status ?? "—"}</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Status
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.status ?? "—"}
+          </div>
         </div>
 
         <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Source</div>
-          <div className="mt-2 text-lg font-semibold">{statement.generated_from ?? "—"}</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Source
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.generated_from ?? "—"}
+          </div>
         </div>
 
         <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Currency</div>
-          <div className="mt-2 text-lg font-semibold">{statement.currency ?? "Mixed / none"}</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Currency
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {statement.currency ?? "Mixed / none"}
+          </div>
         </div>
 
         <div className="rounded-xl border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Created</div>
-          <div className="mt-2 text-lg font-semibold">{statement.created_at ?? "—"}</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Created
+          </div>
+          <div className="mt-2 text-lg font-semibold">
+            {formatDateTime(statement.created_at)}
+          </div>
         </div>
       </div>
 
@@ -209,14 +355,24 @@ export default async function StatementDetailPage({ params }: Params) {
       ) : null}
 
       <div className="overflow-hidden rounded-2xl border bg-white">
-        <div className="border-b px-4 py-3 text-sm font-medium">Statement lines</div>
+        <div className="border-b px-4 py-3 text-sm font-medium">
+          Statement lines
+        </div>
         <table className="min-w-full divide-y divide-neutral-200 text-sm">
           <thead className="bg-neutral-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">Line</th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">Work</th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">Row count</th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">Amount</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Line
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Work
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Row count
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                Amount
+              </th>
             </tr>
           </thead>
 
@@ -230,11 +386,11 @@ export default async function StatementDetailPage({ params }: Params) {
             ) : (
               statement.lines.map((line) => (
                 <tr key={line.id}>
-                  <td className="px-4 py-3">{line.line_label}</td>
+                  <td className="px-4 py-3">{line.line_label ?? "—"}</td>
                   <td className="px-4 py-3">{line.work_title ?? "—"}</td>
                   <td className="px-4 py-3">{line.row_count ?? 0}</td>
                   <td className="px-4 py-3">
-                    {formatMoney(line.amount, line.currency)}
+                    {formatMoney(line.amount, line.currency ?? statement.currency)}
                   </td>
                 </tr>
               ))
@@ -251,11 +407,21 @@ export default async function StatementDetailPage({ params }: Params) {
           <table className="min-w-full divide-y divide-neutral-200 text-sm">
             <thead className="bg-neutral-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-neutral-600">Date</th>
-                <th className="px-4 py-3 text-left font-medium text-neutral-600">Allocation row</th>
-                <th className="px-4 py-3 text-left font-medium text-neutral-600">Work</th>
-                <th className="px-4 py-3 text-left font-medium text-neutral-600">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-neutral-600">Currency</th>
+                <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                  Date
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                  Allocation row
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                  Work
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                  Amount
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-neutral-600">
+                  Currency
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
@@ -269,7 +435,9 @@ export default async function StatementDetailPage({ params }: Params) {
                 qa.previewRows.map((row) => (
                   <tr key={row.allocationRowId}>
                     <td className="px-4 py-3">{row.earningDate ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{row.allocationRowId}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      {row.allocationRowId}
+                    </td>
                     <td className="px-4 py-3">{row.workId ?? "—"}</td>
                     <td className="px-4 py-3">
                       {formatMoney(row.allocatedAmount, row.currency)}

@@ -1,383 +1,178 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createAuditEvent } from "@/features/audit/audit.repo";
 
-type GenerateStatementsInput = {
+export type GenerateStatementsParams = {
   companyId: string;
   periodStart: string;
   periodEnd: string;
-  note?: string | null;
+  createdBy?: string | null;
+};
+
+export type GeneratedStatementResult = {
+  statementIds: string[];
+  count: number;
 };
 
 type AllocationLedgerRow = {
   id: string;
   company_id: string;
-  party_id: string | null;
+  party_id: string;
   work_id: string | null;
-  allocated_amount: number | string | null;
-  currency: string | null;
   earning_date: string | null;
-  period_start: string | null;
-  period_end: string | null;
-};
-
-type PartyRecord = {
-  id: string;
-  name: string | null;
-};
-
-type WorkRecord = {
-  id: string;
-  title: string | null;
-};
-
-export type GeneratedStatementResult = {
-  statementId: string;
-  partyId: string;
-  partyName: string;
-  totalAmount: number;
+  amount: number;
   currency: string | null;
-  lineCount: number;
-  sourceRowCount: number;
 };
 
-function asNumber(value: number | string | null | undefined): number {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-
-  if (typeof value === "string") {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
-  }
-
-  return 0;
+function asString(v: unknown): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
 }
 
-function assertIsoDate(value: string, label: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new Error(`${label} must be YYYY-MM-DD`);
-  }
+function asNumber(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function getStatementCurrency(rows: AllocationLedgerRow[]): string | null {
-  const set = new Set(
-    rows.map((row) => (row.currency ?? "").trim()).filter(Boolean),
-  );
-
-  if (set.size === 0) return null;
-  if (set.size === 1) return Array.from(set)[0] ?? null;
-
-  return null;
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
 }
 
-export async function generateStatementsFromLedger(
-  input: GenerateStatementsInput,
-): Promise<GeneratedStatementResult[]> {
-  const { companyId, periodStart, periodEnd, note } = input;
+function normalizeRow(raw: any): AllocationLedgerRow | null {
+  const id = asString(raw.id);
+  const companyId = asString(raw.company_id);
+  const partyId = asString(raw.party_id);
+  const amount = asNumber(raw.allocated_amount);
 
-  if (!companyId) {
-    throw new Error("Missing companyId");
-  }
+  if (!id || !companyId || !partyId || amount == null) return null;
 
-  assertIsoDate(periodStart, "periodStart");
-  assertIsoDate(periodEnd, "periodEnd");
+  return {
+    id,
+    company_id: companyId,
+    party_id: partyId,
+    work_id: asString(raw.work_id),
+    earning_date: asString(raw.earning_date),
+    amount,
+    currency: asString(raw.currency),
+  };
+}
 
-  if (periodStart > periodEnd) {
-    throw new Error("periodStart cannot be after periodEnd");
-  }
+async function loadLedger(params: GenerateStatementsParams) {
+  const { data, error } = await supabaseAdmin
+    .from("allocation_run_lines")
+    .select("id, company_id, party_id, work_id, earning_date, allocated_amount, currency")
+    .eq("company_id", params.companyId)
+    .gte("earning_date", params.periodStart)
+    .lte("earning_date", params.periodEnd);
 
-  const { data: ledgerRows, error: ledgerError } = await supabaseAdmin
-    .from("allocation_rows")
-    .select(
-      [
-        "id",
-        "company_id",
-        "party_id",
-        "work_id",
-        "allocated_amount",
-        "currency",
-        "earning_date",
-        "period_start",
-        "period_end",
-      ].join(","),
-    )
-    .eq("company_id", companyId)
-    .not("party_id", "is", null)
-    .gte("earning_date", periodStart)
-    .lte("earning_date", periodEnd);
+  if (error) throw new Error(error.message);
 
-  if (ledgerError) {
-    throw new Error(`Failed to load allocation_rows: ${ledgerError.message}`);
-  }
+  return (data ?? [])
+    .map(normalizeRow)
+    .filter((r): r is AllocationLedgerRow => r !== null);
+}
 
-  const usableRows = (ledgerRows ?? []).filter(
-    (row): row is AllocationLedgerRow =>
-      !!row &&
-      !!row.id &&
-      !!row.company_id &&
-      !!row.party_id &&
-      asNumber(row.allocated_amount) !== 0,
+export async function generateStatements(
+  params: GenerateStatementsParams
+): Promise<GeneratedStatementResult> {
+  const rows = await loadLedger(params);
+
+  const usable = rows.filter(
+    (r) => r.party_id && r.amount !== 0
   );
 
-  if (usableRows.length === 0) {
-    return [];
+  if (!usable.length) {
+    return { statementIds: [], count: 0 };
   }
 
-  const partyIds = Array.from(
-    new Set(usableRows.map((row) => row.party_id).filter(Boolean) as string[]),
-  );
+  const byParty = new Map<string, AllocationLedgerRow[]>();
 
-  const workIds = Array.from(
-    new Set(usableRows.map((row) => row.work_id).filter(Boolean) as string[]),
-  );
-
-  const { data: parties, error: partiesError } = await supabaseAdmin
-    .from("parties")
-    .select("id,name")
-    .in("id", partyIds);
-
-  if (partiesError) {
-    throw new Error(`Failed to load parties: ${partiesError.message}`);
+  for (const row of usable) {
+    const list = byParty.get(row.party_id) ?? [];
+    list.push(row);
+    byParty.set(row.party_id, list);
   }
 
-  let works: WorkRecord[] = [];
-  if (workIds.length > 0) {
-    const { data: worksData, error: worksError } = await supabaseAdmin
-      .from("works")
-      .select("id,title")
-      .in("id", workIds);
+  const statementIds: string[] = [];
 
-    if (worksError) {
-      throw new Error(`Failed to load works: ${worksError.message}`);
-    }
-
-    works = (worksData ?? []) as WorkRecord[];
-  }
-
-  const partyMap = new Map<string, PartyRecord>(
-    ((parties ?? []) as PartyRecord[]).map((party) => [party.id, party]),
-  );
-
-  const workMap = new Map<string, WorkRecord>(
-    works.map((work) => [work.id, work]),
-  );
-
-  const rowsByParty = new Map<string, AllocationLedgerRow[]>();
-
-  for (const row of usableRows) {
-    const partyId = row.party_id!;
-    const bucket = rowsByParty.get(partyId) ?? [];
-    bucket.push(row);
-    rowsByParty.set(partyId, bucket);
-  }
-
-  const results: GeneratedStatementResult[] = [];
-
-  for (const [partyId, partyRows] of rowsByParty.entries()) {
-    const party = partyMap.get(partyId);
-    const partyName = party?.name?.trim() || "Unknown party";
-    const currency = getStatementCurrency(partyRows);
-
-    const totalAmount = partyRows.reduce(
-      (sum, row) => sum + asNumber(row.allocated_amount),
-      0,
+  for (const [partyId, partyRows] of byParty.entries()) {
+    const total = round2(
+      partyRows.reduce((sum, r) => sum + r.amount, 0)
     );
 
-    const { data: existingDraft, error: existingDraftError } = await supabaseAdmin
+    const { data: statement, error } = await supabaseAdmin
       .from("statements")
+      .insert({
+        company_id: params.companyId,
+        party_id: partyId,
+        period_start: params.periodStart,
+        period_end: params.periodEnd,
+        status: "draft",
+        total_amount: total,
+        currency: partyRows[0].currency ?? null,
+        generated_from: "allocation",
+        created_by: params.createdBy ?? null,
+      })
       .select("id")
-      .eq("company_id", companyId)
-      .eq("party_id", partyId)
-      .eq("period_start", periodStart)
-      .eq("period_end", periodEnd)
-      .eq("status", "draft")
-      .maybeSingle();
+      .single();
 
-    if (existingDraftError) {
-      throw new Error(
-        `Failed to check existing draft statements: ${existingDraftError.message}`,
-      );
+    if (error) throw new Error(error.message);
+
+    const statementId = statement.id;
+    statementIds.push(statementId);
+
+    // Ledger rows
+    await supabaseAdmin.from("statement_ledger").insert(
+      partyRows.map((r) => ({
+        statement_id: statementId,
+        allocation_row_id: r.id,
+        work_id: r.work_id,
+        earning_date: r.earning_date,
+        amount: r.amount,
+        currency: r.currency,
+      }))
+    );
+
+    // Line aggregation (per work)
+    const byWork = new Map<string, AllocationLedgerRow[]>();
+
+    for (const r of partyRows) {
+      const key = r.work_id ?? "unknown";
+      const list = byWork.get(key) ?? [];
+      list.push(r);
+      byWork.set(key, list);
     }
 
-    if (existingDraft?.id) {
-      const { error: deleteBridgeError } = await supabaseAdmin
-        .from("statement_allocation_rows")
-        .delete()
-        .eq("statement_id", existingDraft.id);
-
-      if (deleteBridgeError) {
-        throw new Error(
-          `Failed to delete old statement allocation rows: ${deleteBridgeError.message}`,
-        );
-      }
-
-      const { error: deleteLinesError } = await supabaseAdmin
-        .from("statement_lines")
-        .delete()
-        .eq("statement_id", existingDraft.id);
-
-      if (deleteLinesError) {
-        throw new Error(
-          `Failed to delete old statement lines: ${deleteLinesError.message}`,
-        );
-      }
-
-      const { error: deleteStatementError } = await supabaseAdmin
-        .from("statements")
-        .delete()
-        .eq("id", existingDraft.id);
-
-      if (deleteStatementError) {
-        throw new Error(
-          `Failed to delete old statement draft: ${deleteStatementError.message}`,
-        );
-      }
-    }
-
-    const { data: insertedStatement, error: insertStatementError } =
-      await supabaseAdmin
-        .from("statements")
-        .insert({
-          company_id: companyId,
-          party_id: partyId,
-          period_start: periodStart,
-          period_end: periodEnd,
-          status: "draft",
-          note: note ?? null,
-          total_amount: totalAmount,
-          currency,
-          generated_from: "period",
-        })
-        .select("id")
-        .single();
-
-    if (insertStatementError || !insertedStatement) {
-      throw new Error(
-        `Failed to create statement for ${partyName}: ${insertStatementError?.message ?? "Unknown error"}`,
-      );
-    }
-
-    const statementId = insertedStatement.id as string;
-
-    const rowsByWork = new Map<string, AllocationLedgerRow[]>();
-    const noWorkRows: AllocationLedgerRow[] = [];
-
-    for (const row of partyRows) {
-      if (row.work_id) {
-        const bucket = rowsByWork.get(row.work_id) ?? [];
-        bucket.push(row);
-        rowsByWork.set(row.work_id, bucket);
-      } else {
-        noWorkRows.push(row);
-      }
-    }
-
-    const statementLineIdByAllocationRowId = new Map<string, string>();
-    let lineCount = 0;
-
-    for (const [workId, workRows] of rowsByWork.entries()) {
-      const work = workMap.get(workId);
-      const lineLabel = work?.title?.trim() || `Work ${workId.slice(0, 8)}`;
-      const amount = workRows.reduce(
-        (sum, row) => sum + asNumber(row.allocated_amount),
-        0,
-      );
-
-      const lineCurrency = getStatementCurrency(workRows);
-
-      const { data: insertedLine, error: insertLineError } = await supabaseAdmin
-        .from("statement_lines")
-        .insert({
-          statement_id: statementId,
-          company_id: companyId,
-          party_id: partyId,
-          work_id: workId,
-          line_label: lineLabel,
-          amount,
-          currency: lineCurrency,
-          row_count: workRows.length,
-        })
-        .select("id")
-        .single();
-
-      if (insertLineError || !insertedLine) {
-        throw new Error(
-          `Failed to create statement line for ${partyName}: ${insertLineError?.message ?? "Unknown error"}`,
-        );
-      }
-
-      lineCount += 1;
-
-      for (const row of workRows) {
-        statementLineIdByAllocationRowId.set(row.id, insertedLine.id as string);
-      }
-    }
-
-    if (noWorkRows.length > 0) {
-      const amount = noWorkRows.reduce(
-        (sum, row) => sum + asNumber(row.allocated_amount),
-        0,
-      );
-
-      const lineCurrency = getStatementCurrency(noWorkRows);
-
-      const { data: insertedLine, error: insertLineError } = await supabaseAdmin
-        .from("statement_lines")
-        .insert({
-          statement_id: statementId,
-          company_id: companyId,
-          party_id: partyId,
-          work_id: null,
-          line_label: "Unassigned / unmatched work",
-          amount,
-          currency: lineCurrency,
-          row_count: noWorkRows.length,
-        })
-        .select("id")
-        .single();
-
-      if (insertLineError || !insertedLine) {
-        throw new Error(
-          `Failed to create unmatched statement line for ${partyName}: ${insertLineError?.message ?? "Unknown error"}`,
-        );
-      }
-
-      lineCount += 1;
-
-      for (const row of noWorkRows) {
-        statementLineIdByAllocationRowId.set(row.id, insertedLine.id as string);
-      }
-    }
-
-    const bridgeRows = partyRows.map((row) => ({
-      statement_id: statementId,
-      statement_line_id: statementLineIdByAllocationRowId.get(row.id) ?? null,
-      allocation_row_id: row.id,
-      company_id: companyId,
-      party_id: partyId,
-    }));
-
-    const { error: bridgeError } = await supabaseAdmin
-      .from("statement_allocation_rows")
-      .insert(bridgeRows);
-
-    if (bridgeError) {
-      throw new Error(
-        `Failed to link allocation rows to statement for ${partyName}: ${bridgeError.message}`,
-      );
-    }
-
-    results.push({
-      statementId,
-      partyId,
-      partyName,
-      totalAmount,
-      currency,
-      lineCount,
-      sourceRowCount: partyRows.length,
-    });
+    await supabaseAdmin.from("statement_lines").insert(
+      Array.from(byWork.entries()).map(([workId, rows]) => ({
+        statement_id: statementId,
+        line_label: workId === "unknown" ? "Unknown work" : workId,
+        work_title: workId,
+        row_count: rows.length,
+        amount: round2(rows.reduce((s, r) => s + r.amount, 0)),
+        currency: rows[0].currency ?? null,
+      }))
+    );
   }
 
-  return results.sort((a, b) => a.partyName.localeCompare(b.partyName));
+  await createAuditEvent({
+    companyId: params.companyId,
+    entityType: "statement_batch",
+    entityId: "generate",
+    action: "statements.generated",
+    payload: {
+      count: statementIds.length,
+      period_start: params.periodStart,
+      period_end: params.periodEnd,
+    },
+    createdBy: params.createdBy ?? null,
+  });
+
+  return {
+    statementIds,
+    count: statementIds.length,
+  };
 }

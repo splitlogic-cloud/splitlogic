@@ -1,141 +1,114 @@
-import JSZip from "jszip";
+import "server-only";
+
+import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import {
-  listStatementsByCompany,
-  getStatementHeader,
-  listStatementLines,
-} from "@/features/statements/statements.repo";
-import { buildStatementPdf } from "@/features/statements/pdf";
-import { createAuditEvent } from "@/features/audit/audit.repo";
+import { listStatementsByCompany } from "@/features/statements/statements.repo";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+type RouteContext = {
+  params: Promise<{
+    companySlug: string;
+  }>;
+};
 
-function csvEscape(value: unknown): string {
-  const str = value == null ? "" : String(value);
-  if (/[",\n]/.test(str)) {
-    return `"${str.replace(/"/g, '""')}"`;
+function asCsvValue(value: unknown): string {
+  if (value == null) return "";
+  const text = String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
   }
-  return str;
+  return text;
 }
 
-function buildCsv(rows: string[][]): string {
-  return rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-}
-
-export async function GET(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-  const companySlug = url.searchParams.get("companySlug") ?? "";
-  const status = url.searchParams.get("status") ?? "";
-
-  if (!companySlug) {
-    return new Response("Missing companySlug", { status: 400 });
-  }
-
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, name, slug")
-    .eq("slug", companySlug)
-    .maybeSingle();
-
-  if (companyError || !company) {
-    return new Response("Company not found", { status: 404 });
-  }
-
-  let statements = await listStatementsByCompany(company.id, 500);
-
-  if (status) {
-    statements = statements.filter((s) => s.status === status);
-  }
-
-  const zip = new JSZip();
-
-  for (const statement of statements) {
-    const header = await getStatementHeader(company.id, statement.id);
-    if (!header) continue;
-
-    const lines = await listStatementLines(company.id, statement.id);
-
-    const csvRows: string[][] = [
+function buildCsv(rows: Array<Record<string, unknown>>): string {
+  if (rows.length === 0) {
+    return [
       [
         "statement_id",
         "party_name",
-        "status",
         "period_start",
         "period_end",
+        "status",
         "currency",
         "total_amount",
-        "work_title",
-        "source_amount",
-        "share_percent",
-        "allocated_amount",
-      ],
-      ...lines.map((line) => [
-        header.id,
-        header.party_name ?? "",
-        header.status ?? "",
-        header.period_start ?? "",
-        header.period_end ?? "",
-        header.currency ?? "",
-        String(header.total_amount ?? 0),
-        line.work_title ?? "",
-        String(line.source_amount ?? 0),
-        String(line.share_percent ?? 0),
-        String(line.allocated_amount ?? 0),
-      ]),
-    ];
-
-    const csv = buildCsv(csvRows);
-
-    const pdfBytes = await buildStatementPdf({
-      header: {
-        statementId: header.id,
-        companyName: company.name ?? company.slug ?? "Company",
-        partyName: header.party_name ?? "Unnamed party",
-        periodStart: header.period_start ?? "",
-        periodEnd: header.period_end ?? "",
-        currency: header.currency ?? "",
-        totalAmount: Number(header.total_amount ?? 0),
-        status: header.status ?? "",
-        createdAt: header.created_at ?? new Date().toISOString(),
-      },
-      lines: lines.map((line) => ({
-        workTitle: line.work_title ?? "",
-        sourceAmount: Number(line.source_amount ?? 0),
-        sharePercent: Number(line.share_percent ?? 0),
-        allocatedAmount: Number(line.allocated_amount ?? 0),
-        currency: line.currency ?? header.currency ?? "",
-      })),
-    });
-
-    const base = `statement-${statement.id}`;
-    zip.file(`${base}.csv`, csv);
-    zip.file(`${base}.pdf`, pdfBytes);
+        "created_at",
+      ].join(","),
+    ].join("\n");
   }
 
-  const content = await zip.generateAsync({ type: "uint8array" });
+  const headers = [
+    "statement_id",
+    "party_name",
+    "period_start",
+    "period_end",
+    "status",
+    "currency",
+    "total_amount",
+    "created_at",
+  ];
 
-  await createAuditEvent({
-    companyId: company.id,
-    entityType: "statement_batch",
-    entityId: "batch-export",
-    action: "statement.batch_export.zip",
-    payload: {
-      statementCount: statements.length,
-      statusFilter: status || null,
-    },
-  });
+  const lines = [
+    headers.join(","),
+    ...rows.map((row) =>
+      headers.map((header) => asCsvValue(row[header])).join(",")
+    ),
+  ];
 
-  const zipBuffer = content.buffer.slice(
-    content.byteOffset,
-    content.byteOffset + content.byteLength
-  ) as ArrayBuffer;
+  return lines.join("\n");
+}
 
-  return new Response(zipBuffer, {
+export async function GET(request: Request, context: RouteContext) {
+  const { companySlug } = await context.params;
+  const { searchParams } = new URL(request.url);
+
+  const status = searchParams.get("status");
+  const limitParam = searchParams.get("limit");
+  const limit =
+    limitParam && Number.isFinite(Number(limitParam))
+      ? Math.max(1, Math.min(5000, Number(limitParam)))
+      : 500;
+
+  const { data: company, error: companyError } = await supabaseAdmin
+    .from("companies")
+    .select("id, slug, name")
+    .eq("slug", companySlug)
+    .maybeSingle();
+
+  if (companyError) {
+    throw new Error(`Failed to load company: ${companyError.message}`);
+  }
+
+  if (!company) {
+    return new NextResponse("Company not found", { status: 404 });
+  }
+
+  let statements = await listStatementsByCompany(company.id);
+
+  if (status) {
+    statements = statements.filter((statement) => statement.status === status);
+  }
+
+  statements = statements.slice(0, limit);
+
+  const csvRows = statements.map((statement) => ({
+    statement_id: statement.id,
+    party_name: statement.party_name ?? "",
+    period_start: statement.period_start ?? "",
+    period_end: statement.period_end ?? "",
+    status: statement.status ?? "",
+    currency: statement.currency ?? "",
+    total_amount: statement.total_amount ?? "",
+    created_at: statement.created_at ?? "",
+  }));
+
+  const csv = buildCsv(csvRows);
+  const filename = `statements-${companySlug}.csv`;
+
+  return new NextResponse(csv, {
     status: 200,
     headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": 'attachment; filename="statements-batch-export.zip"',
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store",
     },
   });
 }

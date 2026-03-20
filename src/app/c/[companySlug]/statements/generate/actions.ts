@@ -1,43 +1,42 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { generateStatementsFromLedger } from "@/features/statements/generate-statements";
+import { generateStatements } from "@/features/statements/generate-statements";
 
 export async function generateStatementsAction(formData: FormData) {
-  const companySlug = String(formData.get("companySlug") ?? "");
-  const periodStart = String(formData.get("periodStart") ?? "");
-  const periodEnd = String(formData.get("periodEnd") ?? "");
-  const note = String(formData.get("note") ?? "");
+  const companySlug = String(formData.get("companySlug") ?? "").trim();
+  const periodStart = String(formData.get("periodStart") ?? "").trim();
+  const periodEnd = String(formData.get("periodEnd") ?? "").trim();
 
   if (!companySlug) {
-    throw new Error("Missing companySlug");
+    throw new Error("Missing companySlug.");
   }
 
   if (!periodStart || !periodEnd) {
-    throw new Error("Missing periodStart or periodEnd");
+    throw new Error("Missing periodStart or periodEnd.");
   }
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
-    .select("id,slug,name")
+    .select("id, slug")
     .eq("slug", companySlug)
     .maybeSingle();
 
-  if (companyError || !company) {
-    throw new Error("Company not found");
+  if (companyError) {
+    throw new Error(`Failed to load company: ${companyError.message}`);
   }
 
-  await generateStatementsFromLedger({
+  if (!company) {
+    throw new Error("Company not found.");
+  }
+
+  await generateStatements({
     companyId: company.id,
     periodStart,
     periodEnd,
-    note: note || null,
+    createdBy: null,
   });
-
-  revalidatePath(`/c/${companySlug}/statements`);
-  revalidatePath(`/c/${companySlug}/statements/generate`);
 
   redirect(`/c/${companySlug}/statements`);
 }

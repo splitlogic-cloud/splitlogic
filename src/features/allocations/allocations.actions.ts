@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createAuditEvent } from "@/features/audit/audit.repo";
 import { getCompanyBySlug } from "./allocations.repo";
 import { runAllocationForImportJob } from "./allocations.service";
@@ -15,6 +14,7 @@ export async function runAllocationAction(formData: FormData) {
   }
 
   const company = await getCompanyBySlug(companySlug);
+
   if (!company) {
     throw new Error("Company not found.");
   }
@@ -26,10 +26,10 @@ export async function runAllocationAction(formData: FormData) {
   });
 
   await createAuditEvent({
-    company_id: company.id,
-    event_type: "allocation.run.completed",
-    entity_type: "import_job",
-    entity_id: importJobId,
+    companyId: company.id,
+    entityType: "import_job",
+    entityId: importJobId,
+    action: "allocation.run.completed",
     payload: {
       allocation_run_id: result.runId,
       input_row_count: result.inputRowCount,
@@ -41,6 +41,7 @@ export async function runAllocationAction(formData: FormData) {
       currency: result.currency,
       engine_version: "v2",
     },
+    createdBy: null,
   });
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
