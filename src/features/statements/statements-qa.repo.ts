@@ -30,6 +30,7 @@ export type StatementQaDetail = {
   statementTotal: number;
   ledgerTotal: number;
   lineTotal: number;
+  sourceRowCount: number;
   totals: {
     line_count: number;
     total_amount: number;
@@ -132,6 +133,7 @@ export async function getStatementQaDetail(
       statementTotal: 0,
       ledgerTotal: 0,
       lineTotal: 0,
+      sourceRowCount: 0,
       totals: {
         line_count: 0,
         total_amount: 0,
@@ -158,6 +160,7 @@ export async function getStatementQaDetail(
   const statementTotal = totals.total_amount;
   const ledgerTotal = totals.total_amount;
   const lineTotal = totals.total_amount;
+  const sourceRowCount = statement.lines.length;
 
   const hasError = !statement.party_id || !statement.lines.length;
   const hasWarning = !hasError && totals.total_amount === 0;
@@ -168,6 +171,7 @@ export async function getStatementQaDetail(
     statementTotal,
     ledgerTotal,
     lineTotal,
+    sourceRowCount,
     totals,
   };
 }
