@@ -32,6 +32,11 @@ export type StatementQaDetail = {
   lineTotal: number;
   sourceRowCount: number;
   diffVsLedger: number;
+  diffVsLines: number;
+  rowsMissingWork: number;
+  rowsMissingRelease: number;
+  rowsMissingParty: number;
+  zeroAmountRows: number;
   totals: {
     line_count: number;
     total_amount: number;
@@ -61,9 +66,20 @@ function summarizeStatementLines(lines: StatementLineRow[]) {
     return sum + (toNumberOrNull(line.allocated_amount) ?? 0);
   }, 0);
 
+  const rowsMissingWork = lines.filter((line) => !line.work_id && !line.work_title).length;
+  const rowsMissingRelease = lines.filter((line) => !line.release_id && !line.release_title).length;
+  const rowsMissingParty = lines.filter((line) => !line.party_id && !line.party_name).length;
+  const zeroAmountRows = lines.filter(
+    (line) => (toNumberOrNull(line.allocated_amount) ?? 0) === 0,
+  ).length;
+
   return {
     line_count: lines.length,
     total_amount: totalAmount,
+    rowsMissingWork,
+    rowsMissingRelease,
+    rowsMissingParty,
+    zeroAmountRows,
   };
 }
 
@@ -136,6 +152,11 @@ export async function getStatementQaDetail(
       lineTotal: 0,
       sourceRowCount: 0,
       diffVsLedger: 0,
+      diffVsLines: 0,
+      rowsMissingWork: 0,
+      rowsMissingRelease: 0,
+      rowsMissingParty: 0,
+      zeroAmountRows: 0,
       totals: {
         line_count: 0,
         total_amount: 0,
@@ -143,6 +164,7 @@ export async function getStatementQaDetail(
     };
   }
 
+  const totals = summarizeStatementLines(statement.lines);
   const issues: string[] = [];
 
   if (!statement.party_id) {
@@ -153,10 +175,20 @@ export async function getStatementQaDetail(
     issues.push("Statement har inga rader");
   }
 
-  const totals = summarizeStatementLines(statement.lines);
-
   if (totals.total_amount === 0) {
     issues.push("Statement total är 0");
+  }
+
+  if (totals.rowsMissingWork > 0) {
+    issues.push(`${totals.rowsMissingWork} rad(er) saknar work`);
+  }
+
+  if (totals.rowsMissingRelease > 0) {
+    issues.push(`${totals.rowsMissingRelease} rad(er) saknar release`);
+  }
+
+  if (totals.rowsMissingParty > 0) {
+    issues.push(`${totals.rowsMissingParty} rad(er) saknar party`);
   }
 
   const statementTotal = totals.total_amount;
@@ -164,9 +196,18 @@ export async function getStatementQaDetail(
   const lineTotal = totals.total_amount;
   const sourceRowCount = statement.lines.length;
   const diffVsLedger = statementTotal - ledgerTotal;
+  const diffVsLines = statementTotal - lineTotal;
 
-  const hasError = !statement.party_id || !statement.lines.length;
-  const hasWarning = !hasError && totals.total_amount === 0;
+  const hasError =
+    !statement.party_id ||
+    !statement.lines.length ||
+    totals.rowsMissingParty > 0;
+
+  const hasWarning =
+    !hasError &&
+    (totals.total_amount === 0 ||
+      totals.rowsMissingWork > 0 ||
+      totals.rowsMissingRelease > 0);
 
   return {
     level: pickQaLevel(hasError, hasWarning),
@@ -176,7 +217,15 @@ export async function getStatementQaDetail(
     lineTotal,
     sourceRowCount,
     diffVsLedger,
-    totals,
+    diffVsLines,
+    rowsMissingWork: totals.rowsMissingWork,
+    rowsMissingRelease: totals.rowsMissingRelease,
+    rowsMissingParty: totals.rowsMissingParty,
+    zeroAmountRows: totals.zeroAmountRows,
+    totals: {
+      line_count: totals.line_count,
+      total_amount: totals.total_amount,
+    },
   };
 }
 
