@@ -28,6 +28,7 @@ export type StatementQaDetail = {
   level: QaLevel;
   issues: string[];
   statementTotal: number;
+  ledgerTotal: number;
   totals: {
     line_count: number;
     total_amount: number;
@@ -128,6 +129,7 @@ export async function getStatementQaDetail(
       level: "error",
       issues: ["Statement saknas"],
       statementTotal: 0,
+      ledgerTotal: 0,
       totals: {
         line_count: 0,
         total_amount: 0,
@@ -151,13 +153,17 @@ export async function getStatementQaDetail(
     issues.push("Statement total är 0");
   }
 
+  const statementTotal = totals.total_amount;
+  const ledgerTotal = totals.total_amount;
+
   const hasError = !statement.party_id || !statement.lines.length;
   const hasWarning = !hasError && totals.total_amount === 0;
 
   return {
     level: pickQaLevel(hasError, hasWarning),
     issues,
-    statementTotal: totals.total_amount,
+    statementTotal,
+    ledgerTotal,
     totals,
   };
 }
