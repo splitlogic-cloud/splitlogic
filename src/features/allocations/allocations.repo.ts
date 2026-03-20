@@ -1,679 +1,653 @@
 import "server-only";
+
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export type AllocationRunStatus = "running" | "completed" | "failed";
+export type RateBase = "net" | "gross" | "ppd";
+
+export type CompanyRow = {
+  id: string;
+  slug: string | null;
+  name?: string | null;
+};
+
+export type ImportJobRow = {
+  id: string;
+  company_id: string;
+  file_name?: string | null;
+  created_at?: string | null;
+};
+
+export type ImportRowForAllocation = {
+  id: string;
+  company_id: string;
+  import_job_id: string;
+  row_number?: number | null;
+  release_id?: string | null;
+  release_title?: string | null;
+  work_id?: string | null;
+  work_title?: string | null;
+  party_id?: string | null;
+  currency?: string | null;
+  net_amount?: number | null;
+  gross_amount?: number | null;
+  ppd_amount?: number | null;
+  normalized_data?: Record<string, unknown> | null;
+  raw_data?: Record<string, unknown> | null;
+  created_at?: string | null;
+};
+
+export type AllocationRuleRow = {
+  id: string;
+  company_id: string;
+  rule_name?: string | null;
+  party_id: string;
+  release_id?: string | null;
+  work_id?: string | null;
+  rate_percent: number;
+  rate_base: RateBase;
+  base_rate_percent?: number | null;
+  priority?: number | null;
+  is_active?: boolean | null;
+  created_at?: string | null;
+};
 
 export type AllocationRunRow = {
   id: string;
   company_id: string;
-  import_id: string;
-  status: AllocationRunStatus;
-  total_input_rows: number;
-  eligible_rows: number;
-  allocated_rows: number;
-  skipped_unmatched_rows: number;
-  skipped_missing_splits_rows: number;
-  skipped_invalid_split_rows: number;
-  created_at: string;
-  completed_at: string | null;
-  created_by: string | null;
+  import_job_id: string;
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
+  created_at?: string | null;
 };
 
-export type AllocationRowInsert = {
+export type AllocationRunLineInsert = {
+  company_id: string;
+  import_job_id: string;
   allocation_run_id: string;
-  company_id: string;
-  import_id: string;
   import_row_id: string;
-  work_id: string;
   party_id: string;
-  split_id: string;
-  source_amount: string;
-  share_percent: string;
-  allocated_amount: string;
-  currency: string | null;
-};
-
-type ImportRowRecord = {
-  id: string;
-  import_id: string;
-  matched_work_id: string | null;
-  raw: Record<string, unknown> | null;
+  release_id?: string | null;
+  release_title?: string | null;
+  work_id?: string | null;
+  work_title?: string | null;
+  source_amount?: number | null;
+  share_percent?: number | null;
+  allocated_amount: number;
+  currency?: string | null;
+  rule_id?: string | null;
+  rate_base?: RateBase | null;
+  rate_percent?: number | null;
+  base_rate_percent?: number | null;
   created_at?: string | null;
 };
-
-type SplitRecord = {
-  id: string;
-  company_id: string;
-  work_id: string;
-  party_id: string;
-  share_percent: number | string | null;
-  created_at?: string | null;
-};
-
-type WorkRecord = {
-  id: string;
-  title: string | null;
-  isrc: string | null;
-};
-
-export type AllocationRunSummary = {
-  runId: string;
-  totalInputRows: number;
-  eligibleRows: number;
-  allocatedRows: number;
-  skippedUnmatchedRows: number;
-  skippedMissingSplitsRows: number;
-  skippedInvalidSplitRows: number;
-};
-
-export type AllocationPartyTotal = {
-  partyId: string;
-  partyName: string;
-  allocatedAmount: number;
-};
-
-export type AllocationBlockerStatus = "missing_splits" | "invalid_split_total";
 
 export type AllocationBlockerRow = {
-  workId: string;
-  workTitle: string;
-  workIsrc: string | null;
-  status: AllocationBlockerStatus;
-  blockedRows: number;
-  splitCount: number;
-  splitTotal: number;
+  import_row_id: string;
+  row_number: number | null;
+  blocker_code: string;
+  blocker_label: string;
+  release_title: string | null;
+  work_title: string | null;
+  currency: string | null;
+  net_amount: number | null;
+  gross_amount: number | null;
+  ppd_amount: number | null;
 };
 
-const READ_BATCH_SIZE = 1000;
-const INSERT_BATCH_SIZE = 1000;
-const IN_CHUNK_SIZE = 500;
+export type AllocationTotalByPartyRow = {
+  party_id: string | null;
+  party_name: string | null;
+  currency: string | null;
+  line_count: number;
+  total_allocated_amount: number;
+};
 
-function parseOptionalNumber(value: unknown): number | null {
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
+  const s = String(value).trim();
+  return s.length ? s : null;
+}
 
+function asNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
   }
+  const s = String(value).trim().replace(",", ".");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
+function pickString(
+  row: Record<string, unknown>,
+  normalized: Record<string, unknown>,
+  raw: Record<string, unknown>,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const v1 = asString(row[key]);
+    if (v1) return v1;
 
-    const normalized = trimmed.replace(/\s+/g, "").replace(",", ".");
-    const parsed = Number(normalized);
+    const v2 = asString(normalized[key]);
+    if (v2) return v2;
 
-    return Number.isFinite(parsed) ? parsed : null;
+    const v3 = asString(raw[key]);
+    if (v3) return v3;
   }
-
   return null;
 }
 
-function toNumber(value: unknown): number {
-  return parseOptionalNumber(value) ?? 0;
-}
+function pickNumber(
+  row: Record<string, unknown>,
+  normalized: Record<string, unknown>,
+  raw: Record<string, unknown>,
+  keys: string[],
+): number | null {
+  for (const key of keys) {
+    const v1 = asNumber(row[key]);
+    if (v1 !== null) return v1;
 
-function round6(value: number): number {
-  return Math.round(value * 1_000_000) / 1_000_000;
-}
+    const v2 = asNumber(normalized[key]);
+    if (v2 !== null) return v2;
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
+    const v3 = asNumber(raw[key]);
+    if (v3 !== null) return v3;
   }
-  return chunks;
-}
-
-function extractRowAmount(raw: Record<string, unknown> | null): number {
-  if (!raw) return 0;
-
-  const candidates: unknown[] = [
-    raw.net_share_account_currency,
-    raw.netShareAccountCurrency,
-
-    raw.gross_revenue_account_currency,
-    raw.grossRevenueAccountCurrency,
-
-    raw.netAccountAmount,
-    raw.net_account_amount,
-    raw.netRevenue,
-    raw.net_revenue,
-    raw.net_amount,
-
-    raw.accountAmount,
-    raw.account_amount,
-
-    raw.royaltyAmount,
-    raw.royalty_amount,
-
-    raw.earnings,
-    raw.income,
-    raw.revenue,
-    raw.amount,
-
-    raw.grossSaleAmount,
-    raw.gross_sale_amount,
-
-    raw.payable_amount,
-    raw.amount_payable,
-  ];
-
-  for (const candidate of candidates) {
-    const parsed = parseOptionalNumber(candidate);
-    if (parsed !== null) {
-      return parsed;
-    }
-  }
-
-  return 0;
-}
-
-function extractRowCurrency(raw: Record<string, unknown> | null): string | null {
-  if (!raw) return null;
-
-  const candidates: unknown[] = [
-    raw.account_currency,
-    raw.accountCurrency,
-    raw.currency,
-    raw.sale_currency,
-    raw.saleCurrency,
-    raw.reporting_currency,
-    raw.reportingCurrency,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-      return candidate.trim();
-    }
-  }
-
   return null;
 }
 
-function hasValid100PercentSplit(splits: SplitRecord[]): boolean {
-  if (splits.length === 0) return false;
-  return getSplitTotal(splits) === 100;
+function normalizeImportRow(row: Record<string, unknown>): ImportRowForAllocation {
+  const normalized = asRecord(row.normalized_data);
+  const raw = asRecord(row.raw_data);
+
+  return {
+    id: String(row.id),
+    company_id: String(row.company_id),
+    import_job_id: String(row.import_job_id),
+    row_number: asNumber(row.row_number),
+    release_id: pickString(row, normalized, raw, ["release_id", "releaseId"]),
+    release_title: pickString(row, normalized, raw, [
+      "release_title",
+      "releaseTitle",
+      "album",
+      "release",
+    ]),
+    work_id: pickString(row, normalized, raw, ["work_id", "workId"]),
+    work_title: pickString(row, normalized, raw, [
+      "work_title",
+      "workTitle",
+      "track_title",
+      "trackTitle",
+      "title",
+      "song_title",
+      "songTitle",
+    ]),
+    party_id: pickString(row, normalized, raw, ["party_id", "partyId"]),
+    currency: pickString(row, normalized, raw, ["currency", "sale_currency"]),
+    net_amount: pickNumber(row, normalized, raw, ["net_amount", "net", "amount_net"]),
+    gross_amount: pickNumber(row, normalized, raw, ["gross_amount", "gross", "amount_gross"]),
+    ppd_amount: pickNumber(row, normalized, raw, ["ppd_amount", "ppd"]),
+    normalized_data: normalized,
+    raw_data: raw,
+    created_at: asString(row.created_at),
+  };
 }
 
-function getSplitTotal(splits: SplitRecord[]): number {
-  return round6(
-    splits.reduce((sum, split) => sum + toNumber(split.share_percent), 0)
-  );
+export async function getCompanyBySlug(
+  companySlug: string,
+): Promise<CompanyRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from("companies")
+    .select("id, slug, name")
+    .eq("slug", companySlug)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`getCompanyBySlug failed: ${error.message}`);
+  }
+
+  return (data as CompanyRow | null) ?? null;
 }
 
-async function createAllocationRun(params: {
-  companyId: string;
-  importId: string;
-}): Promise<string> {
+export async function getImportJobById(
+  companyId: string,
+  importJobId: string,
+): Promise<ImportJobRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from("import_jobs")
+    .select("id, company_id, file_name, created_at")
+    .eq("company_id", companyId)
+    .eq("id", importJobId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`getImportJobById failed: ${error.message}`);
+  }
+
+  return (data as ImportJobRow | null) ?? null;
+}
+
+export async function listImportRowsForAllocation(
+  companyId: string,
+  importJobId: string,
+): Promise<ImportRowForAllocation[]> {
+  const { data, error } = await supabaseAdmin
+    .from("import_rows")
+    .select(`
+      id,
+      company_id,
+      import_job_id,
+      row_number,
+      release_id,
+      release_title,
+      work_id,
+      work_title,
+      party_id,
+      currency,
+      net_amount,
+      gross_amount,
+      ppd_amount,
+      normalized_data,
+      raw_data,
+      created_at
+    `)
+    .eq("company_id", companyId)
+    .eq("import_job_id", importJobId)
+    .order("row_number", { ascending: true });
+
+  if (error) {
+    throw new Error(`listImportRowsForAllocation failed: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => normalizeImportRow(row as Record<string, unknown>));
+}
+
+export async function listActiveAllocationRules(
+  companyId: string,
+): Promise<AllocationRuleRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("allocation_rules")
+    .select(`
+      id,
+      company_id,
+      rule_name,
+      party_id,
+      release_id,
+      work_id,
+      rate_percent,
+      rate_base,
+      base_rate_percent,
+      priority,
+      is_active,
+      created_at
+    `)
+    .eq("company_id", companyId)
+    .eq("is_active", true)
+    .order("priority", { ascending: true });
+
+  if (error) {
+    throw new Error(`listActiveAllocationRules failed: ${error.message}`);
+  }
+
+  return ((data ?? []) as AllocationRuleRow[]).map((row) => ({
+    ...row,
+    rate_percent: asNumber(row.rate_percent) ?? 0,
+    rate_base: (row.rate_base ?? "net") as RateBase,
+    base_rate_percent: asNumber(row.base_rate_percent) ?? 100,
+    priority: asNumber(row.priority) ?? 100,
+  }));
+}
+
+export async function createAllocationRun(
+  companyId: string,
+  importJobId: string,
+): Promise<AllocationRunRow> {
+  const payload = {
+    company_id: companyId,
+    import_job_id: importJobId,
+    status: "running",
+  };
+
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
-    .insert({
-      company_id: params.companyId,
-      import_id: params.importId,
-      status: "running",
-    })
-    .select("id")
+    .insert(payload)
+    .select("id, company_id, import_job_id, status, started_at, finished_at, error_message, created_at")
     .single();
 
   if (error) {
-    throw new Error(`create allocation run failed: ${error.message}`);
+    throw new Error(`createAllocationRun failed: ${error.message}`);
   }
 
-  return data.id;
+  return data as AllocationRunRow;
 }
 
-async function completeAllocationRun(
-  runId: string,
-  summary: Omit<AllocationRunSummary, "runId">
+export async function replaceAllocationRunLines(
+  allocationRunId: string,
+  lines: AllocationRunLineInsert[],
+): Promise<void> {
+  const { error: deleteError } = await supabaseAdmin
+    .from("allocation_run_lines")
+    .delete()
+    .eq("allocation_run_id", allocationRunId);
+
+  if (deleteError) {
+    throw new Error(`replaceAllocationRunLines delete failed: ${deleteError.message}`);
+  }
+
+  if (!lines.length) return;
+
+  const { error: insertError } = await supabaseAdmin
+    .from("allocation_run_lines")
+    .insert(lines);
+
+  if (insertError) {
+    throw new Error(`replaceAllocationRunLines insert failed: ${insertError.message}`);
+  }
+}
+
+export async function finishAllocationRun(
+  allocationRunId: string,
 ): Promise<void> {
   const { error } = await supabaseAdmin
     .from("allocation_runs")
     .update({
       status: "completed",
-      total_input_rows: summary.totalInputRows,
-      eligible_rows: summary.eligibleRows,
-      allocated_rows: summary.allocatedRows,
-      skipped_unmatched_rows: summary.skippedUnmatchedRows,
-      skipped_missing_splits_rows: summary.skippedMissingSplitsRows,
-      skipped_invalid_split_rows: summary.skippedInvalidSplitRows,
-      completed_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      error_message: null,
     })
-    .eq("id", runId);
+    .eq("id", allocationRunId);
 
   if (error) {
-    throw new Error(`complete allocation run failed: ${error.message}`);
+    throw new Error(`finishAllocationRun failed: ${error.message}`);
   }
 }
 
-async function failAllocationRun(runId: string): Promise<void> {
+export async function failAllocationRun(
+  allocationRunId: string,
+  errorMessage: string,
+): Promise<void> {
   const { error } = await supabaseAdmin
     .from("allocation_runs")
     .update({
       status: "failed",
-      completed_at: new Date().toISOString(),
+      finished_at: new Date().toISOString(),
+      error_message: errorMessage,
     })
-    .eq("id", runId);
+    .eq("id", allocationRunId);
 
   if (error) {
-    throw new Error(`fail allocation run failed: ${error.message}`);
+    throw new Error(`failAllocationRun failed: ${error.message}`);
   }
 }
 
-async function loadImportRows(params: {
-  importId: string;
-}): Promise<ImportRowRecord[]> {
-  const allRows: ImportRowRecord[] = [];
-  let from = 0;
-
-  while (true) {
-    const to = from + READ_BATCH_SIZE - 1;
-
-    const { data, error } = await supabaseAdmin
-      .from("import_rows")
-      .select("id, import_id, matched_work_id, raw, created_at")
-      .eq("import_id", params.importId)
-      .order("created_at", { ascending: true })
-      .range(from, to);
-
-    if (error) {
-      throw new Error(`load import rows failed: ${error.message}`);
-    }
-
-    const batch = (data ?? []) as ImportRowRecord[];
-    allRows.push(...batch);
-
-    if (batch.length < READ_BATCH_SIZE) {
-      break;
-    }
-
-    from += READ_BATCH_SIZE;
-  }
-
-  return allRows;
-}
-
-async function loadSplitsForWorks(params: {
-  companyId: string;
-  workIds: string[];
-}): Promise<Map<string, SplitRecord[]>> {
-  const map = new Map<string, SplitRecord[]>();
-
-  if (params.workIds.length === 0) {
-    return map;
-  }
-
-  const workIdChunks = chunkArray(params.workIds, IN_CHUNK_SIZE);
-
-  for (const workIdChunk of workIdChunks) {
-    let from = 0;
-
-    while (true) {
-      const to = from + READ_BATCH_SIZE - 1;
-
-      const { data, error } = await supabaseAdmin
-        .from("splits")
-        .select("id, company_id, work_id, party_id, share_percent, created_at")
-        .eq("company_id", params.companyId)
-        .in("work_id", workIdChunk)
-        .order("created_at", { ascending: true })
-        .range(from, to);
-
-      if (error) {
-        throw new Error(`load splits failed: ${error.message}`);
-      }
-
-      const batch = (data ?? []) as SplitRecord[];
-
-      for (const row of batch) {
-        const current = map.get(row.work_id) ?? [];
-        current.push(row);
-        map.set(row.work_id, current);
-      }
-
-      if (batch.length < READ_BATCH_SIZE) {
-        break;
-      }
-
-      from += READ_BATCH_SIZE;
-    }
-  }
-
-  return map;
-}
-
-async function loadWorksByIds(params: {
-  workIds: string[];
-}): Promise<Map<string, WorkRecord>> {
-  const map = new Map<string, WorkRecord>();
-
-  if (params.workIds.length === 0) {
-    return map;
-  }
-
-  const chunks = chunkArray(params.workIds, IN_CHUNK_SIZE);
-
-  for (const ids of chunks) {
-    const { data, error } = await supabaseAdmin
-      .from("works")
-      .select("id, title, isrc")
-      .in("id", ids);
-
-    if (error) {
-      throw new Error(`load works failed: ${error.message}`);
-    }
-
-    for (const row of (data ?? []) as WorkRecord[]) {
-      map.set(row.id, row);
-    }
-  }
-
-  return map;
-}
-
-async function insertAllocationRows(rows: AllocationRowInsert[]): Promise<void> {
-  if (rows.length === 0) return;
-
-  const chunks = chunkArray(rows, INSERT_BATCH_SIZE);
-
-  for (const chunk of chunks) {
-    const { error } = await supabaseAdmin.from("allocation_rows").insert(chunk);
-
-    if (error) {
-      throw new Error(`insert allocation rows failed: ${error.message}`);
-    }
-  }
-}
-
-export async function runAllocationEngineV1(params: {
-  companyId: string;
-  importId: string;
-}): Promise<AllocationRunSummary> {
-  const runId = await createAllocationRun({
-    companyId: params.companyId,
-    importId: params.importId,
-  });
-
-  try {
-    const importRows = await loadImportRows({
-      importId: params.importId,
-    });
-
-    const totalInputRows = importRows.length;
-
-    const unmatchedRows = importRows.filter((row) => !row.matched_work_id);
-    const matchedRows = importRows.filter((row) => !!row.matched_work_id);
-
-    const workIds = Array.from(
-      new Set(
-        matchedRows
-          .map((row) => row.matched_work_id)
-          .filter((value): value is string => !!value)
-      )
-    );
-
-    const splitsByWorkId = await loadSplitsForWorks({
-      companyId: params.companyId,
-      workIds,
-    });
-
-    const allocationRowsToInsert: AllocationRowInsert[] = [];
-
-    let eligibleRows = 0;
-    let skippedMissingSplitsRows = 0;
-    let skippedInvalidSplitRows = 0;
-
-    for (const row of matchedRows) {
-      const workId = row.matched_work_id;
-      if (!workId) continue;
-
-      const splits = splitsByWorkId.get(workId) ?? [];
-
-      if (splits.length === 0) {
-        skippedMissingSplitsRows += 1;
-        continue;
-      }
-
-      if (!hasValid100PercentSplit(splits)) {
-        skippedInvalidSplitRows += 1;
-        continue;
-      }
-
-      eligibleRows += 1;
-
-      const sourceAmount = extractRowAmount(row.raw);
-      const currency = extractRowCurrency(row.raw);
-
-      for (const split of splits) {
-        const sharePercent = toNumber(split.share_percent);
-        const allocatedAmount = round6((sourceAmount * sharePercent) / 100);
-
-        allocationRowsToInsert.push({
-          allocation_run_id: runId,
-          company_id: params.companyId,
-          import_id: params.importId,
-          import_row_id: row.id,
-          work_id: workId,
-          party_id: split.party_id,
-          split_id: split.id,
-          source_amount: sourceAmount.toFixed(6),
-          share_percent: sharePercent.toFixed(6),
-          allocated_amount: allocatedAmount.toFixed(6),
-          currency,
-        });
-      }
-    }
-
-    await insertAllocationRows(allocationRowsToInsert);
-
-    const summary: AllocationRunSummary = {
-      runId,
-      totalInputRows,
-      eligibleRows,
-      allocatedRows: allocationRowsToInsert.length,
-      skippedUnmatchedRows: unmatchedRows.length,
-      skippedMissingSplitsRows,
-      skippedInvalidSplitRows,
-    };
-
-    await completeAllocationRun(runId, {
-      totalInputRows: summary.totalInputRows,
-      eligibleRows: summary.eligibleRows,
-      allocatedRows: summary.allocatedRows,
-      skippedUnmatchedRows: summary.skippedUnmatchedRows,
-      skippedMissingSplitsRows: summary.skippedMissingSplitsRows,
-      skippedInvalidSplitRows: summary.skippedInvalidSplitRows,
-    });
-
-    return summary;
-  } catch (error) {
-    try {
-      await failAllocationRun(runId);
-    } catch {
-      // preserve original error
-    }
-
-    if (error instanceof Error) {
-      throw error;
-    }
-
-    throw new Error("run allocation engine failed");
-  }
-}
-
-export async function getLatestAllocationRunForImport(params: {
-  companyId: string;
-  importId: string;
-}): Promise<AllocationRunRow | null> {
+export async function getLatestAllocationRunForImport(
+  companyId: string,
+  importJobId: string,
+): Promise<AllocationRunRow | null> {
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
-    .select("*")
-    .eq("company_id", params.companyId)
-    .eq("import_id", params.importId)
+    .select("id, company_id, import_job_id, status, started_at, finished_at, error_message, created_at")
+    .eq("company_id", companyId)
+    .eq("import_job_id", importJobId)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error) {
-    throw new Error(`load latest allocation run failed: ${error.message}`);
+    throw new Error(`getLatestAllocationRunForImport failed: ${error.message}`);
   }
 
   return (data as AllocationRunRow | null) ?? null;
 }
 
-export async function listAllocationTotalsByParty(params: {
-  allocationRunId: string;
-}): Promise<AllocationPartyTotal[]> {
-  const allRows: Array<{ party_id: string; allocated_amount: string | number }> =
-    [];
-  let from = 0;
-
-  while (true) {
-    const to = from + READ_BATCH_SIZE - 1;
-
-    const { data, error } = await supabaseAdmin
-      .from("allocation_rows")
-      .select("party_id, allocated_amount")
-      .eq("allocation_run_id", params.allocationRunId)
-      .range(from, to);
-
-    if (error) {
-      throw new Error(`list allocation totals by party failed: ${error.message}`);
-    }
-
-    const batch = (data ?? []) as Array<{
-      party_id: string;
-      allocated_amount: string | number;
-    }>;
-
-    allRows.push(...batch);
-
-    if (batch.length < READ_BATCH_SIZE) {
-      break;
-    }
-
-    from += READ_BATCH_SIZE;
-  }
-
-  const totals = new Map<string, number>();
-
-  for (const row of allRows) {
-    const partyId = String(row.party_id);
-    const allocatedAmount = toNumber(row.allocated_amount);
-    totals.set(
-      partyId,
-      round6((totals.get(partyId) ?? 0) + allocatedAmount)
-    );
-  }
-
-  const partyIds = Array.from(totals.keys());
-
-  if (partyIds.length === 0) {
-    return [];
-  }
-
-  const partyChunks = chunkArray(partyIds, IN_CHUNK_SIZE);
-  const partyNameMap = new Map<string, string>();
-
-  for (const partyChunk of partyChunks) {
-    const { data: parties, error: partiesError } = await supabaseAdmin
-      .from("parties")
-      .select("id, name")
-      .in("id", partyChunk);
-
-    if (partiesError) {
-      throw new Error(`load parties failed: ${partiesError.message}`);
-    }
-
-    for (const party of parties ?? []) {
-      partyNameMap.set(
-        String(party.id),
-        typeof party.name === "string" && party.name.trim() !== ""
-          ? party.name
-          : "Unnamed party"
-      );
-    }
-  }
-
-  return partyIds
-    .map((partyId) => ({
-      partyId,
-      partyName: partyNameMap.get(partyId) ?? "Unnamed party",
-      allocatedAmount: round6(totals.get(partyId) ?? 0),
-    }))
-    .sort((a, b) => b.allocatedAmount - a.allocatedAmount);
-}
-
-export async function listAllocationBlockersForImport(params: {
-  companyId: string;
-  importId: string;
-}): Promise<AllocationBlockerRow[]> {
-  const importRows = await loadImportRows({
-    importId: params.importId,
-  });
-
-  const matchedRows = importRows.filter(
-    (row): row is ImportRowRecord & { matched_work_id: string } =>
-      !!row.matched_work_id
-  );
-
-  const workIds = Array.from(new Set(matchedRows.map((row) => row.matched_work_id)));
-
-  const [splitsByWorkId, worksById] = await Promise.all([
-    loadSplitsForWorks({
-      companyId: params.companyId,
-      workIds,
-    }),
-    loadWorksByIds({
-      workIds,
-    }),
-  ]);
-
-  const blockedCountByWork = new Map<string, number>();
-
-  for (const row of matchedRows) {
-    const workId = row.matched_work_id;
-    const splits = splitsByWorkId.get(workId) ?? [];
-
-    if (splits.length === 0 || !hasValid100PercentSplit(splits)) {
-      blockedCountByWork.set(workId, (blockedCountByWork.get(workId) ?? 0) + 1);
-    }
-  }
+export async function listAllocationBlockersForImport(
+  companyId: string,
+  importJobId: string,
+): Promise<AllocationBlockerRow[]> {
+  const rows = await listImportRowsForAllocation(companyId, importJobId);
 
   const blockers: AllocationBlockerRow[] = [];
 
-  for (const workId of workIds) {
-    const blockedRows = blockedCountByWork.get(workId) ?? 0;
-    if (blockedRows <= 0) continue;
+  for (const row of rows) {
+    const hasAnyAmount =
+      row.net_amount !== null ||
+      row.gross_amount !== null ||
+      row.ppd_amount !== null;
 
-    const splits = splitsByWorkId.get(workId) ?? [];
-    const work = worksById.get(workId);
+    if (!hasAnyAmount) {
+      blockers.push({
+        import_row_id: row.id,
+        row_number: row.row_number ?? null,
+        blocker_code: "missing_amount",
+        blocker_label: "Missing amount base",
+        release_title: row.release_title ?? null,
+        work_title: row.work_title ?? null,
+        currency: row.currency ?? null,
+        net_amount: row.net_amount ?? null,
+        gross_amount: row.gross_amount ?? null,
+        ppd_amount: row.ppd_amount ?? null,
+      });
+    }
 
-    const splitCount = splits.length;
-    const splitTotal = getSplitTotal(splits);
+    if (!row.work_id && !row.work_title) {
+      blockers.push({
+        import_row_id: row.id,
+        row_number: row.row_number ?? null,
+        blocker_code: "missing_work",
+        blocker_label: "Missing work",
+        release_title: row.release_title ?? null,
+        work_title: row.work_title ?? null,
+        currency: row.currency ?? null,
+        net_amount: row.net_amount ?? null,
+        gross_amount: row.gross_amount ?? null,
+        ppd_amount: row.ppd_amount ?? null,
+      });
+    }
 
-    blockers.push({
-      workId,
-      workTitle:
-        work?.title && work.title.trim() !== ""
-          ? work.title
-          : "Untitled work",
-      workIsrc: work?.isrc ?? null,
-      status: splitCount === 0 ? "missing_splits" : "invalid_split_total",
-      blockedRows,
-      splitCount,
-      splitTotal,
-    });
+    if (!row.release_id && !row.release_title) {
+      blockers.push({
+        import_row_id: row.id,
+        row_number: row.row_number ?? null,
+        blocker_code: "missing_release",
+        blocker_label: "Missing release",
+        release_title: row.release_title ?? null,
+        work_title: row.work_title ?? null,
+        currency: row.currency ?? null,
+        net_amount: row.net_amount ?? null,
+        gross_amount: row.gross_amount ?? null,
+        ppd_amount: row.ppd_amount ?? null,
+      });
+    }
   }
 
-  return blockers.sort((a, b) => {
-    if (b.blockedRows !== a.blockedRows) {
-      return b.blockedRows - a.blockedRows;
+  return blockers;
+}
+
+export async function listAllocationTotalsByParty(
+  companyId: string,
+  importJobId: string,
+): Promise<AllocationTotalByPartyRow[]> {
+  const latestRun = await getLatestAllocationRunForImport(companyId, importJobId);
+
+  if (!latestRun) return [];
+
+  const { data: lines, error: linesError } = await supabaseAdmin
+    .from("allocation_run_lines")
+    .select("party_id, currency, allocated_amount")
+    .eq("allocation_run_id", latestRun.id);
+
+  if (linesError) {
+    throw new Error(`listAllocationTotalsByParty load lines failed: ${linesError.message}`);
+  }
+
+  const partyIds = Array.from(
+    new Set((lines ?? []).map((line) => asString(line.party_id)).filter(Boolean)),
+  ) as string[];
+
+  let partyMap = new Map<string, string>();
+
+  if (partyIds.length > 0) {
+    const { data: parties, error: partiesError } = await supabaseAdmin
+      .from("parties")
+      .select("id, name")
+      .in("id", partyIds);
+
+    if (partiesError) {
+      throw new Error(`listAllocationTotalsByParty load parties failed: ${partiesError.message}`);
     }
 
-    if (a.status !== b.status) {
-      return a.status === "missing_splits" ? -1 : 1;
-    }
+    partyMap = new Map(
+      (parties ?? []).map((party) => [String(party.id), asString(party.name) ?? ""]),
+    );
+  }
 
-    return a.workTitle.localeCompare(b.workTitle, "sv");
+  const grouped = new Map<string, AllocationTotalByPartyRow>();
+
+  for (const line of lines ?? []) {
+    const partyId = asString(line.party_id);
+    const currency = asString(line.currency);
+    const amount = asNumber(line.allocated_amount) ?? 0;
+    const key = `${partyId ?? ""}__${currency ?? ""}`;
+
+    const existing = grouped.get(key);
+
+    if (existing) {
+      existing.line_count += 1;
+      existing.total_allocated_amount += amount;
+    } else {
+      grouped.set(key, {
+        party_id: partyId,
+        party_name: partyId ? (partyMap.get(partyId) ?? null) : null,
+        currency,
+        line_count: 1,
+        total_allocated_amount: amount,
+      });
+    }
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => {
+    const aName = a.party_name ?? "";
+    const bName = b.party_name ?? "";
+    return aName.localeCompare(bName);
   });
+}
+
+function ruleSpecificity(rule: AllocationRuleRow): number {
+  let score = 0;
+  if (rule.release_id) score += 1;
+  if (rule.work_id) score += 2;
+  return score;
+}
+
+function sourceAmountForRule(
+  row: ImportRowForAllocation,
+  rule: AllocationRuleRow,
+): number | null {
+  if (rule.rate_base === "gross") return row.gross_amount ?? null;
+  if (rule.rate_base === "ppd") return row.ppd_amount ?? null;
+  return row.net_amount ?? null;
+}
+
+function ruleMatchesRow(
+  rule: AllocationRuleRow,
+  row: ImportRowForAllocation,
+): boolean {
+  if (rule.release_id && rule.release_id !== row.release_id) return false;
+  if (rule.work_id && rule.work_id !== row.work_id) return false;
+  return true;
+}
+
+function selectBestRule(
+  rules: AllocationRuleRow[],
+  row: ImportRowForAllocation,
+): AllocationRuleRow | null {
+  const matches = rules.filter((rule) => ruleMatchesRow(rule, row));
+
+  if (!matches.length) return null;
+
+  matches.sort((a, b) => {
+    const specDiff = ruleSpecificity(b) - ruleSpecificity(a);
+    if (specDiff !== 0) return specDiff;
+
+    const prioA = a.priority ?? 100;
+    const prioB = b.priority ?? 100;
+    if (prioA !== prioB) return prioA - prioB;
+
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  });
+
+  return matches[0] ?? null;
+}
+
+export async function runAllocationEngineV1(
+  companyId: string,
+  importJobId: string,
+): Promise<AllocationRunRow> {
+  const run = await createAllocationRun(companyId, importJobId);
+
+  try {
+    const rows = await listImportRowsForAllocation(companyId, importJobId);
+    const rules = await listActiveAllocationRules(companyId);
+
+    const inserts: AllocationRunLineInsert[] = [];
+
+    for (const row of rows) {
+      const rule = selectBestRule(rules, row);
+      if (!rule) continue;
+
+      const sourceAmount = sourceAmountForRule(row, rule);
+      if (sourceAmount === null) continue;
+
+      const ratePercent = rule.rate_percent ?? 0;
+      const baseRatePercent = rule.base_rate_percent ?? 100;
+      const effectiveRatePercent = (ratePercent * baseRatePercent) / 100;
+      const allocatedAmount = (sourceAmount * effectiveRatePercent) / 100;
+
+      inserts.push({
+        company_id: companyId,
+        import_job_id: importJobId,
+        allocation_run_id: run.id,
+        import_row_id: row.id,
+        party_id: rule.party_id,
+        release_id: row.release_id ?? null,
+        release_title: row.release_title ?? null,
+        work_id: row.work_id ?? null,
+        work_title: row.work_title ?? null,
+        source_amount: sourceAmount,
+        share_percent: effectiveRatePercent,
+        allocated_amount: allocatedAmount,
+        currency: row.currency ?? null,
+        rule_id: rule.id,
+        rate_base: rule.rate_base,
+        rate_percent: ratePercent,
+        base_rate_percent: baseRatePercent,
+      });
+    }
+
+    await replaceAllocationRunLines(run.id, inserts);
+    await finishAllocationRun(run.id);
+
+    const latest = await getLatestAllocationRunForImport(companyId, importJobId);
+    if (!latest) {
+      throw new Error("Allocation run finished but could not be reloaded");
+    }
+
+    return latest;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown allocation engine error";
+
+    await failAllocationRun(run.id, message);
+    throw error;
+  }
 }
