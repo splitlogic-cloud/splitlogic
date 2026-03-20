@@ -21,6 +21,29 @@ type Params = {
   }>;
 };
 
+type ImportRowStatsRecord = {
+  id: string;
+  matched_work_id: string | null;
+  net_amount: number | null;
+  gross_amount: number | null;
+  currency: string | null;
+  allocation_status: string | null;
+};
+
+function asNumber(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function pickRowAmount(row: {
+  net_amount: number | null;
+  gross_amount: number | null;
+}): number {
+  if (row.net_amount != null) return asNumber(row.net_amount);
+  if (row.gross_amount != null) return asNumber(row.gross_amount);
+  return 0;
+}
+
 function formatMoney(value: number, currency?: string | null) {
   try {
     return new Intl.NumberFormat("sv-SE", {
@@ -36,23 +59,37 @@ function formatMoney(value: number, currency?: string | null) {
 async function getImportRowStats(companyId: string, importJobId: string) {
   const { data, error } = await supabaseAdmin
     .from("import_rows")
-    .select("id, amount, matched_work_id, allocation_status", { count: "exact" })
-    .eq("company_id", companyId)
+    .select(
+      "id, matched_work_id, net_amount, gross_amount, currency, allocation_status"
+    )
     .eq("import_job_id", importJobId);
 
   if (error) {
     throw new Error(`Failed to load import row stats: ${error.message}`);
   }
 
-  const rows = data ?? [];
+  const rows: ImportRowStatsRecord[] = (data ?? []).map((row) => ({
+    id: String(row.id),
+    matched_work_id: row.matched_work_id ? String(row.matched_work_id) : null,
+    net_amount: row.net_amount == null ? null : asNumber(row.net_amount),
+    gross_amount: row.gross_amount == null ? null : asNumber(row.gross_amount),
+    currency: row.currency ? String(row.currency) : null,
+    allocation_status: row.allocation_status ? String(row.allocation_status) : null,
+  }));
+
   const rowCount = rows.length;
   const matchedCount = rows.filter((row) => row.matched_work_id).length;
-  const totalAmount = rows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const totalAmount = rows.reduce((sum, row) => sum + pickRowAmount(row), 0);
+
+  const currencies = [
+    ...new Set(rows.map((row) => row.currency).filter((value): value is string => Boolean(value))),
+  ];
 
   return {
     rowCount,
     matchedCount,
     totalAmount,
+    currency: currencies.length === 1 ? currencies[0] : null,
   };
 }
 
@@ -77,6 +114,8 @@ export default async function ImportDetailPage({ params }: Params) {
     importJobId,
     latestRun?.id ?? null
   );
+
+  const displayCurrency = latestRun?.currency ?? stats.currency ?? "SEK";
 
   return (
     <div className="space-y-8">
@@ -120,7 +159,7 @@ export default async function ImportDetailPage({ params }: Params) {
         <div className="rounded-xl border p-4">
           <div className="text-xs uppercase text-neutral-500">Gross imported</div>
           <div className="mt-2 text-2xl font-semibold">
-            {formatMoney(stats.totalAmount, latestRun?.currency ?? "SEK")}
+            {formatMoney(stats.totalAmount, displayCurrency)}
           </div>
         </div>
 
@@ -166,14 +205,14 @@ export default async function ImportDetailPage({ params }: Params) {
             <div>
               <div className="text-xs uppercase text-neutral-500">Allocated amount</div>
               <div className="mt-1 text-sm">
-                {formatMoney(latestRun.allocated_amount, latestRun.currency)}
+                {formatMoney(latestRun.allocated_amount, latestRun.currency ?? displayCurrency)}
               </div>
             </div>
 
             <div>
               <div className="text-xs uppercase text-neutral-500">Unallocated amount</div>
               <div className="mt-1 text-sm">
-                {formatMoney(latestRun.unallocated_amount, latestRun.currency)}
+                {formatMoney(latestRun.unallocated_amount, latestRun.currency ?? displayCurrency)}
               </div>
             </div>
           </div>
@@ -209,7 +248,7 @@ export default async function ImportDetailPage({ params }: Params) {
                     <td className="py-2 pr-4">{row.party_name ?? row.party_id}</td>
                     <td className="py-2 pr-4">{row.currency ?? "-"}</td>
                     <td className="py-2 pr-4">
-                      {formatMoney(row.total_allocated_amount, row.currency)}
+                      {formatMoney(row.total_allocated_amount, row.currency ?? displayCurrency)}
                     </td>
                     <td className="py-2 pr-4">{row.line_count}</td>
                   </tr>
@@ -261,29 +300,26 @@ export default async function ImportDetailPage({ params }: Params) {
       <section className="rounded-xl border p-5">
         <h2 className="text-lg font-semibold">What this engine now does</h2>
         <div className="mt-3 space-y-2 text-sm text-neutral-700">
+          <p>1. Reads all normalized import rows for this import job.</p>
+          <p>2. Uses net amount first, with gross amount as fallback.</p>
+          <p>3. Checks that each row has currency and a matched work.</p>
           <p>
-            1. Reads all normalized import rows for this import job.
-          </p>
-          <p>
-            2. Checks that each row has amount, currency, and a matched work.
-          </p>
-          <p>
-            3. Loads the active split setup for each matched work from{" "}
+            4. Loads the active split setup for each matched work from{" "}
             <code>work_splits</code>.
           </p>
           <p>
-            4. Refuses allocation if split setup is missing or does not total 100%.
+            5. Refuses allocation if split setup is missing or does not total 100%.
           </p>
           <p>
-            5. Writes one allocation line per party share into{" "}
+            6. Writes one allocation line per party share into{" "}
             <code>allocation_run_lines</code>.
           </p>
           <p>
-            6. Logs every problem into <code>allocation_run_blockers</code> so QA
+            7. Logs every problem into <code>allocation_run_blockers</code> so QA
             can see exactly what stopped.
           </p>
           <p>
-            7. Saves a full run record in <code>allocation_runs</code> so the system
+            8. Saves a full run record in <code>allocation_runs</code> so the system
             is rerunnable and auditable.
           </p>
         </div>
