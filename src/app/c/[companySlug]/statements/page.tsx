@@ -4,6 +4,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { listStatementsByCompany } from "@/features/statements/statements.repo";
+import {
+  listStatementQaStatusesByCompany,
+  type QaLevel,
+} from "@/features/statements/statements-qa.repo";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +19,24 @@ type Params = {
 
 function formatMoney(amount: number | null, currency: string | null) {
   if (amount == null) return "—";
-
   const rounded = new Intl.NumberFormat("sv-SE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
 
   return currency ? `${rounded} ${currency}` : rounded;
+}
+
+function badgeClass(level: QaLevel) {
+  if (level === "ok") return "bg-green-100 text-green-800 border-green-200";
+  if (level === "warning") return "bg-yellow-100 text-yellow-800 border-yellow-200";
+  return "bg-red-100 text-red-800 border-red-200";
+}
+
+function badgeLabel(level: QaLevel) {
+  if (level === "ok") return "OK";
+  if (level === "warning") return "Needs review";
+  return "Blocked";
 }
 
 export default async function StatementsPage({ params }: Params) {
@@ -42,6 +57,7 @@ export default async function StatementsPage({ params }: Params) {
   }
 
   const statements = await listStatementsByCompany(company.id);
+  const qaMap = await listStatementQaStatusesByCompany(company.id);
 
   return (
     <div className="space-y-6">
@@ -66,27 +82,13 @@ export default async function StatementsPage({ params }: Params) {
         <table className="min-w-full divide-y divide-neutral-200 text-sm">
           <thead className="bg-neutral-50">
             <tr>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Party
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Period
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Total
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Status
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Source
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Created
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-neutral-600">
-                Action
-              </th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">Party</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">Period</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">Total</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">Status</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">QA</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">Created</th>
+              <th className="px-4 py-3 text-left font-medium text-neutral-600">Action</th>
             </tr>
           </thead>
 
@@ -98,28 +100,39 @@ export default async function StatementsPage({ params }: Params) {
                 </td>
               </tr>
             ) : (
-              statements.map((row) => (
-                <tr key={row.id}>
-                  <td className="px-4 py-3">{row.party_name ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    {row.period_start ?? "—"} → {row.period_end ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    {formatMoney(row.total_amount, row.currency)}
-                  </td>
-                  <td className="px-4 py-3">{row.status ?? "—"}</td>
-                  <td className="px-4 py-3">{row.generated_from ?? "—"}</td>
-                  <td className="px-4 py-3">{row.created_at ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/c/${companySlug}/statements/${row.id}`}
-                      className="underline"
-                    >
-                      Open
-                    </Link>
-                  </td>
-                </tr>
-              ))
+              statements.map((row) => {
+                const qa = qaMap.get(row.id);
+                return (
+                  <tr key={row.id}>
+                    <td className="px-4 py-3">{row.party_name ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      {row.period_start ?? "—"} → {row.period_end ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {formatMoney(row.total_amount, row.currency)}
+                    </td>
+                    <td className="px-4 py-3">{row.status ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      {qa ? (
+                        <span className={`rounded-full border px-2 py-1 text-xs font-medium ${badgeClass(qa.level)}`}>
+                          {badgeLabel(qa.level)}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-3">{row.created_at ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/c/${companySlug}/statements/${row.id}`}
+                        className="underline"
+                      >
+                        Open
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
