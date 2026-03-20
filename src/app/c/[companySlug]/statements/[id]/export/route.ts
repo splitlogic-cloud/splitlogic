@@ -1,101 +1,68 @@
-import { supabaseAdmin } from "@/lib/supabase/admin";
-import { createAuditEvent } from "@/features/audit/audit.repo";
-import {
-  getStatementHeader,
-  listStatementLines,
-} from "@/features/statements/statements.repo";
+import { NextResponse } from "next/server";
+import { getStatementWithLines } from "@/features/statements/statements.repo";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-type Ctx = {
+type Params = {
   params: Promise<{
     companySlug: string;
     id: string;
   }>;
 };
 
-function csvEscape(value: unknown): string {
-  const str = value == null ? "" : String(value);
-
-  if (/[",\n]/.test(str)) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-
-  return str;
+function toStr(v: unknown) {
+  if (v === null || v === undefined) return "";
+  return String(v);
 }
 
-function buildCsv(rows: string[][]): string {
-  return rows.map((row) => row.map(csvEscape).join(",")).join("\n");
-}
+export async function GET(_: Request, { params }: Params) {
+  const { id } = await params;
 
-export async function GET(_req: Request, context: Ctx): Promise<Response> {
-  const { companySlug, id } = await context.params;
+  const { header, lines } = await getStatementWithLines(id);
 
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, slug")
-    .eq("slug", companySlug)
-    .maybeSingle();
+  const csvRows: string[] = [];
 
-  if (companyError || !company) {
-    return new Response("Company not found", { status: 404 });
+  // Header row
+  csvRows.push([
+    "Statement ID",
+    "Period Start",
+    "Period End",
+    "Currency",
+  ].join(","));
+
+  csvRows.push([
+    toStr(header.id),
+    toStr(header.period_start),
+    toStr(header.period_end),
+    toStr(header.currency),
+  ].join(","));
+
+  csvRows.push(""); // empty line
+
+  // Line headers
+  csvRows.push([
+    "Release",
+    "Work",
+    "Source Amount",
+    "Share %",
+    "Allocated Amount",
+  ].join(","));
+
+  for (const line of lines) {
+    csvRows.push([
+      toStr(line.release_title),
+      toStr(line.work_title),
+      toStr(line.source_amount),     // ✅ FIXED
+      toStr(line.share_percent),
+      toStr(line.allocated_amount),
+    ].join(","));
   }
 
-  const header = await getStatementHeader(company.id, id);
+  const csv = csvRows.join("\n");
 
-  if (!header) {
-    return new Response("Statement not found", { status: 404 });
-  }
-
-  const lines = await listStatementLines(company.id, id);
-
-  const csvRows: string[][] = [
-    [
-      "statement_id",
-      "party_name",
-      "status",
-      "period_start",
-      "period_end",
-      "currency",
-      "total_amount",
-      "work_title",
-      "source_amount",
-      "share_percent",
-      "allocated_amount",
-    ],
-    ...lines.map((line) => [
-      header.id,
-      header.party_name ?? "",
-      header.status ?? "",
-      header.period_start ?? "",
-      header.period_end ?? "",
-      header.currency ?? "",
-      String(header.total_amount ?? 0),
-      line.work_title ?? "",
-      String(line.source_amount),
-      String(line.share_percent),
-      String(line.allocated_amount),
-    ]),
-  ];
-
-  const csv = buildCsv(csvRows);
-
-  await createAuditEvent({
-    companyId: company.id,
-    entityType: "statement",
-    entityId: header.id,
-    action: "statement.export.csv",
-    payload: {
-      lineCount: lines.length,
-    },
-  });
-
-  return new Response(csv, {
+  return new NextResponse(csv, {
     status: 200,
     headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="statement-${id}.csv"`,
+      "Content-Type": "text/csv",
+      "Content-Disposition": `attachment; filename="statement_${id}.csv"`,
     },
   });
 }
