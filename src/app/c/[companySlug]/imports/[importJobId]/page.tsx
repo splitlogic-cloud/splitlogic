@@ -8,6 +8,7 @@ import RunMatchingButton from "./RunMatchingButton";
 import RunAllocationButton from "./RunAllocationButton";
 import MatchReviewTable from "./MatchReviewTable";
 import AllocationRunSummary from "./AllocationRunSummary";
+import { runMatchingAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -114,7 +115,11 @@ export default async function ImportDetailPage({ params }: Params) {
 
       <div className="flex flex-wrap gap-3">
         <RunImportParseButton companySlug={companySlug} importJobId={importJobId} />
-        <RunMatchingButton companySlug={companySlug} importJobId={importJobId} />
+        <RunMatchingButton
+          companySlug={companySlug}
+          importJobId={importJobId}
+          action={runMatchingAction}
+        />
         <RunAllocationButton
           companySlug={companySlug}
           importJobId={importJobId}
