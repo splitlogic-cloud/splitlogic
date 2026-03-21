@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { runAllocation } from "../run-allocation";
+import { runImportParse } from "../run-import-parse";
 
-export async function runAllocationAction(formData: FormData) {
+export async function runImportParseAction(formData: FormData) {
   const companySlug = String(formData.get("companySlug") ?? "");
   const importJobId = String(formData.get("importJobId") ?? "");
 
@@ -11,11 +11,10 @@ export async function runAllocationAction(formData: FormData) {
     throw new Error("Missing companySlug or importJobId");
   }
 
-  const result = await runAllocation(importJobId);
+  const result = await runImportParse(importJobId);
 
-  revalidatePath(`/c/${companySlug}/imports`);
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
-  revalidatePath(`/c/${companySlug}/statements`);
+  revalidatePath(`/c/${companySlug}/imports`);
 
   return result;
 }

@@ -1,130 +1,126 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
 
-export type ImportJobRow = {
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { ImportJobStatus, ImportRowStatus, RawImportRow } from "./import-types";
+
+export async function setImportJobStatus(
+  importJobId: string,
+  status: ImportJobStatus,
+): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("import_jobs")
+    .update({ status })
+    .eq("id", importJobId);
+
+  if (error) {
+    throw new Error(`setImportJobStatus failed: ${error.message}`);
+  }
+}
+
+export async function replaceImportRowsForJob(
+  companyId: string,
+  importJobId: string,
+  rows: Array<{
+    rowNumber: number;
+    raw: RawImportRow;
+    normalized: Record<string, unknown> | null;
+    canonical: Record<string, unknown> | null;
+    currency: string | null;
+    netAmount: string | null;
+    grossAmount: string | null;
+    sourceWorkRef: string | null;
+    status: ImportRowStatus;
+    errorCodes: string[];
+  }>,
+): Promise<void> {
+  const { error: deleteError } = await supabaseAdmin
+    .from("import_rows")
+    .delete()
+    .eq("import_job_id", importJobId);
+
+  if (deleteError) {
+    throw new Error(`delete import_rows failed: ${deleteError.message}`);
+  }
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const payload = rows.map((row) => ({
+    company_id: companyId,
+    import_job_id: importJobId,
+    row_number: row.rowNumber,
+    raw: row.raw,
+    normalized: row.normalized,
+    canonical: row.canonical,
+    currency: row.currency,
+    net_amount: row.netAmount,
+    gross_amount: row.grossAmount,
+    source_work_ref: row.sourceWorkRef,
+    status: row.status,
+    error_codes: row.errorCodes,
+  }));
+
+  const chunkSize = 500;
+
+  for (let i = 0; i < payload.length; i += chunkSize) {
+    const chunk = payload.slice(i, i + chunkSize);
+
+    const { error } = await supabaseAdmin
+      .from("import_rows")
+      .insert(chunk);
+
+    if (error) {
+      throw new Error(`insert import_rows failed: ${error.message}`);
+    }
+  }
+}
+
+export async function getImportJobById(importJobId: string): Promise<{
   id: string;
   company_id: string;
-  filename: string | null;
-  status: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-};
-
-export type ImportRowRow = {
-  id: string;
-  import_id: string;
-  row_number: number | null;
-  raw: Record<string, unknown> | null;
-  created_at: string | null;
-};
-
-export async function listImportJobs(
-  companyId: string,
-  limit = 100
-): Promise<ImportJobRow[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
+  file_path: string | null;
+  file_name: string | null;
+  status: string;
+}> {
+  const { data, error } = await supabaseAdmin
     .from("import_jobs")
-    .select("id, company_id, filename, status, created_at, updated_at")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    throw new Error(`listImportJobs: ${error.message}`);
-  }
-
-  return (data ?? []) as ImportJobRow[];
-}
-
-export async function getLatestImportJob(
-  companyId: string
-): Promise<ImportJobRow | null> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("import_jobs")
-    .select("id, company_id, filename, status, created_at, updated_at")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`getLatestImportJob: ${error.message}`);
-  }
-
-  return (data ?? null) as ImportJobRow | null;
-}
-
-export async function getImportJobById(
-  companyId: string,
-  importJobId: string
-): Promise<ImportJobRow | null> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("import_jobs")
-    .select("id, company_id, filename, status, created_at, updated_at")
-    .eq("company_id", companyId)
+    .select("id, company_id, file_path, file_name, status")
     .eq("id", importJobId)
-    .maybeSingle();
+    .single();
 
-  if (error) {
-    throw new Error(`getImportJobById: ${error.message}`);
+  if (error || !data) {
+    throw new Error(`getImportJobById failed: ${error?.message ?? "not found"}`);
   }
 
-  return (data ?? null) as ImportJobRow | null;
+  return data;
 }
 
-export async function listImportRows(
-  importJobId: string,
-  limit = 500
-): Promise<ImportRowRow[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
+export async function getImportJobRowCounts(importJobId: string): Promise<{
+  total: number;
+  parsed: number;
+  invalid: number;
+}> {
+  const { data, error } = await supabaseAdmin
     .from("import_rows")
-    .select("id, import_id, row_number, raw, created_at")
-    .eq("import_id", importJobId)
-    .order("row_number", { ascending: true })
-    .limit(limit);
+    .select("status")
+    .eq("import_job_id", importJobId);
 
-  if (error) {
-    throw new Error(`listImportRows: ${error.message}`);
+  if (error || !data) {
+    throw new Error(`getImportJobRowCounts failed: ${error?.message ?? "unknown"}`);
   }
 
-  return (data ?? []) as ImportRowRow[];
-}
+  let parsed = 0;
+  let invalid = 0;
 
-export async function deleteLatestImportJob(companyId: string) {
-  const supabase = await createClient();
-
-  const latest = await getLatestImportJob(companyId);
-
-  if (!latest) {
-    return { deleted: false, reason: "no_latest_import" as const };
+  for (const row of data) {
+    if (row.status === "parsed") parsed += 1;
+    if (row.status === "invalid") invalid += 1;
   }
 
-  const { error: rowsError } = await supabase
-    .from("import_rows")
-    .delete()
-    .eq("import_id", latest.id);
-
-  if (rowsError) {
-    throw new Error(`deleteLatestImportJob import_rows: ${rowsError.message}`);
-  }
-
-  const { error: jobError } = await supabase
-    .from("import_jobs")
-    .delete()
-    .eq("id", latest.id)
-    .eq("company_id", companyId);
-
-  if (jobError) {
-    throw new Error(`deleteLatestImportJob import_jobs: ${jobError.message}`);
-  }
-
-  return { deleted: true, importJobId: latest.id };
+  return {
+    total: data.length,
+    parsed,
+    invalid,
+  };
 }

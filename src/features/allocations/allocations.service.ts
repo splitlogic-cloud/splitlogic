@@ -18,7 +18,7 @@ import type {
   AllocationExecutionResult,
   ImportRowForAllocation,
   WorkSplitRecord,
-} from "./allocations.types";
+} from "./allocations-types";
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
