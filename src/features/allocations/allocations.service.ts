@@ -24,7 +24,11 @@ function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function buildIdempotencyKey(companyId: string, importJobId: string, rowCount: number) {
+function buildIdempotencyKey(
+  companyId: string,
+  importJobId: string,
+  rowCount: number
+) {
   return crypto
     .createHash("sha256")
     .update(`${companyId}:${importJobId}:${rowCount}:allocation-v2`)
@@ -258,13 +262,18 @@ function buildAllocationLines(
     },
   }));
 
-  const totalAllocated = rawLines.reduce((sum, line) => sum + line.allocated_amount, 0);
+  const totalAllocated = rawLines.reduce(
+    (sum, line) => sum + line.allocated_amount,
+    0
+  );
   const delta = roundMoney(rowAmount - totalAllocated);
 
   if (rawLines.length > 0 && delta !== 0) {
     rawLines[rawLines.length - 1] = {
       ...rawLines[rawLines.length - 1]!,
-      allocated_amount: roundMoney(rawLines[rawLines.length - 1]!.allocated_amount + delta),
+      allocated_amount: roundMoney(
+        rawLines[rawLines.length - 1]!.allocated_amount + delta
+      ),
     };
   }
 
@@ -276,16 +285,26 @@ export async function runAllocationForImportJob(params: {
   importJobId: string;
   createdBy?: string | null;
 }): Promise<AllocationExecutionResult> {
-  const importJob = await getImportJobForCompany(params.companyId, params.importJobId);
+  const importJob = await getImportJobForCompany(
+    params.companyId,
+    params.importJobId
+  );
 
   if (!importJob) {
     throw new Error("Import job not found for company.");
   }
 
-  const rows = await listImportRowsForAllocation(params.companyId, params.importJobId);
+  const rows = await listImportRowsForAllocation(
+    params.companyId,
+    params.importJobId
+  );
 
   const distinctCurrencies = [
-    ...new Set(rows.map((row) => row.currency).filter((value): value is string => Boolean(value))),
+    ...new Set(
+      rows
+        .map((row) => row.currency)
+        .filter((value): value is string => Boolean(value))
+    ),
   ];
 
   const run = await createAllocationRun({
@@ -293,7 +312,11 @@ export async function runAllocationForImportJob(params: {
     importJobId: params.importJobId,
     currency: distinctCurrencies.length === 1 ? distinctCurrencies[0] : null,
     createdBy: params.createdBy ?? null,
-    idempotencyKey: buildIdempotencyKey(params.companyId, params.importJobId, rows.length),
+    idempotencyKey: buildIdempotencyKey(
+      params.companyId,
+      params.importJobId,
+      rows.length
+    ),
   });
 
   try {
@@ -339,7 +362,10 @@ export async function runAllocationForImportJob(params: {
       lines.push(...rowLines);
 
       allocatedRowCount += 1;
-      allocatedAmount += rowLines.reduce((sum, line) => sum + line.allocated_amount, 0);
+      allocatedAmount += rowLines.reduce(
+        (sum, line) => sum + line.allocated_amount,
+        0
+      );
     }
 
     await insertAllocationRunLines(lines);
@@ -350,13 +376,10 @@ export async function runAllocationForImportJob(params: {
     const unallocatedRounded = roundMoney(grossRounded - allocatedRounded);
 
     await finalizeAllocationRun({
-      runId: run.id,
-      inputRowCount: rows.length,
-      allocatedRowCount,
-      blockerCount: blockers.length,
-      grossAmount: grossRounded,
-      allocatedAmount: allocatedRounded,
-      unallocatedAmount: unallocatedRounded,
+      allocationRunId: run.id,
+      lineCount: lines.length,
+      totalSourceAmount: grossRounded,
+      totalAllocatedAmount: allocatedRounded,
     });
 
     await updateImportRowsAllocationStatus(params.importJobId, "completed");
@@ -373,9 +396,14 @@ export async function runAllocationForImportJob(params: {
       currency: distinctCurrencies.length === 1 ? distinctCurrencies[0] : null,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown allocation error";
+    const message =
+      error instanceof Error ? error.message : "Unknown allocation error";
 
-    await failAllocationRun(run.id, message);
+    await failAllocationRun({
+      allocationRunId: run.id,
+      errorMessage: message,
+    });
+
     await updateImportRowsAllocationStatus(params.importJobId, "failed");
 
     throw error;

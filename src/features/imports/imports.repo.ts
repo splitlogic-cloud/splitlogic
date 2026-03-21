@@ -1,7 +1,11 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { ImportJobStatus, ImportRowStatus, RawImportRow } from "./import-types";
+import type {
+  ImportJobStatus,
+  ImportRowStatus,
+  RawImportRow,
+} from "@/features/imports/imports-types";
 
 export async function setImportJobStatus(
   importJobId: string,

@@ -227,3 +227,14 @@ export async function finalizeImportRowsForJob(importJobId: string) {
     matchedCount,
   };
 }
+
+export async function processImportJob(input: { importJobId: string } | string) {
+  const importJobId =
+    typeof input === "string" ? input : String(input.importJobId ?? "");
+
+  if (!importJobId) {
+    throw new Error("Missing importJobId");
+  }
+
+  return finalizeImportRowsForJob(importJobId);
+}

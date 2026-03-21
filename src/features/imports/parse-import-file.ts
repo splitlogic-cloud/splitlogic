@@ -2,7 +2,7 @@ import "server-only";
 
 import Papa from "papaparse";
 import { detectImportSource } from "./source-adapters";
-import { RawImportRow } from "./import-types";
+import type { RawImportRow } from "@/features/imports/imports-types";
 
 export type ParsedImportFile = {
   sourceKey: string;

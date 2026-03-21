@@ -11,146 +11,152 @@ export type WorkSplitCoverageRow = {
   is_complete: boolean;
 };
 
-export type WorkSplitCoverageBlocker = {
-  id: string;
-  blocker_code: string;
-  severity: string;
-  message: string;
-  import_row_id: string | null;
-  created_at: string;
+export type CoverageBlockerRow = {
+  id?: string;
+  status?: string | null;
+  row_number?: number | null;
+  raw_title?: string | null;
 };
 
-export type WorkSplitCoverageSummary = {
+export type SplitCoverageSummary = {
+  rows: WorkSplitCoverageRow[];
+  blockers: CoverageBlockerRow[];
+
   totalWorks: number;
   worksWithAnySplits: number;
   worksFullyCovered: number;
   worksMissingSplits: number;
+
+  completeWorks: number;
+  incompleteWorks: number;
+
+  blockerCount: number;
   blockersCount: number;
 };
 
-type InternalCoverageResult = {
-  summary: WorkSplitCoverageSummary;
-  rows: WorkSplitCoverageRow[];
-  blockers: WorkSplitCoverageBlocker[];
+type WorkSplitJoinRow = {
+  work_id: string | null;
+  share_bps: number | null;
+  works:
+    | {
+        id: string;
+        title: string | null;
+        company_id?: string | null;
+      }
+    | Array<{
+        id: string;
+        title: string | null;
+        company_id?: string | null;
+      }>
+    | null;
 };
 
-function asString(value: unknown): string | null {
-  if (value == null) return null;
-  const s = String(value).trim();
-  return s.length > 0 ? s : null;
-}
+function normalizeJoinedWork(
+  works: WorkSplitJoinRow["works"]
+): { id: string; title: string | null } | null {
+  if (!works) return null;
 
-function asNumber(value: unknown): number {
-  const n = Number(value ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
+  if (Array.isArray(works)) {
+    const first = works[0];
+    if (!first?.id) return null;
 
-async function loadCoverageData(params: {
-  companyId: string;
-  importJobId?: string | null;
-  allocationRunId?: string | null;
-}): Promise<InternalCoverageResult> {
-  const { data: works, error: worksError } = await supabaseAdmin
-    .from("works")
-    .select("id, title")
-    .eq("company_id", params.companyId)
-    .order("title", { ascending: true });
-
-  if (worksError) {
-    throw new Error(`Failed to load works: ${worksError.message}`);
+    return {
+      id: first.id,
+      title: first.title ?? null,
+    };
   }
 
-  const workIds = (works ?? []).map((work) => String(work.id));
+  if (!works.id) return null;
 
-  let splitRows:
-    | Array<{
-        work_id: string;
-        share_bps: number | null;
-      }>
-    | null = [];
+  return {
+    id: works.id,
+    title: works.title ?? null,
+  };
+}
 
-  if (workIds.length > 0) {
-    const { data, error } = await supabaseAdmin
-      .from("work_splits")
-      .select("work_id, share_bps")
-      .eq("company_id", params.companyId)
-      .in("work_id", workIds);
+async function loadCoverageRows(companyId: string): Promise<WorkSplitCoverageRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("work_splits")
+    .select(
+      `
+      work_id,
+      share_bps,
+      works!inner (
+        id,
+        title,
+        company_id
+      )
+      `
+    )
+    .eq("company_id", companyId);
 
-    if (error) {
-      throw new Error(`Failed to load work splits: ${error.message}`);
-    }
-
-    splitRows = data;
+  if (error) {
+    throw new Error(`loadCoverageRows failed: ${error.message}`);
   }
 
-  const splitStats = new Map<
-    string,
-    {
-      split_count: number;
-      total_share_bps: number;
-    }
-  >();
+  const grouped = new Map<string, WorkSplitCoverageRow>();
 
-  for (const split of splitRows ?? []) {
-    const workId = String(split.work_id);
-    const current = splitStats.get(workId) ?? {
+  for (const rawRow of (data ?? []) as WorkSplitJoinRow[]) {
+    const work = normalizeJoinedWork(rawRow.works);
+    const workId = work?.id ?? rawRow.work_id ?? null;
+
+    if (!workId) continue;
+
+    const shareBps = Number(rawRow.share_bps ?? 0);
+
+    const current = grouped.get(workId) ?? {
+      work_id: workId,
+      work_title: work?.title ?? null,
       split_count: 0,
       total_share_bps: 0,
+      is_complete: false,
     };
 
     current.split_count += 1;
-    current.total_share_bps += asNumber(split.share_bps);
+    current.total_share_bps += shareBps;
+    current.is_complete = current.total_share_bps === 10000;
 
-    splitStats.set(workId, current);
+    grouped.set(workId, current);
   }
 
-  const rows: WorkSplitCoverageRow[] = (works ?? []).map((work) => {
-    const workId = String(work.id);
-    const stat = splitStats.get(workId) ?? {
-      split_count: 0,
-      total_share_bps: 0,
-    };
+  return Array.from(grouped.values()).sort((a, b) =>
+    (a.work_title ?? "").localeCompare(b.work_title ?? "")
+  );
+}
 
-    return {
-      work_id: workId,
-      work_title: asString(work.title),
-      split_count: stat.split_count,
-      total_share_bps: stat.total_share_bps,
-      is_complete: stat.split_count > 0 && stat.total_share_bps === 10000,
-    };
-  });
+export async function getSplitCoverageSummary(params: {
+  companyId: string;
+  importJobId?: string | null;
+  allocationRunId?: string | null;
+}): Promise<SplitCoverageSummary> {
+  const rows = await loadCoverageRows(params.companyId);
 
-  const worksWithAnySplits = rows.filter((row) => row.split_count > 0).length;
-  const worksFullyCovered = rows.filter((row) => row.is_complete).length;
-  const worksMissingSplits = rows.filter((row) => row.split_count === 0).length;
-
-  const rawBlockers = params.importJobId
-    ? await listAllocationBlockersForImport(
-        params.companyId,
-        params.importJobId,
-        params.allocationRunId ?? null
-      )
+  const blockers = params.importJobId
+    ? ((await listAllocationBlockersForImport(
+        params.importJobId
+      )) as CoverageBlockerRow[])
     : [];
 
-  const blockers: WorkSplitCoverageBlocker[] = rawBlockers.map((blocker) => ({
-    id: blocker.id,
-    blocker_code: blocker.blocker_code,
-    severity: blocker.severity,
-    message: blocker.message,
-    import_row_id: blocker.import_row_id,
-    created_at: blocker.created_at,
-  }));
+  const totalWorks = rows.length;
+  const worksWithAnySplits = rows.filter((row) => row.split_count > 0).length;
+  const worksFullyCovered = rows.filter((row) => row.is_complete).length;
+  const worksMissingSplits = totalWorks - worksWithAnySplits;
+  const completeWorks = worksFullyCovered;
+  const incompleteWorks = totalWorks - completeWorks;
+  const blockerCount = blockers.length;
+  const blockersCount = blockers.length;
 
   return {
-    summary: {
-      totalWorks: rows.length,
-      worksWithAnySplits,
-      worksFullyCovered,
-      worksMissingSplits,
-      blockersCount: blockers.length,
-    },
     rows,
     blockers,
+    totalWorks,
+    worksWithAnySplits,
+    worksFullyCovered,
+    worksMissingSplits,
+    completeWorks,
+    incompleteWorks,
+    blockerCount,
+    blockersCount,
   };
 }
 
@@ -158,9 +164,8 @@ export async function getWorkSplitCoverageSummary(params: {
   companyId: string;
   importJobId?: string | null;
   allocationRunId?: string | null;
-}): Promise<WorkSplitCoverageSummary> {
-  const result = await loadCoverageData(params);
-  return result.summary;
+}): Promise<SplitCoverageSummary> {
+  return getSplitCoverageSummary(params);
 }
 
 export async function listWorkSplitCoverage(params: {
@@ -168,15 +173,6 @@ export async function listWorkSplitCoverage(params: {
   importJobId?: string | null;
   allocationRunId?: string | null;
 }): Promise<WorkSplitCoverageRow[]> {
-  const result = await loadCoverageData(params);
-  return result.rows;
-}
-
-export async function listWorkSplitCoverageBlockers(params: {
-  companyId: string;
-  importJobId?: string | null;
-  allocationRunId?: string | null;
-}): Promise<WorkSplitCoverageBlocker[]> {
-  const result = await loadCoverageData(params);
-  return result.blockers;
+  const summary = await getSplitCoverageSummary(params);
+  return summary.rows;
 }

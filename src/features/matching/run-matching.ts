@@ -2,17 +2,52 @@ import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { decideMatch } from "./decide-match";
-import { getRowsToMatch, findWorkCandidates, saveMatchDecision } from "./matching.repo";
+import {
+  findWorkCandidates,
+  getRowsToMatch,
+  saveMatchDecision,
+} from "./matching.repo";
 import { scoreWorkCandidate } from "./score-work-candidate";
 
+type CanonicalRecord = Record<string, unknown>;
+
 function readCanonicalString(
-  canonical: Record<string, unknown> | null | undefined,
-  key: string,
+  canonical: CanonicalRecord | null | undefined,
+  keys: string[]
 ): string | null {
-  const value = canonical?.[key];
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text.length > 0 ? text : null;
+  for (const key of keys) {
+    const value = canonical?.[key];
+
+    if (value === null || value === undefined) continue;
+
+    const text = String(value).trim();
+    if (text.length > 0) return text;
+  }
+
+  return null;
+}
+
+function toCandidatePayload(input: unknown): Record<string, unknown> {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+
+  if (Array.isArray(input)) {
+    return { items: input };
+  }
+
+  return { items: [] };
+}
+
+function toExplanationPayload(
+  input: unknown,
+  fallbackReason: string
+): Record<string, unknown> {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+
+  return { reason: fallbackReason };
 }
 
 export async function runMatching(importJobId: string): Promise<{
@@ -22,9 +57,14 @@ export async function runMatching(importJobId: string): Promise<{
   unmatched: number;
   invalid: number;
 }> {
+  const now = new Date().toISOString();
+
   const { error: startError } = await supabaseAdmin
     .from("import_jobs")
-    .update({ status: "matching" })
+    .update({
+      status: "matching",
+      updated_at: now,
+    })
     .eq("id", importJobId);
 
   if (startError) {
@@ -39,12 +79,23 @@ export async function runMatching(importJobId: string): Promise<{
   let invalid = 0;
 
   for (const row of rows) {
-    const canonical = row.canonical ?? {};
+    const canonical = (row.canonical ?? {}) as CanonicalRecord;
 
-    const sourceIsrc = readCanonicalString(canonical, "isrc");
-    const sourceUpc = readCanonicalString(canonical, "upc");
-    const sourceTitle = readCanonicalString(canonical, "track_title");
-    const sourceArtist = readCanonicalString(canonical, "artist_name");
+    const sourceIsrc = readCanonicalString(canonical, ["isrc"]);
+    const sourceUpc = readCanonicalString(canonical, ["upc"]);
+    const sourceTitle = readCanonicalString(canonical, [
+      "track_title",
+      "title",
+      "track_name",
+      "song_title",
+      "asset_title",
+    ]);
+    const sourceArtist = readCanonicalString(canonical, [
+      "artist_name",
+      "artist",
+      "track_artist",
+      "main_artist",
+    ]);
 
     if (!sourceIsrc && !sourceUpc && !sourceTitle) {
       await saveMatchDecision({
@@ -53,11 +104,12 @@ export async function runMatching(importJobId: string): Promise<{
         status: "invalid",
         confidence: null,
         method: null,
-        candidates: [],
+        candidates: { items: [] },
         explanation: {
           reason: "Row lacks matchable identifiers",
         },
       });
+
       invalid += 1;
       continue;
     }
@@ -89,14 +141,22 @@ export async function runMatching(importJobId: string): Promise<{
       status: decision.status,
       confidence: decision.confidence,
       method: decision.method,
-      candidates: decision.candidates,
-      explanation: decision.explanation,
+      candidates: toCandidatePayload(decision.candidates),
+      explanation: toExplanationPayload(
+        decision.explanation,
+        "Match decision generated"
+      ),
     });
 
-    if (decision.status === "matched") matched += 1;
-    else if (decision.status === "needs_review") needsReview += 1;
-    else if (decision.status === "unmatched") unmatched += 1;
-    else invalid += 1;
+    if (decision.status === "matched") {
+      matched += 1;
+    } else if (decision.status === "needs_review") {
+      needsReview += 1;
+    } else if (decision.status === "unmatched") {
+      unmatched += 1;
+    } else {
+      invalid += 1;
+    }
   }
 
   const finalStatus =
@@ -104,7 +164,10 @@ export async function runMatching(importJobId: string): Promise<{
 
   const { error: finishError } = await supabaseAdmin
     .from("import_jobs")
-    .update({ status: finalStatus })
+    .update({
+      status: finalStatus,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", importJobId);
 
   if (finishError) {

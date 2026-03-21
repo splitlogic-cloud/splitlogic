@@ -1,144 +1,144 @@
-import {
-    CanonicalImportRow,
-    CanonicalizationErrorCode,
-    CanonicalizationResult,
-    NormalizedImportRow,
-    RawImportRow,
-  } from "./import-types";
-  
-  function toCleanString(value: unknown): string | null {
-    if (value === null || value === undefined) return null;
-    const s = String(value).trim();
-    return s.length > 0 ? s : null;
+import "server-only";
+
+import type {
+  NormalizedImportRow,
+  RawImportRow,
+} from "@/features/imports/imports-types";
+
+function toCleanString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
   }
-  
-  function toUpperText(value: string | null): string | null {
-    return value ? value.trim().toUpperCase() : null;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const normalized = raw
+    .replace(/\s/g, "")
+    .replace(/\u00A0/g, "")
+    .replace(/(?<=\d),(?=\d{1,2}$)/, ".")
+    .replace(/,/g, "");
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pickFirstString(
+  row: RawImportRow,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = toCleanString(row[key]);
+    if (value) return value;
   }
-  
-  function pickFirst(...values: Array<unknown>): string | null {
-    for (const value of values) {
-      const s = toCleanString(value);
-      if (s) return s;
-    }
-    return null;
+  return null;
+}
+
+function pickFirstNumber(
+  row: RawImportRow,
+  keys: string[]
+): number | null {
+  for (const key of keys) {
+    const value = toNullableNumber(row[key]);
+    if (value !== null) return value;
   }
-  
-  function parseNumericString(value: string | null): string | null {
-    if (!value) return null;
-  
-    const cleaned = value
-      .replace(/\u00A0/g, "")
-      .replace(/\s+/g, "")
-      .replace(/,/g, ".");
-  
-    if (!cleaned) return null;
-    if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
-  
-    return cleaned;
-  }
-  
-  export function canonicalizeImportRow(
-    raw: RawImportRow,
-    sourcePlatform: string,
-  ): CanonicalizationResult {
-    const normalized: NormalizedImportRow = {
-      sourcePlatform: toCleanString(sourcePlatform),
-      sourceCurrency: toUpperText(
-        pickFirst(
-          raw["currency"],
-          raw["Currency"],
-          raw["ACCOUNT CURRENCY"],
-          raw["account_currency"],
-        ),
-      ),
-      sourceNetAmount: pickFirst(
-        raw["net_amount"],
-        raw["amount"],
-        raw["Amount"],
-        raw["NET SHARE ACCOUNT CURRENCY"],
-      ),
-      sourceGrossAmount: pickFirst(
-        raw["gross_amount"],
-        raw["Gross Amount"],
-        raw["GROSS REVENUE ACCOUNT CURRENCY"],
-      ),
-      sourceTrackTitle: pickFirst(
-        raw["track_title"],
-        raw["Track Title"],
-        raw["track"],
-        raw["title"],
-      ),
-      sourceArtistName: pickFirst(
-        raw["artist_name"],
-        raw["Artist Name"],
-        raw["artist"],
-      ),
-      sourceIsrc: pickFirst(raw["isrc"], raw["ISRC"]),
-      sourceUpc: pickFirst(raw["upc"], raw["UPC"]),
-      sourceWorkRef: pickFirst(
-        raw["work_ref"],
-        raw["work_id"],
-        raw["Work ID"],
-        raw["isrc"],
-        raw["ISRC"],
-        raw["track_title"],
-        raw["Track Title"],
-      ),
-    };
-  
-    const currency = normalized.sourceCurrency;
-    const netAmount = parseNumericString(normalized.sourceNetAmount);
-    const grossAmount = parseNumericString(normalized.sourceGrossAmount);
-    const sourceWorkRef = normalized.sourceWorkRef;
-  
-    const canonical: CanonicalImportRow = {
-      currency,
-      net_amount: netAmount,
-      gross_amount: grossAmount,
-      work_ref: sourceWorkRef,
-      isrc: normalized.sourceIsrc,
-      upc: normalized.sourceUpc,
-      track_title: normalized.sourceTrackTitle,
-      artist_name: normalized.sourceArtistName,
-      source_platform: normalized.sourcePlatform,
-    };
-  
-    const errorCodes: CanonicalizationErrorCode[] = [];
-  
-    if (!currency) {
-      errorCodes.push("missing_currency");
-    }
-  
-    if (!netAmount && !grossAmount) {
-      errorCodes.push("missing_amount");
-    }
-  
-    if (
-      normalized.sourceNetAmount &&
-      !netAmount &&
-      !errorCodes.includes("invalid_amount")
-    ) {
-      errorCodes.push("invalid_amount");
-    }
-  
-    if (!sourceWorkRef) {
-      errorCodes.push("missing_work_ref");
-    }
-  
-    const rowStatus = errorCodes.includes("missing_currency") ||
-      errorCodes.includes("missing_amount")
-      ? "invalid"
-      : "parsed";
-  
-    return {
-      normalized,
-      canonical,
-      currency,
-      netAmount,
-      grossAmount,
-      sourceWorkRef,
-      rowStatus,
-      errorCodes,
-    };
-  }
+  return null;
+}
+
+export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
+  const title = pickFirstString(raw, [
+    "title",
+    "track_title",
+    "track name",
+    "track_name",
+    "song_title",
+    "asset_title",
+    "release_track_name",
+  ]);
+
+  const artist = pickFirstString(raw, [
+    "artist",
+    "artist_name",
+    "track_artist",
+    "main_artist",
+  ]);
+
+  const isrc = pickFirstString(raw, [
+    "isrc",
+    "isrc_code",
+  ]);
+
+  const currency = pickFirstString(raw, [
+    "currency",
+    "account_currency",
+    "sale_currency",
+    "royalty_currency",
+  ]);
+
+  const quantity = pickFirstNumber(raw, [
+    "quantity",
+    "qty",
+    "units",
+    "sales_quantity",
+    "streams",
+  ]);
+
+  const netAmount = pickFirstNumber(raw, [
+    "net_amount",
+    "net",
+    "net_revenue",
+    "amount",
+    "royalty_amount",
+  ]);
+
+  const grossAmount = pickFirstNumber(raw, [
+    "gross_amount",
+    "gross",
+    "gross_revenue",
+    "sale_amount",
+  ]);
+
+  const statementDate = pickFirstString(raw, [
+    "statement_date",
+    "sale_date",
+    "report_date",
+    "date",
+  ]);
+
+  const territory = pickFirstString(raw, [
+    "territory",
+    "country",
+    "sale_country",
+  ]);
+
+  const source = pickFirstString(raw, [
+    "source",
+    "store",
+    "service",
+    "platform",
+    "dsp",
+  ]);
+
+  return {
+    raw,
+    title,
+    artist,
+    isrc,
+    currency,
+    quantity,
+    net_amount: netAmount,
+    gross_amount: grossAmount,
+    statement_date: statementDate,
+    territory,
+    source,
+  };
+}
