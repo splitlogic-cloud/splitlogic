@@ -39,41 +39,78 @@ function toRawImportValue(value: unknown): RawImportValue {
   return String(value).trim();
 }
 
-export async function parseImportFile(fileText: string): Promise<ParsedImportFile> {
-  const parsed = Papa.parse<Record<string, unknown>>(fileText, {
+function parseWithDelimiter(fileText: string, delimiter?: string) {
+  return Papa.parse<Record<string, unknown>>(fileText, {
     header: true,
     skipEmptyLines: true,
+    delimiter,
     transformHeader(header) {
       return normalizeHeader(header);
     },
   });
+}
 
-  if (parsed.errors.length > 0) {
+export async function parseImportFile(fileText: string): Promise<ParsedImportFile> {
+  let parsed = parseWithDelimiter(fileText);
+
+  const blockingErrors = parsed.errors.filter(
+    (e) => e.code !== "UndetectableDelimiter"
+  );
+
+  if (blockingErrors.length > 0) {
     throw new Error(
-      `CSV parse failed: ${parsed.errors.map((e) => e.message).join("; ")}`
+      `CSV parse failed: ${blockingErrors.map((e) => e.message).join("; ")}`
     );
   }
 
-  const rows = parsed.data
-    .filter((row) =>
+  let rows = parsed.data.filter((row) =>
+    Object.values(row).some((value) => String(value ?? "").trim() !== "")
+  );
+
+  let headers = Object.keys(rows[0] ?? {});
+
+  const looksLikeSingleColumn =
+    headers.length <= 1 &&
+    rows.length > 0 &&
+    Object.values(rows[0] ?? {}).some(
+      (value) => typeof value === "string" && String(value).includes(";")
+    );
+
+  if (rows.length === 0 || looksLikeSingleColumn) {
+    const semicolonParsed = parseWithDelimiter(fileText, ";");
+
+    const semicolonBlockingErrors = semicolonParsed.errors.filter(
+      (e) => e.code !== "UndetectableDelimiter"
+    );
+
+    if (semicolonBlockingErrors.length > 0) {
+      throw new Error(
+        `CSV parse failed: ${semicolonBlockingErrors.map((e) => e.message).join("; ")}`
+      );
+    }
+
+    parsed = semicolonParsed;
+    rows = parsed.data.filter((row) =>
       Object.values(row).some((value) => String(value ?? "").trim() !== "")
-    )
-    .map((row) => {
-      const normalized: RawImportRow = {};
+    );
+    headers = Object.keys(rows[0] ?? {});
+  }
 
-      for (const [key, value] of Object.entries(row)) {
-        normalized[key] = toRawImportValue(value);
-      }
+  const normalizedRows: RawImportRow[] = rows.map((row) => {
+    const normalized: RawImportRow = {};
 
-      return normalized;
-    });
+    for (const [key, value] of Object.entries(row)) {
+      normalized[key] = toRawImportValue(value);
+    }
 
-  const headers = Object.keys(rows[0] ?? {});
+    return normalized;
+  });
+
   const sourceKey = detectImportSource(headers);
 
   return {
     sourceKey,
-    rows,
+    rows: normalizedRows,
     headers,
   };
 }
