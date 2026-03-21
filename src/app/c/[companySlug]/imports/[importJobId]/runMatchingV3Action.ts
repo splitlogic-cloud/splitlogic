@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { matchImportRowsForImport } from "@/features/matching/match-import-rows";
+import { matchImportRowsForImport } from "@/features/imports/imports.matching";
+
+type CompanyRecord = {
+  id: string;
+  slug: string | null;
+};
 
 export async function runMatchingV3Action(formData: FormData) {
   const companySlug = String(formData.get("companySlug") ?? "");
@@ -22,21 +27,43 @@ export async function runMatchingV3Action(formData: FormData) {
     throw new Error("Company not found");
   }
 
-  const { data: importJob, error: importError } = await supabaseAdmin
+  const typedCompany = company as CompanyRecord;
+
+  const { data: importJob, error: importJobError } = await supabaseAdmin
     .from("import_jobs")
-    .select("id, company_id")
+    .select("id, company_id, status")
     .eq("id", importJobId)
-    .eq("company_id", company.id)
+    .eq("company_id", typedCompany.id)
     .maybeSingle();
 
-  if (importError || !importJob) {
+  if (importJobError || !importJob) {
     throw new Error("Import job not found");
   }
 
-  await matchImportRowsForImport({
-    companyId: company.id,
-    importId: importJob.id,
-  });
+  await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: "matching",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", importJobId);
+
+  try {
+    await matchImportRowsForImport({
+      companyId: typedCompany.id,
+      importJobId,
+    });
+  } catch (error) {
+    await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", importJobId);
+
+    throw error;
+  }
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
 }

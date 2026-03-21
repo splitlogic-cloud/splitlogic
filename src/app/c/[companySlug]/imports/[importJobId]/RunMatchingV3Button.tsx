@@ -1,40 +1,31 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useTransition } from "react";
-import { runMatchingV3Action } from "./runMatchingV3Action";
+import { useFormStatus } from "react-dom";
 
-type Props = {
-  companySlug: string;
-  importJobId: string;
-};
-
-export default function RunMatchingV3Button({
-  companySlug,
-  importJobId,
-}: Props) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-
-  function onRun() {
-    const formData = new FormData();
-    formData.set("companySlug", companySlug);
-    formData.set("importJobId", importJobId);
-
-    startTransition(async () => {
-      await runMatchingV3Action(formData);
-      router.refresh();
-    });
-  }
+function SubmitButton() {
+  const { pending } = useFormStatus();
 
   return (
     <button
-      type="button"
-      onClick={onRun}
-      disabled={isPending}
-      className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+      type="submit"
+      disabled={pending}
+      className="rounded-md border px-4 py-2 text-sm font-medium disabled:opacity-50"
     >
-      {isPending ? "Running matching..." : "Run work matching"}
+      {pending ? "Running matching..." : "Run matching"}
     </button>
+  );
+}
+
+export default function RunMatchingV3Button(props: {
+  companySlug: string;
+  importJobId: string;
+  action: (formData: FormData) => Promise<void>;
+}) {
+  return (
+    <form action={props.action}>
+      <input type="hidden" name="companySlug" value={props.companySlug} />
+      <input type="hidden" name="importJobId" value={props.importJobId} />
+      <SubmitButton />
+    </form>
   );
 }
