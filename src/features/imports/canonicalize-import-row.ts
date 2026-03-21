@@ -32,10 +32,7 @@ function toNullableNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function pickFirstString(
-  row: RawImportRow,
-  keys: string[]
-): string | null {
+function pickFirstString(row: RawImportRow, keys: string[]): string | null {
   for (const key of keys) {
     const value = toCleanString(row[key]);
     if (value) return value;
@@ -43,10 +40,7 @@ function pickFirstString(
   return null;
 }
 
-function pickFirstNumber(
-  row: RawImportRow,
-  keys: string[]
-): number | null {
+function pickFirstNumber(row: RawImportRow, keys: string[]): number | null {
   for (const key of keys) {
     const value = toNullableNumber(row[key]);
     if (value !== null) return value;
@@ -58,11 +52,11 @@ export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
   const title = pickFirstString(raw, [
     "title",
     "track_title",
-    "track name",
     "track_name",
     "song_title",
     "asset_title",
     "release_track_name",
+    "work_title",
   ]);
 
   const artist = pickFirstString(raw, [
@@ -75,6 +69,8 @@ export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
   const isrc = pickFirstString(raw, [
     "isrc",
     "isrc_code",
+    "track_isrc",
+    "sound_recording_code",
   ]);
 
   const currency = pickFirstString(raw, [
@@ -98,6 +94,7 @@ export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
     "net_revenue",
     "amount",
     "royalty_amount",
+    "net_share_account_currency",
   ]);
 
   const grossAmount = pickFirstNumber(raw, [
@@ -105,6 +102,7 @@ export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
     "gross",
     "gross_revenue",
     "sale_amount",
+    "gross_revenue_account_currency",
   ]);
 
   const statementDate = pickFirstString(raw, [
@@ -129,7 +127,6 @@ export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
   ]);
 
   return {
-    raw,
     title,
     artist,
     isrc,

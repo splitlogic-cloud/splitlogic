@@ -10,31 +10,50 @@ export type ParsedImportFile = {
   headers: string[];
 };
 
+function normalizeHeader(header: string): string {
+  return String(header)
+    .replace(/\uFEFF/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 export async function parseImportFile(fileText: string): Promise<ParsedImportFile> {
   const parsed = Papa.parse<Record<string, unknown>>(fileText, {
     header: true,
     skipEmptyLines: true,
     transformHeader(header) {
-      return String(header).trim();
+      return normalizeHeader(header);
     },
   });
 
   if (parsed.errors.length > 0) {
     throw new Error(
-      `CSV parse failed: ${parsed.errors.map((e) => e.message).join("; ")}`,
+      `CSV parse failed: ${parsed.errors.map((e) => e.message).join("; ")}`
     );
   }
 
-  const rows = parsed.data.filter((row) =>
-    Object.values(row).some((value) => String(value ?? "").trim() !== "")
-  );
+  const rows = parsed.data
+    .filter((row) =>
+      Object.values(row).some((value) => String(value ?? "").trim() !== "")
+    )
+    .map((row) => {
+      const normalized: RawImportRow = {};
+
+      for (const [key, value] of Object.entries(row)) {
+        normalized[key] = typeof value === "string" ? value.trim() : value;
+      }
+
+      return normalized;
+    });
 
   const headers = Object.keys(rows[0] ?? {});
   const sourceKey = detectImportSource(headers);
 
   return {
     sourceKey,
-    rows: rows as RawImportRow[],
+    rows,
     headers,
   };
 }
