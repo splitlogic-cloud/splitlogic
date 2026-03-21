@@ -5,6 +5,8 @@ import type {
   RawImportRow,
 } from "@/features/imports/imports-types";
 
+type CanonicalImportRow = Omit<NormalizedImportRow, "raw">;
+
 function toCleanString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
 
@@ -48,7 +50,7 @@ function pickFirstNumber(row: RawImportRow, keys: string[]): number | null {
   return null;
 }
 
-export function canonicalizeImportRow(raw: RawImportRow): NormalizedImportRow {
+export function canonicalizeImportRow(raw: RawImportRow): CanonicalImportRow {
   const title = pickFirstString(raw, [
     "title",
     "track_title",
