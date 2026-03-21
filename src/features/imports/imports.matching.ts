@@ -17,6 +17,41 @@ function pickString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function normalizeIsrc(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const normalized = value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+  if (!normalized) return null;
+
+  return normalized;
+}
+
+export function readRawIsrc(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const record = raw as Record<string, unknown>;
+
+  const candidates = [
+    record.isrc,
+    record.ISRC,
+    record.isrc_code,
+    record.track_isrc,
+    record.sound_recording_code,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return normalizeIsrc(candidate);
+    }
+  }
+
+  return null;
+}
+
 function readCandidateTitle(row: ImportRowRecord): string | null {
   return (
     pickString(row.normalized?.title) ??
@@ -43,15 +78,12 @@ function readCandidateArtist(row: ImportRowRecord): string | null {
 }
 
 function readCandidateIsrc(row: ImportRowRecord): string | null {
-  const value =
-    pickString(row.normalized?.isrc) ??
-    pickString(row.canonical?.isrc) ??
-    pickString(row.raw?.isrc) ??
-    pickString(row.raw?.isrc_code) ??
-    pickString(row.raw?.track_isrc) ??
-    null;
-
-  return value ? value.toUpperCase() : null;
+  return (
+    normalizeIsrc(pickString(row.normalized?.isrc)) ??
+    normalizeIsrc(pickString(row.canonical?.isrc)) ??
+    readRawIsrc(row.raw) ??
+    null
+  );
 }
 
 export async function matchImportRowsForImport(params: {
