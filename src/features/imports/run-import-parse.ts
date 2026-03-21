@@ -10,8 +10,6 @@ type ImportJobRecord = {
   file_name: string | null;
   storage_bucket: string | null;
   storage_path: string | null;
-  bucket: string | null;
-  file_path: string | null;
 };
 
 type CanonicalRow = ReturnType<typeof canonicalizeImportRow>;
@@ -35,20 +33,13 @@ function normalizeRowStatus(params: {
 }
 
 function buildNormalizedRow(canonical: CanonicalRow) {
-  const title = canonical.title?.trim() ?? null;
-  const artist = canonical.artist?.trim() ?? null;
-  const isrc = canonical.isrc?.trim().toUpperCase() ?? null;
-  const currency = canonical.currency?.trim().toUpperCase() ?? null;
-  const source = canonical.source?.trim() ?? null;
-  const territory = canonical.territory?.trim().toUpperCase() ?? null;
-
   return {
-    title,
-    artist,
-    isrc,
-    currency,
-    source,
-    territory,
+    title: canonical.title?.trim() ?? null,
+    artist: canonical.artist?.trim() ?? null,
+    isrc: canonical.isrc?.trim().toUpperCase() ?? null,
+    currency: canonical.currency?.trim().toUpperCase() ?? null,
+    source: canonical.source?.trim() ?? null,
+    territory: canonical.territory?.trim().toUpperCase() ?? null,
     quantity: canonical.quantity ?? null,
     net_amount: canonical.net_amount ?? null,
     gross_amount: canonical.gross_amount ?? null,
@@ -60,18 +51,11 @@ function resolveStorageLocation(job: ImportJobRecord): {
   bucket: string;
   path: string;
 } {
-  const bucket =
-    job.storage_bucket?.trim() ||
-    job.bucket?.trim() ||
-    "imports";
-
-  const path =
-    job.storage_path?.trim() ||
-    job.file_path?.trim() ||
-    null;
+  const bucket = job.storage_bucket?.trim() || "imports";
+  const path = job.storage_path?.trim() || null;
 
   if (!path) {
-    throw new Error("Import job is missing storage path.");
+    throw new Error("Import job is missing storage_path.");
   }
 
   return { bucket, path };
@@ -113,9 +97,7 @@ export async function runImportParse(importJobId: string): Promise<{
       company_id,
       file_name,
       storage_bucket,
-      storage_path,
-      bucket,
-      file_path
+      storage_path
       `
     )
     .eq("id", importJobId)
@@ -130,21 +112,18 @@ export async function runImportParse(importJobId: string): Promise<{
   }
 
   const job = importJob as ImportJobRecord;
-
   const now = new Date().toISOString();
 
-  {
-    const { error } = await supabaseAdmin
-      .from("import_jobs")
-      .update({
-        status: "parsing",
-        updated_at: now,
-      })
-      .eq("id", importJobId);
+  const { error: setParsingError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: "parsing",
+      updated_at: now,
+    })
+    .eq("id", importJobId);
 
-    if (error) {
-      throw new Error(`Failed to set import job to parsing: ${error.message}`);
-    }
+  if (setParsingError) {
+    throw new Error(`Failed to set import job to parsing: ${setParsingError.message}`);
   }
 
   try {
@@ -182,6 +161,7 @@ export async function runImportParse(importJobId: string): Promise<{
         canonical.title ??
         (typeof raw["title"] === "string" ? raw["title"].trim() : null) ??
         (typeof raw["track_title"] === "string" ? raw["track_title"].trim() : null) ??
+        (typeof raw["work_title"] === "string" ? raw["work_title"].trim() : null) ??
         null;
 
       return {
@@ -215,9 +195,9 @@ export async function runImportParse(importJobId: string): Promise<{
       }
     }
 
+    const insertedRowCount = rowsToInsert.length;
     const parsedRowCount = rowsToInsert.filter((row) => row.status === "parsed").length;
     const invalidRowCount = rowsToInsert.filter((row) => row.status === "invalid").length;
-    const insertedRowCount = rowsToInsert.length;
 
     const { error: updateJobError } = await supabaseAdmin
       .from("import_jobs")
