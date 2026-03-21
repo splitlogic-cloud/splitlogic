@@ -2,7 +2,7 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { matchImportRowsForImport } from "@/features/matching/match-import-rows";
+import { matchImportRowsForImport } from "@/features/imports/imports.matching";
 
 async function runMatchingAction(formData: FormData) {
   "use server";
@@ -24,10 +24,45 @@ async function runMatchingAction(formData: FormData) {
     throw new Error("Company not found");
   }
 
-  await matchImportRowsForImport({
-    companyId: company.id,
-    importId: importJobId,
-  });
+  const { data: importJob, error: importJobError } = await supabaseAdmin
+    .from("import_jobs")
+    .select("id, company_id")
+    .eq("id", importJobId)
+    .eq("company_id", company.id)
+    .maybeSingle();
+
+  if (importJobError || !importJob) {
+    throw new Error("Import job not found");
+  }
+
+  const { error: setStatusError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: "matching",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", importJobId);
+
+  if (setStatusError) {
+    throw new Error(`Failed to set import job to matching: ${setStatusError.message}`);
+  }
+
+  try {
+    await matchImportRowsForImport({
+      companyId: company.id,
+      importJobId,
+    });
+  } catch (error) {
+    await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", importJobId);
+
+    throw error;
+  }
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
 }
