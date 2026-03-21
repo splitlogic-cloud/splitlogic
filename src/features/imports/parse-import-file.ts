@@ -2,7 +2,7 @@ import "server-only";
 
 import Papa from "papaparse";
 import { detectImportSource } from "./source-adapters";
-import type { RawImportRow } from "@/features/imports/imports-types";
+import type { RawImportRow, RawImportValue } from "@/features/imports/imports-types";
 
 export type ParsedImportFile = {
   sourceKey: string;
@@ -17,6 +17,26 @@ function normalizeHeader(header: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function toRawImportValue(value: unknown): RawImportValue {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return String(value).trim();
 }
 
 export async function parseImportFile(fileText: string): Promise<ParsedImportFile> {
@@ -42,7 +62,7 @@ export async function parseImportFile(fileText: string): Promise<ParsedImportFil
       const normalized: RawImportRow = {};
 
       for (const [key, value] of Object.entries(row)) {
-        normalized[key] = typeof value === "string" ? value.trim() : value;
+        normalized[key] = toRawImportValue(value);
       }
 
       return normalized;
