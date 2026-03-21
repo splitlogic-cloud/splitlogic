@@ -163,22 +163,22 @@ export async function runImportParse(importJobId: string): Promise<{
         (typeof raw["track_title"] === "string" ? raw["track_title"].trim() : null) ??
         (typeof raw["work_title"] === "string" ? raw["work_title"].trim() : null) ??
         null;
-
-      return {
-        company_id: job.company_id,
-        import_job_id: importJobId,
-        row_number: index + 1,
-        status,
-        raw,
-        canonical,
-        normalized,
-        raw_title: rawTitle,
-        currency: canonical.currency ?? null,
-        net_amount: canonical.net_amount ?? null,
-        gross_amount: canonical.gross_amount ?? null,
-        created_at: now,
-        updated_at: now,
-      };
+        return {
+          company_id: job.company_id,
+          import_id: importJobId,
+          import_job_id: importJobId,
+          row_number: index + 1,
+          status,
+          raw,
+          canonical,
+          normalized,
+          raw_title: rawTitle,
+          currency: canonical.currency ?? null,
+          net_amount: canonical.net_amount ?? null,
+          gross_amount: canonical.gross_amount ?? null,
+          created_at: now,
+          updated_at: now,
+        };
     });
 
     const chunkSize = 500;
