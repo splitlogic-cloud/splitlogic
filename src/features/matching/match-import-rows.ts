@@ -62,9 +62,7 @@ const UPDATE_CHUNK_SIZE = 500;
 function chunk<T>(items: T[], size: number): T[][] {
   if (size <= 0) throw new Error("chunk size must be > 0");
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
 
@@ -155,28 +153,22 @@ function extractCandidate(row: ImportRowRecord): CandidateRow {
 // Load rows
 // -----------------
 
-async function listImportRowsForMatching(
-  importJobId: string
-): Promise<ImportRowRecord[]> {
+async function listImportRowsForMatching(importJobId: string): Promise<ImportRowRecord[]> {
   const allRows: ImportRowRecord[] = [];
   let from = 0;
 
   while (true) {
     const to = from + MATCH_BATCH_SIZE - 1;
-
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("id, raw_title, canonical, normalized, raw")
       .eq("import_job_id", importJobId)
       .order("row_number", { ascending: true })
       .range(from, to);
-
     if (error) throw new Error(`Failed to load import rows: ${error.message}`);
     if (!data || data.length === 0) break;
-
     allRows.push(...(data as ImportRowRecord[]));
     if (data.length < MATCH_BATCH_SIZE) break;
-
     from += MATCH_BATCH_SIZE;
   }
 
@@ -187,31 +179,23 @@ async function listImportRowsForMatching(
 // Load works by ISRC
 // -----------------
 
-async function loadWorksByIsrc(
-  companyId: string,
-  isrcs: string[]
-): Promise<Map<string, string>> {
+async function loadWorksByIsrc(companyId: string, isrcs: string[]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (!isrcs.length) return map;
-
-  for (const isrcChunk of chunk(isrcs, 500)) {
+  for (const chunked of chunk(isrcs, 500)) {
     const { data, error } = await supabaseAdmin
       .from("works")
       .select("id, isrc")
       .eq("company_id", companyId)
-      .in("isrc", isrcChunk);
-
+      .in("isrc", chunked);
     if (error) throw new Error(`Failed to load works by ISRC: ${error.message}`);
-
     for (const row of data ?? []) {
-      const record = row as { id: string; isrc: string };
-      const workId = readString(record.id);
-      const isrc = normalizeIsrc(readString(record.isrc));
+      const workId = readString((row as any).id);
+      const isrc = normalizeIsrc(readString((row as any).isrc));
       if (!workId || !isrc) continue;
       if (!map.has(isrc)) map.set(isrc, workId);
     }
   }
-
   return map;
 }
 
@@ -224,14 +208,15 @@ function buildAliasKeysFromCandidates(candidates: CandidateRow[]): string[] {
   for (const c of candidates) {
     const title = normalizeText(c.title);
     const artist = normalizeText(c.artist);
-    if (!title || !artist) continue;
-    keys.add(buildAliasKey(title, artist));
+    if (!title) continue;
+    // Use title+artist if available
+    keys.add(artist ? buildAliasKey(title, artist) : title);
   }
   return Array.from(keys);
 }
 
 // -----------------
-// Resolve rows
+// Resolve rows with fallback
 // -----------------
 
 function resolveRows(
@@ -240,7 +225,9 @@ function resolveRows(
   aliasIndex: Map<string, string>
 ): RowResolution[] {
   const results: RowResolution[] = [];
+
   for (const c of candidates) {
+    // 1️⃣ Try ISRC exact
     if (c.isrc && worksByIsrc.has(c.isrc)) {
       results.push({
         rowId: c.rowId,
@@ -254,6 +241,8 @@ function resolveRows(
 
     const title = normalizeText(c.title);
     const artist = normalizeText(c.artist);
+
+    // 2️⃣ Try title+artist exact
     if (title && artist) {
       const key = buildAliasKey(title, artist);
       if (aliasIndex.has(key)) {
@@ -268,6 +257,19 @@ function resolveRows(
       }
     }
 
+    // 3️⃣ Fallback: title only fuzzy
+    if (title && aliasIndex.has(title)) {
+      results.push({
+        rowId: c.rowId,
+        workId: aliasIndex.get(title) ?? null,
+        matched: true,
+        source: "fuzzy",
+        confidence: 0.7,
+      });
+      continue;
+    }
+
+    // 4️⃣ Needs review
     results.push({
       rowId: c.rowId,
       workId: null,
@@ -276,6 +278,7 @@ function resolveRows(
       confidence: 0,
     });
   }
+
   return results;
 }
 
@@ -283,10 +286,7 @@ function resolveRows(
 // Build updates
 // -----------------
 
-function buildImportRowUpdates(
-  resolutions: RowResolution[],
-  now: string
-): ImportRowUpdate[] {
+function buildImportRowUpdates(resolutions: RowResolution[], now: string): ImportRowUpdate[] {
   return resolutions.map((r) => {
     const matched = r.matched && !!r.workId;
     return {
@@ -349,7 +349,7 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
 }
 
 // -----------------
-// Main function
+// Main
 // -----------------
 
 export async function matchImportRowsForImport(
@@ -362,19 +362,20 @@ export async function matchImportRowsForImport(
   const rows = await listImportRowsForMatching(importJobId);
   const candidates = rows.map(extractCandidate);
 
-  const uniqueIsrcs = Array.from(
-    new Set(candidates.map((c) => c.isrc).filter((v): v is string => !!v))
-  );
+  const uniqueIsrcs = Array.from(new Set(candidates.map((c) => c.isrc).filter(Boolean)));
   const aliasKeys = buildAliasKeysFromCandidates(candidates);
 
   const worksByIsrc = await loadWorksByIsrc(companyId, uniqueIsrcs);
-  const aliasIndex = await loadWorkAliasIndexForCandidates({
+
+  const aliasIndexRaw = await loadWorkAliasIndexForCandidates({
     companyId,
     keys: aliasKeys,
     isrcs: uniqueIsrcs,
   });
 
-  const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex.byKey);
+  const aliasIndex = aliasIndexRaw.byKey;
+
+  const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex);
   const now = new Date().toISOString();
   const updates = buildImportRowUpdates(resolutions, now);
 

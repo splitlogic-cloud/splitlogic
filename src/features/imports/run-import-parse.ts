@@ -163,6 +163,7 @@ export async function runImportParse(importJobId: string): Promise<{
         (typeof raw["track_title"] === "string" ? raw["track_title"].trim() : null) ??
         (typeof raw["work_title"] === "string" ? raw["work_title"].trim() : null) ??
         null;
+        
         return {
           company_id: job.company_id,
           import_id: importJobId,
