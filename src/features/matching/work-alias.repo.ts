@@ -80,13 +80,13 @@ export async function findWorkByAlias(params: {
   artist: string;
   isrc: string | null;
 }) {
-  const k = buildAliasKey(params.title, params.artist);
+  const aliasKey = buildAliasKey(params.title, params.artist);
 
   const { data: blocked, error: blockedError } = await supabaseAdmin
     .from("work_alias_blacklist")
     .select("id")
     .eq("company_id", params.companyId)
-    .eq("key", k)
+    .eq("key", aliasKey)
     .maybeSingle();
 
   if (blockedError) {
@@ -99,7 +99,7 @@ export async function findWorkByAlias(params: {
     .from("work_aliases")
     .select("work_id")
     .eq("company_id", params.companyId)
-    .eq("key", k)
+    .eq("key", aliasKey)
     .maybeSingle();
 
   if (error) {
@@ -109,13 +109,13 @@ export async function findWorkByAlias(params: {
   if (data?.work_id) return data.work_id;
 
   if (params.isrc) {
-    const isrc = normalizeIsrc(params.isrc);
+    const normalized = normalizeIsrc(params.isrc);
 
     const { data: isrcMatch, error: isrcError } = await supabaseAdmin
       .from("work_aliases")
       .select("work_id")
       .eq("company_id", params.companyId)
-      .eq("isrc", isrc)
+      .eq("isrc", normalized)
       .maybeSingle();
 
     if (isrcError) {
@@ -136,13 +136,13 @@ export async function createAlias(params: {
   isrc: string | null;
   sourceName?: string | null;
 }) {
-  const k = buildAliasKey(params.title, params.artist);
+  const aliasKey = buildAliasKey(params.title, params.artist);
 
   const { error } = await supabaseAdmin.from("work_aliases").upsert(
     {
       company_id: params.companyId,
       work_id: params.workId,
-      key: k,
+      key: aliasKey,
       title: normalizeText(params.title),
       artist: normalizeArtist(params.artist),
       isrc: params.isrc ? normalizeIsrc(params.isrc) : null,
@@ -171,12 +171,12 @@ export async function addToBlacklist(params: {
   title: string;
   artist: string;
 }) {
-  const k = buildAliasKey(params.title, params.artist);
+  const aliasKey = buildAliasKey(params.title, params.artist);
 
   const { error } = await supabaseAdmin.from("work_alias_blacklist").upsert(
     {
       company_id: params.companyId,
-      key: k,
+      key: aliasKey,
     },
     { onConflict: "company_id,key" }
   );

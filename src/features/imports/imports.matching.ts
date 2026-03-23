@@ -7,6 +7,8 @@ import {
 } from "@/features/matching/work-alias.repo";
 import { normalizeIsrc } from "@/features/matching/normalize";
 
+export { normalizeIsrc };
+
 type ImportRowRecord = {
   id: string;
   raw_title: string | null;
@@ -48,7 +50,7 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-function readRawIsrc(raw: unknown): string | null {
+export function readRawIsrc(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return null;
 
   const record = raw as Record<string, unknown>;
@@ -228,7 +230,9 @@ export async function matchImportRowsForImport(params: {
       .eq("id", params.importJobId);
 
     if (updateJobError) {
-      throw new Error(`Failed to update import job after empty matching: ${updateJobError.message}`);
+      throw new Error(
+        `Failed to update import job after empty matching: ${updateJobError.message}`
+      );
     }
 
     return {
@@ -258,11 +262,11 @@ export async function matchImportRowsForImport(params: {
     let matchedWorkId: string | null = null;
 
     if (title) {
-      const k = buildAliasKey(title, artist);
-      const isBlacklisted = aliasIndex.blacklist.has(k);
+      const aliasKey = buildAliasKey(title, artist);
+      const isBlacklisted = aliasIndex.blacklist.has(aliasKey);
 
       if (!isBlacklisted) {
-        matchedWorkId = aliasIndex.byKey.get(k) ?? null;
+        matchedWorkId = aliasIndex.byKey.get(aliasKey) ?? null;
       }
     }
 
