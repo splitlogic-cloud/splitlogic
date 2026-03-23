@@ -1,127 +1,281 @@
 import "server-only";
 
-export type ParsedCsvRow = {
-  rowIndex: number;
-  raw: Record<string, string>;
-  errorCode: string | null;
-  errorMessage: string | null;
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { parseImportFile } from "@/features/imports/parse-import-file";
+import { canonicalizeImportRow } from "@/features/imports/canonicalize-import-row";
+
+type ImportJobRecord = {
+  id: string;
+  company_id: string;
+  file_name: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
 };
 
-function normalizeHeader(header: string): string {
-  return header
-    .replace(/\uFEFF/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "_");
+type CanonicalRow = ReturnType<typeof canonicalizeImportRow>;
+
+function toTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
-function parseCsvMatrix(text: string): string[][] {
-  const input = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-  const rows: string[][] = [];
-  let currentRow: string[] = [];
-  let currentCell = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i];
-    const next = input[i + 1];
-
-    if (ch === '"') {
-      if (inQuotes && next === '"') {
-        currentCell += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-
-    if (ch === "," && !inQuotes) {
-      currentRow.push(currentCell);
-      currentCell = "";
-      continue;
-    }
-
-    if (ch === "\n" && !inQuotes) {
-      currentRow.push(currentCell);
-      rows.push(currentRow);
-      currentRow = [];
-      currentCell = "";
-      continue;
-    }
-
-    currentCell += ch;
+function pickFirstRawString(
+  raw: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = toTrimmedString(raw[key]);
+    if (value) return value;
   }
-
-  currentRow.push(currentCell);
-
-  const hasLastRowContent =
-    currentRow.length > 1 || currentRow.some((cell) => cell.trim().length > 0);
-
-  if (hasLastRowContent) {
-    rows.push(currentRow);
-  }
-
-  return rows;
+  return null;
 }
 
-function padOrTrimRow(values: string[], targetLength: number): string[] {
-  if (values.length === targetLength) return values;
+function normalizeRowStatus(params: {
+  title: string | null;
+  isrc: string | null;
+  currency: string | null;
+  netAmount: number | null;
+  grossAmount: number | null;
+}): "parsed" | "invalid" {
+  const hasIdentifier = Boolean(params.isrc || params.title);
+  const hasAmount = params.netAmount !== null || params.grossAmount !== null;
+  const hasCurrency = Boolean(params.currency);
 
-  if (values.length < targetLength) {
-    return [...values, ...Array.from({ length: targetLength - values.length }, () => "")];
+  if (!hasIdentifier || !hasAmount || !hasCurrency) {
+    return "invalid";
   }
 
-  return values.slice(0, targetLength);
+  return "parsed";
 }
 
-export function parseCsvText(text: string): ParsedCsvRow[] {
-  const matrix = parseCsvMatrix(text);
+function buildNormalizedRow(canonical: CanonicalRow) {
+  return {
+    title: canonical.title?.trim() ?? null,
+    artist: canonical.artist?.trim() ?? null,
+    isrc: canonical.isrc?.trim().toUpperCase() ?? null,
+    currency: canonical.currency?.trim().toUpperCase() ?? null,
+    source: canonical.source?.trim() ?? null,
+    territory: canonical.territory?.trim().toUpperCase() ?? null,
+    quantity: canonical.quantity ?? null,
+    net_amount: canonical.net_amount ?? null,
+    gross_amount: canonical.gross_amount ?? null,
+    statement_date: canonical.statement_date ?? null,
+  };
+}
 
-  if (matrix.length === 0) {
-    return [];
+function resolveRawTitle(raw: Record<string, unknown>, canonical: CanonicalRow): string | null {
+  return (
+    canonical.title ??
+    pickFirstRawString(raw, [
+      "title",
+      "Title",
+      "track",
+      "Track",
+      "TRACK",
+      "track_title",
+      "Track Title",
+      "track_name",
+      "Track Name",
+      "song_title",
+      "Song Title",
+      "song",
+      "Song",
+      "asset_title",
+      "Asset Title",
+      "release_track_name",
+      "Release Track Name",
+      "work_title",
+      "Work Title",
+      "recording",
+      "Recording",
+    ])
+  );
+}
+
+function resolveStorageLocation(job: ImportJobRecord): {
+  bucket: string;
+  path: string;
+} {
+  const bucket = job.storage_bucket?.trim() || "imports";
+  const path = job.storage_path?.trim() || null;
+
+  if (!path) {
+    throw new Error("Import job is missing storage_path.");
   }
 
-  const rawHeaders = matrix[0];
-  const headers = rawHeaders.map((header, index) => {
-    const normalized = normalizeHeader(header);
-    return normalized || `column_${index + 1}`;
+  return { bucket, path };
+}
+
+async function downloadImportFileText(job: ImportJobRecord): Promise<string> {
+  const { bucket, path } = resolveStorageLocation(job);
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(bucket)
+    .download(path);
+
+  if (error || !data) {
+    throw new Error(
+      `Failed to download import file from storage: ${error?.message ?? "unknown error"}`
+    );
+  }
+
+  const text = await data.text();
+
+  if (!text.trim()) {
+    throw new Error("Downloaded import file is empty.");
+  }
+
+  return text;
+}
+
+async function setImportJobStatus(
+  importJobId: string,
+  values: Record<string, unknown>
+): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("import_jobs")
+    .update(values)
+    .eq("id", importJobId);
+
+  if (error) {
+    throw new Error(`Failed to update import job: ${error.message}`);
+  }
+}
+
+export async function runImportParse(importJobId: string): Promise<{
+  importJobId: string;
+  insertedRowCount: number;
+  parsedRowCount: number;
+  invalidRowCount: number;
+}> {
+  const { data: importJob, error: importJobError } = await supabaseAdmin
+    .from("import_jobs")
+    .select(
+      `
+      id,
+      company_id,
+      file_name,
+      storage_bucket,
+      storage_path
+      `
+    )
+    .eq("id", importJobId)
+    .maybeSingle();
+
+  if (importJobError) {
+    throw new Error(`Failed to load import job: ${importJobError.message}`);
+  }
+
+  if (!importJob) {
+    throw new Error("Import job not found.");
+  }
+
+  const job = importJob as ImportJobRecord;
+  const now = new Date().toISOString();
+
+  await setImportJobStatus(importJobId, {
+    status: "parsing",
+    updated_at: now,
   });
 
-  const expectedColumnCount = headers.length;
-  const parsedRows: ParsedCsvRow[] = [];
+  try {
+    const fileText = await downloadImportFileText(job);
+    const parsedFile = await parseImportFile(fileText);
 
-  for (let i = 1; i < matrix.length; i++) {
-    const originalValues = matrix[i];
-    const values = padOrTrimRow(originalValues, expectedColumnCount);
-
-    const raw: Record<string, string> = {};
-
-    for (let c = 0; c < expectedColumnCount; c++) {
-      raw[headers[c]] = (values[c] ?? "").trim();
+    if (!parsedFile.rows.length) {
+      throw new Error(
+        `Import file parsed successfully but returned 0 data rows. File: ${job.file_name ?? "unknown"}`
+      );
     }
 
-    let errorCode: string | null = null;
-    let errorMessage: string | null = null;
+    const { error: deleteRowsError } = await supabaseAdmin
+      .from("import_rows")
+      .delete()
+      .eq("import_job_id", importJobId);
 
-    const isEmptyRow = Object.values(raw).every((v) => !v.trim());
-
-    if (isEmptyRow) {
-      errorCode = "empty_row";
-      errorMessage = "CSV row is empty";
-    } else if (originalValues.length !== expectedColumnCount) {
-      errorCode = "column_count_mismatch";
-      errorMessage = `Expected ${expectedColumnCount} columns, got ${originalValues.length}`;
+    if (deleteRowsError) {
+      throw new Error(`Failed to clear old import rows: ${deleteRowsError.message}`);
     }
 
-    parsedRows.push({
-      rowIndex: i,
-      raw,
-      errorCode,
-      errorMessage,
+    const rowsToInsert = parsedFile.rows.map((raw, index) => {
+      const canonical = canonicalizeImportRow(raw);
+      const normalized = buildNormalizedRow(canonical);
+
+      const status = normalizeRowStatus({
+        title: canonical.title,
+        isrc: canonical.isrc,
+        currency: canonical.currency,
+        netAmount: canonical.net_amount,
+        grossAmount: canonical.gross_amount,
+      });
+
+      const rawTitle = resolveRawTitle(raw, canonical);
+
+      return {
+        company_id: job.company_id,
+        import_id: importJobId,
+        import_job_id: importJobId,
+        row_number: index + 1,
+        status,
+        raw,
+        canonical,
+        normalized,
+        raw_title: rawTitle,
+        currency: canonical.currency ?? null,
+        net_amount: canonical.net_amount ?? null,
+        gross_amount: canonical.gross_amount ?? null,
+        created_at: now,
+        updated_at: now,
+      };
     });
-  }
 
-  return parsedRows;
+    const chunkSize = 500;
+
+    for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
+      const chunk = rowsToInsert.slice(i, i + chunkSize);
+
+      const { error } = await supabaseAdmin
+        .from("import_rows")
+        .insert(chunk);
+
+      if (error) {
+        throw new Error(`Failed to insert import rows: ${error.message}`);
+      }
+    }
+
+    const insertedRowCount = rowsToInsert.length;
+    const parsedRowCount = rowsToInsert.filter((row) => row.status === "parsed").length;
+    const invalidRowCount = rowsToInsert.filter((row) => row.status === "invalid").length;
+
+    await setImportJobStatus(importJobId, {
+      status: "parsed",
+      updated_at: new Date().toISOString(),
+      row_count: insertedRowCount,
+      parsed_row_count: parsedRowCount,
+      invalid_row_count: invalidRowCount,
+      matched_row_count: 0,
+      review_row_count: 0,
+    });
+
+    return {
+      importJobId,
+      insertedRowCount,
+      parsedRowCount,
+      invalidRowCount,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown parse error";
+
+    await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", importJobId);
+
+    throw new Error(message);
+  }
 }
