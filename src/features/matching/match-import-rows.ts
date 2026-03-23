@@ -1,10 +1,6 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import {
-  buildAliasKey,
-  loadWorkAliasIndexForCandidates,
-} from "@/features/matching/work-alias.repo";
 import { normalizeIsrc } from "@/features/matching/normalize";
 
 export { normalizeIsrc };
@@ -23,6 +19,14 @@ type CandidateRow = {
   rowId: string;
   title: string | null;
   artist: string | null;
+  isrc: string | null;
+};
+
+type SeedWorkCandidate = {
+  title: string;
+  artist: string | null;
+  normalizedTitle: string;
+  normalizedArtist: string | null;
   isrc: string | null;
 };
 
@@ -52,17 +56,17 @@ type MatchImportRowsResult = {
   reviewRows: number;
 };
 
-type SeedWorkCandidate = {
-  title: string;
-  artist: string | null;
-  normalizedTitle: string;
-  normalizedArtist: string | null;
-  isrc: string | null;
+type WorkIndex = {
+  byIsrc: Map<string, string>;
+  byTitleArtist: Map<string, string>;
+  byTitleOnly: Map<string, string>;
+  blacklistedTitleArtist: Set<string>;
+  blacklistedTitleOnly: Set<string>;
 };
 
-const MATCH_BATCH_SIZE = 200;
+const MATCH_BATCH_SIZE = 500;
 const UPDATE_CHUNK_SIZE = 500;
-const UPSERT_CHUNK_SIZE = 200;
+const INSERT_CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
@@ -113,6 +117,10 @@ function normalizeText(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function buildTitleArtistKey(normalizedTitle: string, normalizedArtist: string) {
+  return `${normalizedTitle}__${normalizedArtist}`;
+}
+
 function extractCandidate(row: ImportRowRecord): CandidateRow {
   const canonical = row.canonical ?? {};
   const normalized = row.normalized ?? {};
@@ -151,7 +159,12 @@ function extractCandidate(row: ImportRowRecord): CandidateRow {
 
   const isrc =
     normalizeIsrc(
-      pickFirstString(canonical.isrc, normalized.isrc, raw.isrc, raw.ISRC)
+      pickFirstString(
+        canonical.isrc,
+        normalized.isrc,
+        raw.isrc,
+        raw.ISRC
+      )
     ) ?? null;
 
   return {
@@ -227,14 +240,14 @@ async function ensureWorksExistForImport(
     const candidate = extractSeedWorkCandidate(row);
     if (!candidate) continue;
 
-    const uniqueKey = candidate.isrc
+    const key = candidate.isrc
       ? `isrc:${candidate.isrc}`
       : candidate.normalizedArtist
-      ? buildAliasKey(candidate.normalizedTitle, candidate.normalizedArtist)
+      ? buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
       : candidate.normalizedTitle;
 
-    if (!uniqueByKey.has(uniqueKey)) {
-      uniqueByKey.set(uniqueKey, candidate);
+    if (!uniqueByKey.has(key)) {
+      uniqueByKey.set(key, candidate);
     }
   }
 
@@ -242,13 +255,13 @@ async function ensureWorksExistForImport(
   if (candidates.length === 0) return;
 
   const normalizedTitles = Array.from(
-    new Set(candidates.map((row) => row.normalizedTitle))
+    new Set(candidates.map((c) => c.normalizedTitle))
   );
 
   const isrcs = Array.from(
     new Set(
       candidates
-        .map((row) => row.isrc)
+        .map((c) => c.isrc)
         .filter((value): value is string => Boolean(value))
     )
   );
@@ -274,15 +287,17 @@ async function ensureWorksExistForImport(
         normalized_artist: string | null;
       };
 
-      const title = readString(record.normalized_title);
-      const artist = readString(record.normalized_artist);
+      const normalizedTitle = readString(record.normalized_title);
+      const normalizedArtist = readString(record.normalized_artist);
 
-      if (!title) continue;
+      if (!normalizedTitle) continue;
 
-      existingByTitleOnly.add(title);
+      existingByTitleOnly.add(normalizedTitle);
 
-      if (artist) {
-        existingByTitleArtist.add(buildAliasKey(title, artist));
+      if (normalizedArtist) {
+        existingByTitleArtist.add(
+          buildTitleArtistKey(normalizedTitle, normalizedArtist)
+        );
       }
     }
   }
@@ -322,7 +337,7 @@ async function ensureWorksExistForImport(
     const existsByIsrc = candidate.isrc ? existingByIsrc.has(candidate.isrc) : false;
     const existsByTitleArtist = candidate.normalizedArtist
       ? existingByTitleArtist.has(
-          buildAliasKey(candidate.normalizedTitle, candidate.normalizedArtist)
+          buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
         )
       : false;
     const existsByTitleOnly = existingByTitleOnly.has(candidate.normalizedTitle);
@@ -344,7 +359,7 @@ async function ensureWorksExistForImport(
 
     if (candidate.normalizedArtist) {
       existingByTitleArtist.add(
-        buildAliasKey(candidate.normalizedTitle, candidate.normalizedArtist)
+        buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
       );
     }
 
@@ -353,7 +368,7 @@ async function ensureWorksExistForImport(
     }
   }
 
-  for (const insertChunk of chunk(toInsert, UPSERT_CHUNK_SIZE)) {
+  for (const insertChunk of chunk(toInsert, INSERT_CHUNK_SIZE)) {
     const { error } = await supabaseAdmin.from("works").insert(insertChunk);
 
     if (error) {
@@ -362,71 +377,105 @@ async function ensureWorksExistForImport(
   }
 }
 
-async function loadWorksByIsrc(
-  companyId: string,
-  isrcs: string[]
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+async function loadWorkIndex(companyId: string): Promise<WorkIndex> {
+  const byIsrc = new Map<string, string>();
+  const byTitleArtist = new Map<string, string>();
+  const byTitleOnly = new Map<string, string>();
+  const blacklistedTitleArtist = new Set<string>();
+  const blacklistedTitleOnly = new Set<string>();
 
-  if (isrcs.length === 0) {
-    return map;
-  }
+  let from = 0;
 
-  for (const isrcChunk of chunk(isrcs, 500)) {
+  while (true) {
+    const to = from + 999;
+
     const { data, error } = await supabaseAdmin
       .from("works")
-      .select("id, isrc")
+      .select("id, normalized_title, normalized_artist, isrc")
       .eq("company_id", companyId)
-      .in("isrc", isrcChunk);
+      .range(from, to);
 
     if (error) {
-      throw new Error(`Failed to load works by ISRC: ${error.message}`);
+      throw new Error(`Failed to load works index: ${error.message}`);
     }
 
-    for (const row of data ?? []) {
-      const record = row as JsonRecord;
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    for (const row of data) {
+      const record = row as {
+        id: string | null;
+        normalized_title: string | null;
+        normalized_artist: string | null;
+        isrc: string | null;
+      };
+
       const workId = readString(record.id);
+      const normalizedTitle = readString(record.normalized_title);
+      const normalizedArtist = readString(record.normalized_artist);
       const isrc = normalizeIsrc(readString(record.isrc));
 
-      if (!workId || !isrc) continue;
-      if (!map.has(isrc)) {
-        map.set(isrc, workId);
+      if (!workId) continue;
+
+      if (isrc) {
+        if (!byIsrc.has(isrc)) {
+          byIsrc.set(isrc, workId);
+        }
+      }
+
+      if (!normalizedTitle) continue;
+
+      if (!blacklistedTitleOnly.has(normalizedTitle)) {
+        const existingTitleOnly = byTitleOnly.get(normalizedTitle);
+        if (!existingTitleOnly) {
+          byTitleOnly.set(normalizedTitle, workId);
+        } else if (existingTitleOnly !== workId) {
+          byTitleOnly.delete(normalizedTitle);
+          blacklistedTitleOnly.add(normalizedTitle);
+        }
+      }
+
+      if (!normalizedArtist) continue;
+
+      const titleArtistKey = buildTitleArtistKey(normalizedTitle, normalizedArtist);
+
+      if (!blacklistedTitleArtist.has(titleArtistKey)) {
+        const existingTitleArtist = byTitleArtist.get(titleArtistKey);
+        if (!existingTitleArtist) {
+          byTitleArtist.set(titleArtistKey, workId);
+        } else if (existingTitleArtist !== workId) {
+          byTitleArtist.delete(titleArtistKey);
+          blacklistedTitleArtist.add(titleArtistKey);
+        }
       }
     }
-  }
 
-  return map;
-}
-
-function buildAliasKeysFromCandidates(candidates: CandidateRow[]): string[] {
-  const keys = new Set<string>();
-
-  for (const candidate of candidates) {
-    const normalizedTitle = normalizeText(candidate.title);
-    const normalizedArtist = normalizeText(candidate.artist);
-
-    if (!normalizedTitle) continue;
-
-    keys.add(normalizedTitle);
-
-    if (normalizedArtist) {
-      keys.add(buildAliasKey(normalizedTitle, normalizedArtist));
+    if (data.length < 1000) {
+      break;
     }
+
+    from += 1000;
   }
 
-  return Array.from(keys);
+  return {
+    byIsrc,
+    byTitleArtist,
+    byTitleOnly,
+    blacklistedTitleArtist,
+    blacklistedTitleOnly,
+  };
 }
 
 function resolveRows(
   candidates: CandidateRow[],
-  worksByIsrc: Map<string, string>,
-  aliasIndex: Map<string, string>
+  workIndex: WorkIndex
 ): RowResolution[] {
   const results: RowResolution[] = [];
 
   for (const candidate of candidates) {
     if (candidate.isrc) {
-      const workId = worksByIsrc.get(candidate.isrc);
+      const workId = workIndex.byIsrc.get(candidate.isrc);
 
       if (workId) {
         results.push({
@@ -444,8 +493,8 @@ function resolveRows(
     const normalizedArtist = normalizeText(candidate.artist);
 
     if (normalizedTitle && normalizedArtist) {
-      const aliasKey = buildAliasKey(normalizedTitle, normalizedArtist);
-      const workId = aliasIndex.get(aliasKey);
+      const key = buildTitleArtistKey(normalizedTitle, normalizedArtist);
+      const workId = workIndex.byTitleArtist.get(key);
 
       if (workId) {
         results.push({
@@ -460,7 +509,7 @@ function resolveRows(
     }
 
     if (normalizedTitle) {
-      const workId = aliasIndex.get(normalizedTitle);
+      const workId = workIndex.byTitleOnly.get(normalizedTitle);
 
       if (workId) {
         results.push({
@@ -574,28 +623,9 @@ export async function matchImportRowsForImport(
   await ensureWorksExistForImport(companyId, rows);
 
   const candidates = rows.map(extractCandidate);
+  const workIndex = await loadWorkIndex(companyId);
 
-  const uniqueIsrcs = Array.from(
-    new Set(
-      candidates
-        .map((row) => row.isrc)
-        .filter((value): value is string => Boolean(value))
-    )
-  );
-
-  const aliasKeys = buildAliasKeysFromCandidates(candidates);
-
-  const worksByIsrc = await loadWorksByIsrc(companyId, uniqueIsrcs);
-
-  const aliasIndexRaw = await loadWorkAliasIndexForCandidates({
-    companyId,
-    keys: aliasKeys,
-    isrcs: uniqueIsrcs,
-  });
-
-  const aliasIndex = aliasIndexRaw.byKey;
-
-  const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex);
+  const resolutions = resolveRows(candidates, workIndex);
   const now = new Date().toISOString();
   const updates = buildImportRowUpdates(resolutions, now);
 
