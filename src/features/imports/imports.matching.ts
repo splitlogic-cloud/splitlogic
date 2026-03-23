@@ -32,6 +32,9 @@ type ImportRowUpdate = {
   updated_at: string;
 };
 
+const MATCH_BATCH_SIZE = 200;
+const UPSERT_CHUNK_SIZE = 200;
+
 function pickString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -157,7 +160,7 @@ function buildImportRowUpdate(params: {
 async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
   if (updates.length === 0) return;
 
-  const chunks = chunkArray(updates, 500);
+  const chunks = chunkArray(updates, UPSERT_CHUNK_SIZE);
 
   for (const chunk of chunks) {
     const { error } = await supabaseAdmin
@@ -206,7 +209,8 @@ export async function matchImportRowsForImport(params: {
     .eq("import_job_id", params.importJobId)
     .eq("status", "parsed")
     .is("work_id", null)
-    .limit(10000);
+    .order("row_number", { ascending: true })
+    .limit(MATCH_BATCH_SIZE);
 
   if (rowsError) {
     throw new Error(`Failed to load import rows for matching: ${rowsError.message}`);
@@ -237,8 +241,10 @@ export async function matchImportRowsForImport(params: {
 
     return {
       importJobId: params.importJobId,
+      processedCount: 0,
       matchedCount: 0,
       reviewCount: aggregates.reviewRowCount,
+      hasMore: false,
     };
   }
 
@@ -285,14 +291,20 @@ export async function matchImportRowsForImport(params: {
   await applyImportRowUpdates(updates);
 
   const matchedCount = updates.filter((row) => row.status === "matched").length;
-  const reviewCount = updates.filter((row) => row.status === "needs_review").length;
+  const currentReviewCount = updates.filter((row) => row.status === "needs_review").length;
 
   const aggregates = await loadImportJobAggregates(params.importJobId);
+
+  const hasMore = aggregates.parsedRowCount > 0;
 
   const { error: updateJobError } = await supabaseAdmin
     .from("import_jobs")
     .update({
-      status: aggregates.matchedRowCount > 0 ? "matched" : "parsed",
+      status: hasMore
+        ? "matching"
+        : aggregates.matchedRowCount > 0
+          ? "matched"
+          : "parsed",
       parsed_row_count: aggregates.parsedRowCount,
       invalid_row_count: aggregates.invalidRowCount,
       matched_row_count: aggregates.matchedRowCount,
@@ -307,7 +319,9 @@ export async function matchImportRowsForImport(params: {
 
   return {
     importJobId: params.importJobId,
+    processedCount: updates.length,
     matchedCount,
-    reviewCount,
+    reviewCount: currentReviewCount,
+    hasMore,
   };
 }
