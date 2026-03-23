@@ -3,8 +3,75 @@ import "server-only";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { normalizeArtist, normalizeIsrc, normalizeText } from "./normalize";
 
-function key(title: string, artist: string) {
+export type WorkAliasRow = {
+  work_id: string;
+  key: string | null;
+  isrc: string | null;
+};
+
+export type WorkAliasBlacklistRow = {
+  key: string;
+};
+
+export function buildAliasKey(title: string, artist: string) {
   return `${normalizeText(title)}__${normalizeArtist(artist)}`;
+}
+
+export async function loadWorkAliasIndex(companyId: string): Promise<{
+  byKey: Map<string, string>;
+  byIsrc: Map<string, string>;
+  blacklist: Set<string>;
+}> {
+  const [{ data: aliases, error: aliasesError }, { data: blacklist, error: blacklistError }] =
+    await Promise.all([
+      supabaseAdmin
+        .from("work_aliases")
+        .select("work_id, key, isrc")
+        .eq("company_id", companyId)
+        .limit(100000),
+      supabaseAdmin
+        .from("work_alias_blacklist")
+        .select("key")
+        .eq("company_id", companyId)
+        .limit(100000),
+    ]);
+
+  if (aliasesError) {
+    throw new Error(`loadWorkAliasIndex aliases lookup failed: ${aliasesError.message}`);
+  }
+
+  if (blacklistError) {
+    throw new Error(`loadWorkAliasIndex blacklist lookup failed: ${blacklistError.message}`);
+  }
+
+  const byKey = new Map<string, string>();
+  const byIsrc = new Map<string, string>();
+  const blacklistSet = new Set<string>();
+
+  for (const row of (aliases ?? []) as WorkAliasRow[]) {
+    if (row.key && row.work_id && !byKey.has(row.key)) {
+      byKey.set(row.key, row.work_id);
+    }
+
+    if (row.isrc && row.work_id) {
+      const normalized = normalizeIsrc(row.isrc);
+      if (normalized && !byIsrc.has(normalized)) {
+        byIsrc.set(normalized, row.work_id);
+      }
+    }
+  }
+
+  for (const row of (blacklist ?? []) as WorkAliasBlacklistRow[]) {
+    if (row.key) {
+      blacklistSet.add(row.key);
+    }
+  }
+
+  return {
+    byKey,
+    byIsrc,
+    blacklist: blacklistSet,
+  };
 }
 
 export async function findWorkByAlias(params: {
@@ -13,7 +80,7 @@ export async function findWorkByAlias(params: {
   artist: string;
   isrc: string | null;
 }) {
-  const k = key(params.title, params.artist);
+  const k = buildAliasKey(params.title, params.artist);
 
   const { data: blocked, error: blockedError } = await supabaseAdmin
     .from("work_alias_blacklist")
@@ -69,7 +136,7 @@ export async function createAlias(params: {
   isrc: string | null;
   sourceName?: string | null;
 }) {
-  const k = key(params.title, params.artist);
+  const k = buildAliasKey(params.title, params.artist);
 
   const { error } = await supabaseAdmin.from("work_aliases").upsert(
     {
@@ -104,7 +171,7 @@ export async function addToBlacklist(params: {
   title: string;
   artist: string;
 }) {
-  const k = key(params.title, params.artist);
+  const k = buildAliasKey(params.title, params.artist);
 
   const { error } = await supabaseAdmin.from("work_alias_blacklist").upsert(
     {

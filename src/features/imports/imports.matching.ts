@@ -1,7 +1,11 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { findWorkByAlias } from "@/features/matching/work-alias.repo";
+import {
+  buildAliasKey,
+  loadWorkAliasIndex,
+} from "@/features/matching/work-alias.repo";
+import { normalizeIsrc } from "@/features/matching/normalize";
 
 type ImportRowRecord = {
   id: string;
@@ -9,6 +13,11 @@ type ImportRowRecord = {
   canonical: Record<string, unknown> | null;
   normalized: Record<string, unknown> | null;
   raw: Record<string, unknown> | null;
+};
+
+type AggregateRow = {
+  status: string | null;
+  work_id: string | null;
 };
 
 type ImportRowUpdate = {
@@ -27,7 +36,6 @@ function pickString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function chunkArray<T>(items: T[], size: number): T[][];
 function chunkArray<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
     throw new Error("chunk size must be greater than 0");
@@ -40,18 +48,7 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-export function normalizeIsrc(value: string | null | undefined): string | null {
-  if (!value) return null;
-
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
-
-  return normalized.length > 0 ? normalized : null;
-}
-
-export function readRawIsrc(raw: unknown): string | null {
+function readRawIsrc(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return null;
 
   const record = raw as Record<string, unknown>;
@@ -126,39 +123,17 @@ function readCandidateIsrc(row: ImportRowRecord): string | null {
   );
 }
 
-async function resolveRowMatch(params: {
-  companyId: string;
-  row: ImportRowRecord;
+function buildImportRowUpdate(params: {
+  rowId: string;
+  workId: string | null;
+  matched: boolean;
   now: string;
-}): Promise<ImportRowUpdate> {
-  const title = readCandidateTitle(params.row);
-  const artist = readCandidateArtist(params.row);
-  const isrc = readCandidateIsrc(params.row);
-
-  if (!title && !isrc) {
+}): ImportRowUpdate {
+  if (params.matched && params.workId) {
     return {
-      id: params.row.id,
-      work_id: null,
-      matched_work_id: null,
-      match_confidence: null,
-      match_source: null,
-      status: "needs_review",
-      updated_at: params.now,
-    };
-  }
-
-  const aliasWorkId = await findWorkByAlias({
-    companyId: params.companyId,
-    title,
-    artist,
-    isrc,
-  });
-
-  if (aliasWorkId) {
-    return {
-      id: params.row.id,
-      work_id: aliasWorkId,
-      matched_work_id: aliasWorkId,
+      id: params.rowId,
+      work_id: params.workId,
+      matched_work_id: params.workId,
       match_confidence: 1,
       match_source: "alias",
       status: "matched",
@@ -167,7 +142,7 @@ async function resolveRowMatch(params: {
   }
 
   return {
-    id: params.row.id,
+    id: params.rowId,
     work_id: null,
     matched_work_id: null,
     match_confidence: null,
@@ -193,6 +168,32 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
   }
 }
 
+async function loadImportJobAggregates(importJobId: string): Promise<{
+  parsedRowCount: number;
+  invalidRowCount: number;
+  matchedRowCount: number;
+  reviewRowCount: number;
+}> {
+  const { data: aggregates, error: aggregateError } = await supabaseAdmin
+    .from("import_rows")
+    .select("status, work_id")
+    .eq("import_job_id", importJobId)
+    .limit(10000);
+
+  if (aggregateError) {
+    throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
+  }
+
+  const rows = (aggregates ?? []) as AggregateRow[];
+
+  return {
+    parsedRowCount: rows.filter((row) => row.status === "parsed").length,
+    invalidRowCount: rows.filter((row) => row.status === "invalid").length,
+    matchedRowCount: rows.filter((row) => row.work_id != null).length,
+    reviewRowCount: rows.filter((row) => row.status === "needs_review").length,
+  };
+}
+
 export async function matchImportRowsForImport(params: {
   companyId: string;
   importJobId: string;
@@ -212,31 +213,16 @@ export async function matchImportRowsForImport(params: {
   const typedRows = (rows ?? []) as ImportRowRecord[];
 
   if (typedRows.length === 0) {
-    const { data: aggregates, error: aggregateError } = await supabaseAdmin
-      .from("import_rows")
-      .select("status, work_id")
-      .eq("import_job_id", params.importJobId)
-      .limit(10000);
-
-    if (aggregateError) {
-      throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
-    }
-
-    const parsedRowCount = (aggregates ?? []).filter((row) => row.status === "parsed").length;
-    const invalidRowCount = (aggregates ?? []).filter((row) => row.status === "invalid").length;
-    const matchedRowCount = (aggregates ?? []).filter((row) => row.work_id != null).length;
-    const reviewRowCount = (aggregates ?? []).filter(
-      (row) => row.status === "needs_review"
-    ).length;
+    const aggregates = await loadImportJobAggregates(params.importJobId);
 
     const { error: updateJobError } = await supabaseAdmin
       .from("import_jobs")
       .update({
-        status: matchedRowCount > 0 ? "matched" : "parsed",
-        parsed_row_count: parsedRowCount,
-        invalid_row_count: invalidRowCount,
-        matched_row_count: matchedRowCount,
-        review_row_count: reviewRowCount,
+        status: aggregates.matchedRowCount > 0 ? "matched" : "parsed",
+        parsed_row_count: aggregates.parsedRowCount,
+        invalid_row_count: aggregates.invalidRowCount,
+        matched_row_count: aggregates.matchedRowCount,
+        review_row_count: aggregates.reviewRowCount,
         updated_at: new Date().toISOString(),
       })
       .eq("id", params.importJobId);
@@ -248,58 +234,65 @@ export async function matchImportRowsForImport(params: {
     return {
       importJobId: params.importJobId,
       matchedCount: 0,
-      reviewCount: reviewRowCount,
+      reviewCount: aggregates.reviewRowCount,
     };
   }
 
+  const aliasIndex = await loadWorkAliasIndex(params.companyId);
   const now = new Date().toISOString();
-  const matchChunks = chunkArray(typedRows, 25);
-  const updates: ImportRowUpdate[] = [];
 
-  for (const chunk of matchChunks) {
-    const resolvedChunk = await Promise.all(
-      chunk.map((row) =>
-        resolveRowMatch({
-          companyId: params.companyId,
-          row,
-          now,
-        })
-      )
-    );
+  const updates: ImportRowUpdate[] = typedRows.map((row) => {
+    const title = readCandidateTitle(row);
+    const artist = readCandidateArtist(row) ?? "";
+    const isrc = readCandidateIsrc(row);
 
-    updates.push(...resolvedChunk);
-  }
+    if (!title && !isrc) {
+      return buildImportRowUpdate({
+        rowId: row.id,
+        workId: null,
+        matched: false,
+        now,
+      });
+    }
+
+    let matchedWorkId: string | null = null;
+
+    if (title) {
+      const k = buildAliasKey(title, artist);
+      const isBlacklisted = aliasIndex.blacklist.has(k);
+
+      if (!isBlacklisted) {
+        matchedWorkId = aliasIndex.byKey.get(k) ?? null;
+      }
+    }
+
+    if (!matchedWorkId && isrc) {
+      matchedWorkId = aliasIndex.byIsrc.get(isrc) ?? null;
+    }
+
+    return buildImportRowUpdate({
+      rowId: row.id,
+      workId: matchedWorkId,
+      matched: Boolean(matchedWorkId),
+      now,
+    });
+  });
 
   await applyImportRowUpdates(updates);
 
   const matchedCount = updates.filter((row) => row.status === "matched").length;
   const reviewCount = updates.filter((row) => row.status === "needs_review").length;
 
-  const { data: aggregates, error: aggregateError } = await supabaseAdmin
-    .from("import_rows")
-    .select("status, work_id")
-    .eq("import_job_id", params.importJobId)
-    .limit(10000);
-
-  if (aggregateError) {
-    throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
-  }
-
-  const parsedRowCount = (aggregates ?? []).filter((row) => row.status === "parsed").length;
-  const invalidRowCount = (aggregates ?? []).filter((row) => row.status === "invalid").length;
-  const matchedRowCount = (aggregates ?? []).filter((row) => row.work_id != null).length;
-  const reviewRowCount = (aggregates ?? []).filter(
-    (row) => row.status === "needs_review"
-  ).length;
+  const aggregates = await loadImportJobAggregates(params.importJobId);
 
   const { error: updateJobError } = await supabaseAdmin
     .from("import_jobs")
     .update({
-      status: matchedRowCount > 0 ? "matched" : "parsed",
-      parsed_row_count: parsedRowCount,
-      invalid_row_count: invalidRowCount,
-      matched_row_count: matchedRowCount,
-      review_row_count: reviewRowCount,
+      status: aggregates.matchedRowCount > 0 ? "matched" : "parsed",
+      parsed_row_count: aggregates.parsedRowCount,
+      invalid_row_count: aggregates.invalidRowCount,
+      matched_row_count: aggregates.matchedRowCount,
+      review_row_count: aggregates.reviewRowCount,
       updated_at: new Date().toISOString(),
     })
     .eq("id", params.importJobId);
