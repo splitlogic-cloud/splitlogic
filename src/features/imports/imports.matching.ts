@@ -167,7 +167,7 @@ function buildImportRowUpdate(params: {
     work_id: null,
     matched_work_id: null,
     match_confidence: 0,
-    match_source: "no_match",
+    match_source: "null",
     status: "needs_review",
     updated_at: params.now,
   };
@@ -226,7 +226,7 @@ async function updateReviewRows(rows: ImportRowUpdate[]): Promise<void> {
     .from("import_rows")
     .update({
       status: "needs_review",
-      match_source: "no_match",
+      match_source: "null",
       match_confidence: 0,
       updated_at: now,
     })
