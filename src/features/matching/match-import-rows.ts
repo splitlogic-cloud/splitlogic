@@ -1,4 +1,3 @@
-// src/features/matching/match-import-rows.ts
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -56,16 +55,17 @@ type MatchImportRowsResult = {
 const MATCH_BATCH_SIZE = 200;
 const UPDATE_CHUNK_SIZE = 500;
 
-function chunk<T>(items: T[], size: number): T[][];
 function chunk<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
     throw new Error("chunk size must be > 0");
   }
 
   const out: T[][] = [];
+
   for (let i = 0; i < items.length; i += size) {
     out.push(items.slice(i, i + size));
   }
+
   return out;
 }
 
@@ -75,9 +75,7 @@ function readString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function pickFirstString(
-  ...values: Array<unknown>
-): string | null {
+function pickFirstString(...values: unknown[]): string | null {
   for (const value of values) {
     const parsed = readString(value);
     if (parsed) return parsed;
@@ -97,7 +95,10 @@ function normalizeText(value: string | null | undefined): string | null {
     .replace(/\([^)]*\)/g, " ")
     .replace(/\[[^\]]*\]/g, " ")
     .replace(/\b(feat|ft|featuring)\.?\b.*$/gi, " ")
-    .replace(/\b(remix|mix|edit|version|radio edit|extended|live|mono|stereo)\b/gi, " ")
+    .replace(
+      /\b(remix|mix|edit|version|radio edit|extended|live|mono|stereo)\b/gi,
+      " "
+    )
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -143,12 +144,7 @@ function extractCandidate(row: ImportRowRecord): CandidateRow {
 
   const isrc =
     normalizeIsrc(
-      pickFirstString(
-        canonical.isrc,
-        normalized.isrc,
-        raw.isrc,
-        raw.ISRC
-      )
+      pickFirstString(canonical.isrc, normalized.isrc, raw.isrc, raw.ISRC)
     ) ?? null;
 
   return {
@@ -159,7 +155,9 @@ function extractCandidate(row: ImportRowRecord): CandidateRow {
   };
 }
 
-async function listImportRowsForMatching(importJobId: string): Promise<ImportRowRecord[]> {
+async function listImportRowsForMatching(
+  importJobId: string
+): Promise<ImportRowRecord[]> {
   const allRows: ImportRowRecord[] = [];
   let from = 0;
 
@@ -215,8 +213,9 @@ async function loadWorksByIsrc(
     }
 
     for (const row of data ?? []) {
-      const workId = readString((row as JsonRecord).id);
-      const isrc = normalizeIsrc(readString((row as JsonRecord).isrc));
+      const record = row as JsonRecord;
+      const workId = readString(record.id);
+      const isrc = normalizeIsrc(readString(record.isrc));
 
       if (!workId || !isrc) continue;
       if (!map.has(isrc)) {
@@ -238,6 +237,7 @@ function resolveRows(
   for (const candidate of candidates) {
     if (candidate.isrc) {
       const workId = worksByIsrc.get(candidate.isrc);
+
       if (workId) {
         results.push({
           rowId: candidate.rowId,
@@ -376,7 +376,7 @@ export async function matchImportRowsForImport(
   );
 
   const worksByIsrc = await loadWorksByIsrc(companyId, uniqueIsrcs);
-  const aliasIndex = await loadWorkAliasIndexForCandidates(companyId, candidates);
+  const aliasIndex = await loadWorkAliasIndexForCandidates(candidates);
 
   const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex);
   const now = new Date().toISOString();
