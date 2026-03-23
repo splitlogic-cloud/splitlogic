@@ -264,7 +264,7 @@ export async function clearImportRowMatchAction(formData: FormData) {
       work_id: null,
       matched_work_id: null,
       match_source: null,
-      match_confidence: null,
+      match_confidence: 0,
       status: "needs_review",
       updated_at: new Date().toISOString(),
     })
