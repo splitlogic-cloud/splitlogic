@@ -26,7 +26,7 @@ type ImportRowUpdate = {
   id: string;
   work_id: string | null;
   matched_work_id: string | null;
-  match_confidence: number | null;
+  match_confidence: number;
   match_source: string | null;
   status: "matched" | "needs_review";
   updated_at: string;
@@ -166,7 +166,7 @@ function buildImportRowUpdate(params: {
     id: params.rowId,
     work_id: null,
     matched_work_id: null,
-    match_confidence: null,
+    match_confidence: 0,
     match_source: null,
     status: "needs_review",
     updated_at: params.now,
@@ -177,7 +177,6 @@ async function updateMatchedRows(rows: ImportRowUpdate[]): Promise<void> {
   if (rows.length === 0) return;
 
   const now = new Date().toISOString();
-
   const ids = rows.map((row) => row.id);
 
   const { error: statusError } = await supabaseAdmin
@@ -229,7 +228,7 @@ async function updateReviewRows(rows: ImportRowUpdate[]): Promise<void> {
       work_id: null,
       matched_work_id: null,
       match_source: null,
-      match_confidence: null,
+      match_confidence: 0,
       updated_at: now,
     })
     .in("id", ids);
