@@ -55,17 +55,16 @@ type MatchImportRowsResult = {
 const MATCH_BATCH_SIZE = 200;
 const UPDATE_CHUNK_SIZE = 500;
 
+// -----------------
+// Helpers
+// -----------------
+
 function chunk<T>(items: T[], size: number): T[][] {
-  if (size <= 0) {
-    throw new Error("chunk size must be > 0");
-  }
-
+  if (size <= 0) throw new Error("chunk size must be > 0");
   const out: T[][] = [];
-
   for (let i = 0; i < items.length; i += size) {
     out.push(items.slice(i, i + size));
   }
-
   return out;
 }
 
@@ -85,7 +84,6 @@ function pickFirstString(...values: unknown[]): string | null {
 
 function normalizeText(value: string | null | undefined): string | null {
   if (!value) return null;
-
   const normalized = value
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -102,9 +100,12 @@ function normalizeText(value: string | null | undefined): string | null {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
   return normalized.length > 0 ? normalized : null;
 }
+
+// -----------------
+// Candidate extraction
+// -----------------
 
 function extractCandidate(row: ImportRowRecord): CandidateRow {
   const canonical = row.canonical ?? {};
@@ -147,13 +148,12 @@ function extractCandidate(row: ImportRowRecord): CandidateRow {
       pickFirstString(canonical.isrc, normalized.isrc, raw.isrc, raw.ISRC)
     ) ?? null;
 
-  return {
-    rowId: row.id,
-    title,
-    artist,
-    isrc,
-  };
+  return { rowId: row.id, title, artist, isrc };
 }
+
+// -----------------
+// Load rows
+// -----------------
 
 async function listImportRowsForMatching(
   importJobId: string
@@ -171,19 +171,11 @@ async function listImportRowsForMatching(
       .order("row_number", { ascending: true })
       .range(from, to);
 
-    if (error) {
-      throw new Error(`Failed to load import rows for matching: ${error.message}`);
-    }
-
-    if (!data || data.length === 0) {
-      break;
-    }
+    if (error) throw new Error(`Failed to load import rows: ${error.message}`);
+    if (!data || data.length === 0) break;
 
     allRows.push(...(data as ImportRowRecord[]));
-
-    if (data.length < MATCH_BATCH_SIZE) {
-      break;
-    }
+    if (data.length < MATCH_BATCH_SIZE) break;
 
     from += MATCH_BATCH_SIZE;
   }
@@ -191,15 +183,16 @@ async function listImportRowsForMatching(
   return allRows;
 }
 
+// -----------------
+// Load works by ISRC
+// -----------------
+
 async function loadWorksByIsrc(
   companyId: string,
   isrcs: string[]
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-
-  if (isrcs.length === 0) {
-    return map;
-  }
+  if (!isrcs.length) return map;
 
   for (const isrcChunk of chunk(isrcs, 500)) {
     const { data, error } = await supabaseAdmin
@@ -208,39 +201,38 @@ async function loadWorksByIsrc(
       .eq("company_id", companyId)
       .in("isrc", isrcChunk);
 
-    if (error) {
-      throw new Error(`Failed to load works by ISRC: ${error.message}`);
-    }
+    if (error) throw new Error(`Failed to load works by ISRC: ${error.message}`);
 
     for (const row of data ?? []) {
-      const record = row as JsonRecord;
+      const record = row as { id: string; isrc: string };
       const workId = readString(record.id);
       const isrc = normalizeIsrc(readString(record.isrc));
-
       if (!workId || !isrc) continue;
-      if (!map.has(isrc)) {
-        map.set(isrc, workId);
-      }
+      if (!map.has(isrc)) map.set(isrc, workId);
     }
   }
 
   return map;
 }
 
+// -----------------
+// Build alias keys
+// -----------------
+
 function buildAliasKeysFromCandidates(candidates: CandidateRow[]): string[] {
   const keys = new Set<string>();
-
-  for (const candidate of candidates) {
-    const normalizedTitle = normalizeText(candidate.title);
-    const normalizedArtist = normalizeText(candidate.artist);
-
-    if (!normalizedTitle || !normalizedArtist) continue;
-
-    keys.add(buildAliasKey(normalizedTitle, normalizedArtist));
+  for (const c of candidates) {
+    const title = normalizeText(c.title);
+    const artist = normalizeText(c.artist);
+    if (!title || !artist) continue;
+    keys.add(buildAliasKey(title, artist));
   }
-
   return Array.from(keys);
 }
+
+// -----------------
+// Resolve rows
+// -----------------
 
 function resolveRows(
   candidates: CandidateRow[],
@@ -248,34 +240,26 @@ function resolveRows(
   aliasIndex: Map<string, string>
 ): RowResolution[] {
   const results: RowResolution[] = [];
-
-  for (const candidate of candidates) {
-    if (candidate.isrc) {
-      const workId = worksByIsrc.get(candidate.isrc);
-
-      if (workId) {
-        results.push({
-          rowId: candidate.rowId,
-          workId,
-          matched: true,
-          source: "isrc_exact",
-          confidence: 1,
-        });
-        continue;
-      }
+  for (const c of candidates) {
+    if (c.isrc && worksByIsrc.has(c.isrc)) {
+      results.push({
+        rowId: c.rowId,
+        workId: worksByIsrc.get(c.isrc) ?? null,
+        matched: true,
+        source: "isrc_exact",
+        confidence: 1,
+      });
+      continue;
     }
 
-    const normalizedTitle = normalizeText(candidate.title);
-    const normalizedArtist = normalizeText(candidate.artist);
-
-    if (normalizedTitle && normalizedArtist) {
-      const aliasKey = buildAliasKey(normalizedTitle, normalizedArtist);
-      const workId = aliasIndex.get(aliasKey);
-
-      if (workId) {
+    const title = normalizeText(c.title);
+    const artist = normalizeText(c.artist);
+    if (title && artist) {
+      const key = buildAliasKey(title, artist);
+      if (aliasIndex.has(key)) {
         results.push({
-          rowId: candidate.rowId,
-          workId,
+          rowId: c.rowId,
+          workId: aliasIndex.get(key) ?? null,
           matched: true,
           source: "title_artist_exact",
           confidence: 0.95,
@@ -285,43 +269,49 @@ function resolveRows(
     }
 
     results.push({
-      rowId: candidate.rowId,
+      rowId: c.rowId,
       workId: null,
       matched: false,
       source: null,
       confidence: 0,
     });
   }
-
   return results;
 }
+
+// -----------------
+// Build updates
+// -----------------
 
 function buildImportRowUpdates(
   resolutions: RowResolution[],
   now: string
 ): ImportRowUpdate[] {
-  return resolutions.map((resolution) => {
-    const matched = resolution.matched && !!resolution.workId;
-
+  return resolutions.map((r) => {
+    const matched = r.matched && !!r.workId;
     return {
-      id: resolution.rowId,
-      work_id: matched ? resolution.workId : null,
-      matched_work_id: matched ? resolution.workId : null,
-      match_confidence: matched ? resolution.confidence : 0,
-      match_source: matched ? resolution.source : null,
+      id: r.rowId,
+      work_id: matched ? r.workId : null,
+      matched_work_id: matched ? r.workId : null,
+      match_confidence: matched ? r.confidence : 0,
+      match_source: matched ? r.source : null,
       status: matched ? "matched" : "needs_review",
       updated_at: now,
     };
   });
 }
 
+// -----------------
+// Apply updates
+// -----------------
+
 async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
-  if (updates.length === 0) return;
+  if (!updates.length) return;
 
-  const matchedUpdates = updates.filter((row) => row.status === "matched");
-  const reviewUpdates = updates.filter((row) => row.status === "needs_review");
+  const matched = updates.filter((u) => u.status === "matched");
+  const review = updates.filter((u) => u.status === "needs_review");
 
-  for (const batch of chunk(matchedUpdates, UPDATE_CHUNK_SIZE)) {
+  for (const batch of chunk(matched, UPDATE_CHUNK_SIZE)) {
     await Promise.all(
       batch.map(async (row) => {
         const { error } = await supabaseAdmin
@@ -335,20 +325,14 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
             updated_at: row.updated_at,
           })
           .eq("id", row.id);
-
-        if (error) {
-          throw new Error(
-            `Failed to update matched import row ${row.id}: ${error.message}`
-          );
-        }
+        if (error) throw new Error(`Failed matched row ${row.id}: ${error.message}`);
       })
     );
   }
 
-  for (const batch of chunk(reviewUpdates, UPDATE_CHUNK_SIZE)) {
-    const ids = batch.map((row) => row.id);
+  for (const batch of chunk(review, UPDATE_CHUNK_SIZE)) {
+    const ids = batch.map((r) => r.id);
     const updatedAt = batch[0]?.updated_at ?? new Date().toISOString();
-
     const { error } = await supabaseAdmin
       .from("import_rows")
       .update({
@@ -360,36 +344,27 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
         updated_at: updatedAt,
       })
       .in("id", ids);
-
-    if (error) {
-      throw new Error(`Failed bulk update review rows: ${error.message}`);
-    }
+    if (error) throw new Error(`Failed review batch: ${error.message}`);
   }
 }
+
+// -----------------
+// Main function
+// -----------------
 
 export async function matchImportRowsForImport(
   companyId: string,
   importJobId: string
 ): Promise<MatchImportRowsResult> {
-  if (!companyId) {
-    throw new Error("matchImportRowsForImport requires companyId");
-  }
-
-  if (!importJobId) {
-    throw new Error("matchImportRowsForImport requires importJobId");
-  }
+  if (!companyId) throw new Error("companyId required");
+  if (!importJobId) throw new Error("importJobId required");
 
   const rows = await listImportRowsForMatching(importJobId);
   const candidates = rows.map(extractCandidate);
 
   const uniqueIsrcs = Array.from(
-    new Set(
-      candidates
-        .map((row) => row.isrc)
-        .filter((value): value is string => Boolean(value))
-    )
+    new Set(candidates.map((c) => c.isrc).filter((v): v is string => !!v))
   );
-
   const aliasKeys = buildAliasKeysFromCandidates(candidates);
 
   const worksByIsrc = await loadWorksByIsrc(companyId, uniqueIsrcs);
@@ -399,18 +374,15 @@ export async function matchImportRowsForImport(
     isrcs: uniqueIsrcs,
   });
 
-  const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex);
+  const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex.byKey);
   const now = new Date().toISOString();
   const updates = buildImportRowUpdates(resolutions, now);
 
   await applyImportRowUpdates(updates);
 
-  const matchedRows = updates.filter((row) => row.status === "matched").length;
-  const reviewRows = updates.filter((row) => row.status === "needs_review").length;
-
   return {
     totalRows: updates.length,
-    matchedRows,
-    reviewRows,
+    matchedRows: updates.filter((r) => r.status === "matched").length,
+    reviewRows: updates.filter((r) => r.status === "needs_review").length,
   };
 }
