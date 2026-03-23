@@ -3,7 +3,7 @@ import "server-only";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   buildAliasKey,
-  loadWorkAliasIndex,
+  loadWorkAliasIndexForCandidates,
 } from "@/features/matching/work-alias.repo";
 import { normalizeIsrc } from "@/features/matching/normalize";
 
@@ -32,8 +32,15 @@ type ImportRowUpdate = {
   updated_at: string;
 };
 
-const MATCH_BATCH_SIZE = 200;
-const UPSERT_CHUNK_SIZE = 200;
+type CandidateRow = {
+  rowId: string;
+  title: string | null;
+  artist: string | null;
+  isrc: string | null;
+};
+
+const MATCH_BATCH_SIZE = 50;
+const UPSERT_CHUNK_SIZE = 50;
 
 function pickString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -199,6 +206,15 @@ async function loadImportJobAggregates(importJobId: string): Promise<{
   };
 }
 
+function buildCandidates(rows: ImportRowRecord[]): CandidateRow[] {
+  return rows.map((row) => ({
+    rowId: row.id,
+    title: readCandidateTitle(row),
+    artist: readCandidateArtist(row),
+    isrc: readCandidateIsrc(row),
+  }));
+}
+
 export async function matchImportRowsForImport(params: {
   companyId: string;
   importJobId: string;
@@ -248,17 +264,27 @@ export async function matchImportRowsForImport(params: {
     };
   }
 
-  const aliasIndex = await loadWorkAliasIndex(params.companyId);
   const now = new Date().toISOString();
+  const candidates = buildCandidates(typedRows);
 
-  const updates: ImportRowUpdate[] = typedRows.map((row) => {
-    const title = readCandidateTitle(row);
-    const artist = readCandidateArtist(row) ?? "";
-    const isrc = readCandidateIsrc(row);
+  const keys = candidates
+    .filter((row) => row.title)
+    .map((row) => buildAliasKey(row.title as string, row.artist ?? ""));
 
-    if (!title && !isrc) {
+  const isrcs = candidates
+    .map((row) => row.isrc)
+    .filter((value): value is string => Boolean(value));
+
+  const aliasIndex = await loadWorkAliasIndexForCandidates({
+    companyId: params.companyId,
+    keys,
+    isrcs,
+  });
+
+  const updates: ImportRowUpdate[] = candidates.map((candidate) => {
+    if (!candidate.title && !candidate.isrc) {
       return buildImportRowUpdate({
-        rowId: row.id,
+        rowId: candidate.rowId,
         workId: null,
         matched: false,
         now,
@@ -267,8 +293,8 @@ export async function matchImportRowsForImport(params: {
 
     let matchedWorkId: string | null = null;
 
-    if (title) {
-      const aliasKey = buildAliasKey(title, artist);
+    if (candidate.title) {
+      const aliasKey = buildAliasKey(candidate.title, candidate.artist ?? "");
       const isBlacklisted = aliasIndex.blacklist.has(aliasKey);
 
       if (!isBlacklisted) {
@@ -276,12 +302,12 @@ export async function matchImportRowsForImport(params: {
       }
     }
 
-    if (!matchedWorkId && isrc) {
-      matchedWorkId = aliasIndex.byIsrc.get(isrc) ?? null;
+    if (!matchedWorkId && candidate.isrc) {
+      matchedWorkId = aliasIndex.byIsrc.get(candidate.isrc) ?? null;
     }
 
     return buildImportRowUpdate({
-      rowId: row.id,
+      rowId: candidate.rowId,
       workId: matchedWorkId,
       matched: Boolean(matchedWorkId),
       now,
@@ -294,7 +320,6 @@ export async function matchImportRowsForImport(params: {
   const currentReviewCount = updates.filter((row) => row.status === "needs_review").length;
 
   const aggregates = await loadImportJobAggregates(params.importJobId);
-
   const hasMore = aggregates.parsedRowCount > 0;
 
   const { error: updateJobError } = await supabaseAdmin

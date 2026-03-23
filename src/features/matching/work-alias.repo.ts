@@ -17,60 +17,103 @@ export function buildAliasKey(title: string, artist: string) {
   return `${normalizeText(title)}__${normalizeArtist(artist)}`;
 }
 
-export async function loadWorkAliasIndex(companyId: string): Promise<{
+function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())))];
+}
+
+export async function loadWorkAliasIndexForCandidates(params: {
+  companyId: string;
+  keys: string[];
+  isrcs: string[];
+}): Promise<{
   byKey: Map<string, string>;
   byIsrc: Map<string, string>;
   blacklist: Set<string>;
 }> {
-  const [{ data: aliases, error: aliasesError }, { data: blacklist, error: blacklistError }] =
-    await Promise.all([
+  const keys = uniqueNonEmpty(params.keys);
+  const isrcs = uniqueNonEmpty(params.isrcs.map((value) => normalizeIsrc(value)));
+
+  const aliasQueries: PromiseLike<{
+    data: WorkAliasRow[] | null;
+    error: { message: string } | null;
+  }>[] = [];
+
+  if (keys.length > 0) {
+    aliasQueries.push(
       supabaseAdmin
         .from("work_aliases")
         .select("work_id, key, isrc")
-        .eq("company_id", companyId)
-        .limit(100000),
+        .eq("company_id", params.companyId)
+        .in("key", keys)
+        .limit(Math.max(keys.length * 5, 100))
+    );
+  }
+
+  if (isrcs.length > 0) {
+    aliasQueries.push(
       supabaseAdmin
-        .from("work_alias_blacklist")
-        .select("key")
-        .eq("company_id", companyId)
-        .limit(100000),
-    ]);
-
-  if (aliasesError) {
-    throw new Error(`loadWorkAliasIndex aliases lookup failed: ${aliasesError.message}`);
+        .from("work_aliases")
+        .select("work_id, key, isrc")
+        .eq("company_id", params.companyId)
+        .in("isrc", isrcs)
+        .limit(Math.max(isrcs.length * 5, 100))
+    );
   }
 
-  if (blacklistError) {
-    throw new Error(`loadWorkAliasIndex blacklist lookup failed: ${blacklistError.message}`);
-  }
+  const blacklistPromise =
+    keys.length > 0
+      ? supabaseAdmin
+          .from("work_alias_blacklist")
+          .select("key")
+          .eq("company_id", params.companyId)
+          .in("key", keys)
+          .limit(Math.max(keys.length * 2, 100))
+      : Promise.resolve({ data: [] as WorkAliasBlacklistRow[], error: null });
+
+  const [aliasResults, blacklistResult] = await Promise.all([
+    Promise.all(aliasQueries),
+    blacklistPromise,
+  ]);
 
   const byKey = new Map<string, string>();
   const byIsrc = new Map<string, string>();
-  const blacklistSet = new Set<string>();
+  const blacklist = new Set<string>();
 
-  for (const row of (aliases ?? []) as WorkAliasRow[]) {
-    if (row.key && row.work_id && !byKey.has(row.key)) {
-      byKey.set(row.key, row.work_id);
+  for (const result of aliasResults) {
+    if (result.error) {
+      throw new Error(`loadWorkAliasIndexForCandidates aliases lookup failed: ${result.error.message}`);
     }
 
-    if (row.isrc && row.work_id) {
-      const normalized = normalizeIsrc(row.isrc);
-      if (normalized && !byIsrc.has(normalized)) {
-        byIsrc.set(normalized, row.work_id);
+    for (const row of (result.data ?? []) as WorkAliasRow[]) {
+      if (row.key && row.work_id && !byKey.has(row.key)) {
+        byKey.set(row.key, row.work_id);
+      }
+
+      if (row.isrc && row.work_id) {
+        const normalized = normalizeIsrc(row.isrc);
+        if (normalized && !byIsrc.has(normalized)) {
+          byIsrc.set(normalized, row.work_id);
+        }
       }
     }
   }
 
-  for (const row of (blacklist ?? []) as WorkAliasBlacklistRow[]) {
+  if (blacklistResult.error) {
+    throw new Error(
+      `loadWorkAliasIndexForCandidates blacklist lookup failed: ${blacklistResult.error.message}`
+    );
+  }
+
+  for (const row of (blacklistResult.data ?? []) as WorkAliasBlacklistRow[]) {
     if (row.key) {
-      blacklistSet.add(row.key);
+      blacklist.add(row.key);
     }
   }
 
   return {
     byKey,
     byIsrc,
-    blacklist: blacklistSet,
+    blacklist,
   };
 }
 
