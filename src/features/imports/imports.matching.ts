@@ -27,7 +27,7 @@ type ImportRowUpdate = {
   work_id: string | null;
   matched_work_id: string | null;
   match_confidence: number;
-  match_source: string;
+  match_source: string | null;
   status: "matched" | "needs_review";
   updated_at: string;
 };
@@ -167,7 +167,7 @@ function buildImportRowUpdate(params: {
     work_id: null,
     matched_work_id: null,
     match_confidence: 0,
-    match_source: "null",
+    match_source: null,
     status: "needs_review",
     updated_at: params.now,
   };
@@ -221,12 +221,11 @@ async function updateReviewRows(rows: ImportRowUpdate[]): Promise<void> {
   const now = new Date().toISOString();
   const ids = rows.map((row) => row.id);
 
-  // Steg 1: skriv bara icke-null matchfält i bulk
   const { error: reviewStatusError } = await supabaseAdmin
     .from("import_rows")
     .update({
       status: "needs_review",
-      match_source: "null",
+      match_source: null,
       match_confidence: 0,
       updated_at: now,
     })
@@ -236,7 +235,6 @@ async function updateReviewRows(rows: ImportRowUpdate[]): Promise<void> {
     throw new Error(`Failed bulk update review rows: ${reviewStatusError.message}`);
   }
 
-  // Steg 2: nolla work-fält separat i mindre chunkar
   const chunks = chunkArray(rows, UPDATE_CONCURRENCY);
 
   for (const chunk of chunks) {
