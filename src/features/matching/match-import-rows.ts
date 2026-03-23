@@ -227,6 +227,21 @@ async function loadWorksByIsrc(
   return map;
 }
 
+function buildAliasKeysFromCandidates(candidates: CandidateRow[]): string[] {
+  const keys = new Set<string>();
+
+  for (const candidate of candidates) {
+    const normalizedTitle = normalizeText(candidate.title);
+    const normalizedArtist = normalizeText(candidate.artist);
+
+    if (!normalizedTitle || !normalizedArtist) continue;
+
+    keys.add(buildAliasKey(normalizedTitle, normalizedArtist));
+  }
+
+  return Array.from(keys);
+}
+
 function resolveRows(
   candidates: CandidateRow[],
   worksByIsrc: Map<string, string>,
@@ -375,8 +390,14 @@ export async function matchImportRowsForImport(
     )
   );
 
+  const aliasKeys = buildAliasKeysFromCandidates(candidates);
+
   const worksByIsrc = await loadWorksByIsrc(companyId, uniqueIsrcs);
-  const aliasIndex = await loadWorkAliasIndexForCandidates(candidates);
+  const aliasIndex = await loadWorkAliasIndexForCandidates({
+    companyId,
+    keys: aliasKeys,
+    isrcs: uniqueIsrcs,
+  });
 
   const resolutions = resolveRows(candidates, worksByIsrc, aliasIndex);
   const now = new Date().toISOString();
