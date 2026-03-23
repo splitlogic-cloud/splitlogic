@@ -40,7 +40,7 @@ type CandidateRow = {
 };
 
 const MATCH_BATCH_SIZE = 50;
-const UPSERT_CHUNK_SIZE = 50;
+const UPDATE_CONCURRENCY = 10;
 
 function pickString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -135,6 +135,15 @@ function readCandidateIsrc(row: ImportRowRecord): string | null {
   );
 }
 
+function buildCandidates(rows: ImportRowRecord[]): CandidateRow[] {
+  return rows.map((row) => ({
+    rowId: row.id,
+    title: readCandidateTitle(row),
+    artist: readCandidateArtist(row),
+    isrc: readCandidateIsrc(row),
+  }));
+}
+
 function buildImportRowUpdate(params: {
   rowId: string;
   workId: string | null;
@@ -164,19 +173,26 @@ function buildImportRowUpdate(params: {
   };
 }
 
+async function applySingleImportRowUpdate(update: ImportRowUpdate): Promise<void> {
+  const { id, ...values } = update;
+
+  const { error } = await supabaseAdmin
+    .from("import_rows")
+    .update(values)
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to persist import row update for ${id}: ${error.message}`);
+  }
+}
+
 async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
   if (updates.length === 0) return;
 
-  const chunks = chunkArray(updates, UPSERT_CHUNK_SIZE);
+  const chunks = chunkArray(updates, UPDATE_CONCURRENCY);
 
   for (const chunk of chunks) {
-    const { error } = await supabaseAdmin
-      .from("import_rows")
-      .upsert(chunk, { onConflict: "id" });
-
-    if (error) {
-      throw new Error(`Failed to persist import row updates: ${error.message}`);
-    }
+    await Promise.all(chunk.map((update) => applySingleImportRowUpdate(update)));
   }
 }
 
@@ -204,15 +220,6 @@ async function loadImportJobAggregates(importJobId: string): Promise<{
     matchedRowCount: rows.filter((row) => row.work_id != null).length,
     reviewRowCount: rows.filter((row) => row.status === "needs_review").length,
   };
-}
-
-function buildCandidates(rows: ImportRowRecord[]): CandidateRow[] {
-  return rows.map((row) => ({
-    rowId: row.id,
-    title: readCandidateTitle(row),
-    artist: readCandidateArtist(row),
-    isrc: readCandidateIsrc(row),
-  }));
 }
 
 export async function matchImportRowsForImport(params: {
