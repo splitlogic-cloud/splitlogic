@@ -1,4 +1,5 @@
 import "server-only";
+
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { normalizeIsrc, readRawIsrc } from "./imports.matching";
 
@@ -13,6 +14,89 @@ type WorkRow = {
   id: string;
   isrc: string | null;
 };
+
+type MatchUpdate = {
+  id: string;
+  matched_work_id: string | null;
+  work_id: string | null;
+  match_source: string | null;
+  match_confidence: number;
+  status: "matched" | "needs_review";
+};
+
+const UPDATE_CONCURRENCY = 20;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    throw new Error("chunk size must be greater than 0");
+  }
+
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function applySingleRowUpdate(update: MatchUpdate): Promise<void> {
+  const { id, ...values } = update;
+
+  const { error } = await supabaseAdmin
+    .from("import_rows")
+    .update(values)
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`update import row failed (${id}): ${error.message}`);
+  }
+}
+
+async function applyUpdates(updates: MatchUpdate[]): Promise<void> {
+  if (updates.length === 0) return;
+
+  const chunks = chunkArray(updates, UPDATE_CONCURRENCY);
+
+  for (const chunk of chunks) {
+    await Promise.all(chunk.map((update) => applySingleRowUpdate(update)));
+  }
+}
+
+async function refreshImportJobCounters(importId: string): Promise<void> {
+  const { data: rows, error } = await supabaseAdmin
+    .from("import_rows")
+    .select("status, work_id, matched_work_id")
+    .eq("import_id", importId)
+    .limit(10000);
+
+  if (error) {
+    throw new Error(`reload import row counters failed: ${error.message}`);
+  }
+
+  const parsedRowCount = (rows ?? []).filter((row) => row.status === "parsed").length;
+  const invalidRowCount = (rows ?? []).filter((row) => row.status === "invalid").length;
+  const matchedRowCount = (rows ?? []).filter(
+    (row) => row.work_id != null || row.matched_work_id != null
+  ).length;
+  const reviewRowCount = (rows ?? []).filter(
+    (row) => row.status === "needs_review"
+  ).length;
+
+  const { error: updateJobError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: matchedRowCount > 0 ? "matched" : "parsed",
+      parsed_row_count: parsedRowCount,
+      invalid_row_count: invalidRowCount,
+      matched_row_count: matchedRowCount,
+      review_row_count: reviewRowCount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", importId);
+
+  if (updateJobError) {
+    throw new Error(`update import job counters failed: ${updateJobError.message}`);
+  }
+}
 
 export async function runImportWorkMatching(importId: string): Promise<{
   scanned: number;
@@ -55,19 +139,18 @@ export async function runImportWorkMatching(importId: string): Promise<{
   }
 
   const typedWorks = (works ?? []) as WorkRow[];
-
   const worksByIsrc = new Map<string, WorkRow>();
 
   for (const work of typedWorks) {
-    const normalizedIsrc = normalizeIsrc(work.isrc);
-    if (!normalizedIsrc) continue;
+    const normalized = normalizeIsrc(work.isrc);
+    if (!normalized) continue;
 
-    // exact one-to-one assumption in v1
-    if (!worksByIsrc.has(normalizedIsrc)) {
-      worksByIsrc.set(normalizedIsrc, work);
+    if (!worksByIsrc.has(normalized)) {
+      worksByIsrc.set(normalized, work);
     }
   }
 
+  const updates: MatchUpdate[] = [];
   let scanned = 0;
   let matched = 0;
   let unmatched = 0;
@@ -76,61 +159,49 @@ export async function runImportWorkMatching(importId: string): Promise<{
     scanned += 1;
 
     const rawIsrc = readRawIsrc(row.raw);
-    const normalizedIsrc = normalizeIsrc(rawIsrc);
+    const normalizedRowIsrc = normalizeIsrc(rawIsrc);
 
-    if (!normalizedIsrc) {
-      const { error } = await supabaseAdmin
-        .from("import_rows")
-        .update({
-          matched_work_id: null,
-          match_source: null,
-          match_confidence: 0,
-        })
-        .eq("id", row.id);
-
-      if (error) {
-        throw new Error(`update unmatched row failed (${row.id}): ${error.message}`);
-      }
-
+    if (!normalizedRowIsrc) {
+      updates.push({
+        id: row.id,
+        matched_work_id: null,
+        work_id: null,
+        match_source: null,
+        match_confidence: 0,
+        status: "needs_review",
+      });
       unmatched += 1;
       continue;
     }
 
-    const matchedWork = worksByIsrc.get(normalizedIsrc);
+    const matchedWork = worksByIsrc.get(normalizedRowIsrc);
 
     if (!matchedWork) {
-      const { error } = await supabaseAdmin
-        .from("import_rows")
-        .update({
-          matched_work_id: null,
-          match_source: null,
-          match_confidence: 0,
-        })
-        .eq("id", row.id);
-
-      if (error) {
-        throw new Error(`update unmatched row failed (${row.id}): ${error.message}`);
-      }
-
+      updates.push({
+        id: row.id,
+        matched_work_id: null,
+        work_id: null,
+        match_source: null,
+        match_confidence: 0,
+        status: "needs_review",
+      });
       unmatched += 1;
       continue;
     }
 
-    const { error } = await supabaseAdmin
-      .from("import_rows")
-      .update({
-        matched_work_id: matchedWork.id,
-        match_source: "isrc_exact",
-        match_confidence: 1,
-      })
-      .eq("id", row.id);
-
-    if (error) {
-      throw new Error(`update matched row failed (${row.id}): ${error.message}`);
-    }
-
+    updates.push({
+      id: row.id,
+      matched_work_id: matchedWork.id,
+      work_id: matchedWork.id,
+      match_source: "isrc_exact",
+      match_confidence: 1,
+      status: "matched",
+    });
     matched += 1;
   }
+
+  await applyUpdates(updates);
+  await refreshImportJobCounters(importId);
 
   return {
     scanned,
