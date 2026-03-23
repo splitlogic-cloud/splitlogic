@@ -27,7 +27,6 @@ type ImportRowUpdate = {
   work_id: string | null;
   matched_work_id: string | null;
   match_confidence: number;
-  match_source: string | null;
   status: "matched" | "needs_review";
   updated_at: string;
 };
@@ -156,7 +155,6 @@ function buildImportRowUpdate(params: {
       work_id: params.workId,
       matched_work_id: params.workId,
       match_confidence: 1,
-      match_source: "alias",
       status: "matched",
       updated_at: params.now,
     };
@@ -167,7 +165,6 @@ function buildImportRowUpdate(params: {
     work_id: null,
     matched_work_id: null,
     match_confidence: 0,
-    match_source: null,
     status: "needs_review",
     updated_at: params.now,
   };
@@ -221,11 +218,11 @@ async function updateReviewRows(rows: ImportRowUpdate[]): Promise<void> {
   const now = new Date().toISOString();
   const ids = rows.map((row) => row.id);
 
+  // Skriv INTE match_source här. Constrainten accepterar inte våra review-värden.
   const { error: reviewStatusError } = await supabaseAdmin
     .from("import_rows")
     .update({
       status: "needs_review",
-      match_source: null,
       match_confidence: 0,
       updated_at: now,
     })
