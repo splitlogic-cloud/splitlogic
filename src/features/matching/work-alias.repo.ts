@@ -18,6 +18,16 @@ type WorkAliasRow = {
   created_at?: string | null;
 };
 
+type WorkBlacklistRow = {
+  id: string;
+  company_id: string;
+  normalized_title: string;
+  normalized_artist: string | null;
+  normalized_isrc: string | null;
+  reason?: string | null;
+  created_at?: string | null;
+};
+
 type WorkRow = {
   id: string;
   normalized_title: string | null;
@@ -33,12 +43,14 @@ type SaveWorkAliasParams = {
   normalizedIsrc?: string | null;
 };
 
-type CreateAliasParams = {
+type CreateAliasParams = SaveWorkAliasParams;
+
+type AddToBlacklistParams = {
   companyId: string;
-  workId: string;
   normalizedTitle: string;
   normalizedArtist?: string | null;
   normalizedIsrc?: string | null;
+  reason?: string | null;
 };
 
 export function buildAliasKey(title: string, artist: string) {
@@ -49,6 +61,52 @@ function normalizeNullableString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function applyKeyWithBlacklist(
+  byKey: Map<string, string>,
+  blacklist: Set<string>,
+  key: string,
+  workId: string
+) {
+  if (blacklist.has(key)) return;
+
+  const existing = byKey.get(key);
+  if (!existing) {
+    byKey.set(key, workId);
+    return;
+  }
+
+  if (existing !== workId) {
+    byKey.delete(key);
+    blacklist.add(key);
+  }
+}
+
+function applyIsrcWithBlacklist(
+  byIsrc: Map<string, string>,
+  blacklist: Set<string>,
+  isrc: string,
+  workId: string
+) {
+  const marker = `isrc:${isrc}`;
+  if (blacklist.has(marker)) return;
+
+  const existing = byIsrc.get(isrc);
+  if (!existing) {
+    byIsrc.set(isrc, workId);
+    return;
+  }
+
+  if (existing !== workId) {
+    byIsrc.delete(isrc);
+    blacklist.add(marker);
+  }
+}
+
+function isMissingRelationError(message: string, relationName: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("relation") && lower.includes(relationName.toLowerCase());
 }
 
 export async function loadWorkAliasIndexForCandidates({
@@ -80,29 +138,15 @@ export async function loadWorkAliasIndexForCandidates({
     if (!workId) continue;
 
     if (isrc) {
-      if (!byIsrc.has(isrc)) {
-        byIsrc.set(isrc, workId);
-      } else if (byIsrc.get(isrc) !== workId) {
-        blacklist.add(`isrc:${isrc}`);
-      }
+      applyIsrcWithBlacklist(byIsrc, blacklist, isrc, workId);
     }
 
     if (!title) continue;
 
-    if (!byKey.has(title)) {
-      byKey.set(title, workId);
-    } else if (byKey.get(title) !== workId) {
-      blacklist.add(title);
-    }
+    applyKeyWithBlacklist(byKey, blacklist, title, workId);
 
     if (artist) {
-      const fullKey = buildAliasKey(title, artist);
-
-      if (!byKey.has(fullKey)) {
-        byKey.set(fullKey, workId);
-      } else if (byKey.get(fullKey) !== workId) {
-        blacklist.add(fullKey);
-      }
+      applyKeyWithBlacklist(byKey, blacklist, buildAliasKey(title, artist), workId);
     }
   }
 
@@ -114,11 +158,7 @@ export async function loadWorkAliasIndexForCandidates({
     .eq("company_id", companyId);
 
   if (aliasError) {
-    const message = aliasError.message.toLowerCase();
-    const missingTable =
-      message.includes("relation") && message.includes("work_aliases");
-
-    if (!missingTable) {
+    if (!isMissingRelationError(aliasError.message, "work_aliases")) {
       throw new Error(`Failed to load work aliases: ${aliasError.message}`);
     }
   } else {
@@ -131,38 +171,49 @@ export async function loadWorkAliasIndexForCandidates({
       if (!workId) continue;
 
       if (isrc) {
-        if (!byIsrc.has(isrc)) {
-          byIsrc.set(isrc, workId);
-        } else if (byIsrc.get(isrc) !== workId) {
-          blacklist.add(`isrc:${isrc}`);
-        }
+        applyIsrcWithBlacklist(byIsrc, blacklist, isrc, workId);
       }
 
       if (!title) continue;
 
-      if (!byKey.has(title)) {
-        byKey.set(title, workId);
-      } else if (byKey.get(title) !== workId) {
-        blacklist.add(title);
-      }
+      applyKeyWithBlacklist(byKey, blacklist, title, workId);
 
       if (artist) {
-        const fullKey = buildAliasKey(title, artist);
-
-        if (!byKey.has(fullKey)) {
-          byKey.set(fullKey, workId);
-        } else if (byKey.get(fullKey) !== workId) {
-          blacklist.add(fullKey);
-        }
+        applyKeyWithBlacklist(byKey, blacklist, buildAliasKey(title, artist), workId);
       }
     }
   }
 
-  for (const key of blacklist) {
-    if (key.startsWith("isrc:")) {
-      byIsrc.delete(key.slice(5));
-    } else {
-      byKey.delete(key);
+  const { data: blacklistRows, error: blacklistError } = await supabaseAdmin
+    .from("work_alias_blacklist")
+    .select("id, company_id, normalized_title, normalized_artist, normalized_isrc, reason, created_at")
+    .eq("company_id", companyId);
+
+  if (blacklistError) {
+    if (!isMissingRelationError(blacklistError.message, "work_alias_blacklist")) {
+      throw new Error(`Failed to load work alias blacklist: ${blacklistError.message}`);
+    }
+  } else {
+    for (const row of (blacklistRows ?? []) as WorkBlacklistRow[]) {
+      const title = normalizeNullableString(row.normalized_title);
+      const artist = normalizeNullableString(row.normalized_artist);
+      const isrc = normalizeNullableString(row.normalized_isrc);
+
+      if (title) {
+        blacklist.add(title);
+        byKey.delete(title);
+      }
+
+      if (title && artist) {
+        const fullKey = buildAliasKey(title, artist);
+        blacklist.add(fullKey);
+        byKey.delete(fullKey);
+      }
+
+      if (isrc) {
+        blacklist.add(`isrc:${isrc}`);
+        byIsrc.delete(isrc);
+      }
     }
   }
 
@@ -183,11 +234,9 @@ export async function saveWorkAlias(params: SaveWorkAliasParams): Promise<void> 
   if (!companyId) {
     throw new Error("saveWorkAlias requires companyId");
   }
-
   if (!workId) {
     throw new Error("saveWorkAlias requires workId");
   }
-
   if (!normalizedTitle) {
     throw new Error("saveWorkAlias requires normalizedTitle");
   }
@@ -212,4 +261,38 @@ export async function saveWorkAlias(params: SaveWorkAliasParams): Promise<void> 
 
 export async function createAlias(params: CreateAliasParams): Promise<void> {
   await saveWorkAlias(params);
+}
+
+export async function addToBlacklist(params: AddToBlacklistParams): Promise<void> {
+  const companyId = normalizeNullableString(params.companyId);
+  const normalizedTitle = normalizeNullableString(params.normalizedTitle);
+  const normalizedArtist = normalizeNullableString(params.normalizedArtist);
+  const normalizedIsrc = normalizeNullableString(params.normalizedIsrc);
+  const reason = normalizeNullableString(params.reason);
+
+  if (!companyId) {
+    throw new Error("addToBlacklist requires companyId");
+  }
+  if (!normalizedTitle && !normalizedIsrc) {
+    throw new Error("addToBlacklist requires normalizedTitle or normalizedIsrc");
+  }
+
+  const payload = {
+    company_id: companyId,
+    normalized_title: normalizedTitle,
+    normalized_artist: normalizedArtist,
+    normalized_isrc: normalizedIsrc,
+    reason,
+  };
+
+  const { error } = await supabaseAdmin
+    .from("work_alias_blacklist")
+    .upsert(payload, {
+      onConflict: "company_id,normalized_title,normalized_artist",
+      ignoreDuplicates: false,
+    });
+
+  if (error) {
+    throw new Error(`Failed to add alias to blacklist: ${error.message}`);
+  }
 }
