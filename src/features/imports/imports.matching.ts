@@ -173,27 +173,80 @@ function buildImportRowUpdate(params: {
   };
 }
 
-async function applySingleImportRowUpdate(update: ImportRowUpdate): Promise<void> {
-  const { id, ...values } = update;
+async function updateMatchedRows(rows: ImportRowUpdate[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  const now = new Date().toISOString();
+
+  const ids = rows.map((row) => row.id);
+
+  const { error: statusError } = await supabaseAdmin
+    .from("import_rows")
+    .update({
+      status: "matched",
+      match_source: "alias",
+      match_confidence: 1,
+      updated_at: now,
+    })
+    .in("id", ids);
+
+  if (statusError) {
+    throw new Error(`Failed bulk update matched rows: ${statusError.message}`);
+  }
+
+  const chunks = chunkArray(rows, UPDATE_CONCURRENCY);
+
+  for (const chunk of chunks) {
+    await Promise.all(
+      chunk.map(async (row) => {
+        const { error } = await supabaseAdmin
+          .from("import_rows")
+          .update({
+            work_id: row.work_id,
+            matched_work_id: row.matched_work_id,
+            updated_at: now,
+          })
+          .eq("id", row.id);
+
+        if (error) {
+          throw new Error(`Failed to set work match for ${row.id}: ${error.message}`);
+        }
+      })
+    );
+  }
+}
+
+async function updateReviewRows(rows: ImportRowUpdate[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  const now = new Date().toISOString();
+  const ids = rows.map((row) => row.id);
 
   const { error } = await supabaseAdmin
     .from("import_rows")
-    .update(values)
-    .eq("id", id);
+    .update({
+      status: "needs_review",
+      work_id: null,
+      matched_work_id: null,
+      match_source: null,
+      match_confidence: null,
+      updated_at: now,
+    })
+    .in("id", ids);
 
   if (error) {
-    throw new Error(`Failed to persist import row update for ${id}: ${error.message}`);
+    throw new Error(`Failed bulk update review rows: ${error.message}`);
   }
 }
 
 async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
   if (updates.length === 0) return;
 
-  const chunks = chunkArray(updates, UPDATE_CONCURRENCY);
+  const matchedRows = updates.filter((row) => row.status === "matched");
+  const reviewRows = updates.filter((row) => row.status === "needs_review");
 
-  for (const chunk of chunks) {
-    await Promise.all(chunk.map((update) => applySingleImportRowUpdate(update)));
-  }
+  await updateMatchedRows(matchedRows);
+  await updateReviewRows(reviewRows);
 }
 
 async function loadImportJobAggregates(importJobId: string): Promise<{
