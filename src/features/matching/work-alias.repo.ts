@@ -15,13 +15,14 @@ type WorkAliasRow = {
   normalized_title: string;
   normalized_artist: string | null;
   normalized_isrc: string | null;
+  source_name?: string | null;
   created_at?: string | null;
 };
 
 type WorkBlacklistRow = {
   id: string;
   company_id: string;
-  normalized_title: string;
+  normalized_title: string | null;
   normalized_artist: string | null;
   normalized_isrc: string | null;
   reason?: string | null;
@@ -38,7 +39,15 @@ type WorkRow = {
 type SaveWorkAliasParams = {
   companyId: string;
   workId: string;
-  normalizedTitle: string;
+
+  // Legacy/raw inputs still used by existing actions
+  title?: string | null;
+  artist?: string | null;
+  isrc?: string | null;
+  sourceName?: string | null;
+
+  // New normalized inputs
+  normalizedTitle?: string | null;
   normalizedArtist?: string | null;
   normalizedIsrc?: string | null;
 };
@@ -47,9 +56,15 @@ type CreateAliasParams = SaveWorkAliasParams;
 
 type AddToBlacklistParams = {
   companyId: string;
-  normalizedTitle: string;
+  normalizedTitle?: string | null;
   normalizedArtist?: string | null;
   normalizedIsrc?: string | null;
+
+  // legacy compatibility
+  title?: string | null;
+  artist?: string | null;
+  isrc?: string | null;
+
   reason?: string | null;
 };
 
@@ -61,6 +76,35 @@ function normalizeNullableString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeText(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const normalized = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[’'`]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\b(feat|ft|featuring)\.?\b.*$/gi, " ")
+    .replace(
+      /\b(remix|mix|edit|version|radio edit|extended|live|mono|stereo)\b/gi,
+      " "
+    )
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeIsrcLike(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const cleaned = value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().trim();
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function applyKeyWithBlacklist(
@@ -109,6 +153,46 @@ function isMissingRelationError(message: string, relationName: string) {
   return lower.includes("relation") && lower.includes(relationName.toLowerCase());
 }
 
+function resolveAliasFields(params: SaveWorkAliasParams) {
+  const normalizedTitle =
+    normalizeNullableString(params.normalizedTitle) ??
+    normalizeText(normalizeNullableString(params.title));
+
+  const normalizedArtist =
+    normalizeNullableString(params.normalizedArtist) ??
+    normalizeText(normalizeNullableString(params.artist));
+
+  const normalizedIsrc =
+    normalizeNullableString(params.normalizedIsrc) ??
+    normalizeIsrcLike(normalizeNullableString(params.isrc));
+
+  return {
+    normalizedTitle,
+    normalizedArtist,
+    normalizedIsrc,
+  };
+}
+
+function resolveBlacklistFields(params: AddToBlacklistParams) {
+  const normalizedTitle =
+    normalizeNullableString(params.normalizedTitle) ??
+    normalizeText(normalizeNullableString(params.title));
+
+  const normalizedArtist =
+    normalizeNullableString(params.normalizedArtist) ??
+    normalizeText(normalizeNullableString(params.artist));
+
+  const normalizedIsrc =
+    normalizeNullableString(params.normalizedIsrc) ??
+    normalizeIsrcLike(normalizeNullableString(params.isrc));
+
+  return {
+    normalizedTitle,
+    normalizedArtist,
+    normalizedIsrc,
+  };
+}
+
 export async function loadWorkAliasIndexForCandidates({
   companyId,
 }: LoadParams): Promise<{
@@ -133,7 +217,7 @@ export async function loadWorkAliasIndexForCandidates({
     const workId = normalizeNullableString(row.id);
     const title = normalizeNullableString(row.normalized_title);
     const artist = normalizeNullableString(row.normalized_artist);
-    const isrc = normalizeNullableString(row.isrc);
+    const isrc = normalizeIsrcLike(normalizeNullableString(row.isrc));
 
     if (!workId) continue;
 
@@ -153,7 +237,7 @@ export async function loadWorkAliasIndexForCandidates({
   const { data: aliases, error: aliasError } = await supabaseAdmin
     .from("work_aliases")
     .select(
-      "id, company_id, work_id, normalized_title, normalized_artist, normalized_isrc, created_at"
+      "id, company_id, work_id, normalized_title, normalized_artist, normalized_isrc, source_name, created_at"
     )
     .eq("company_id", companyId);
 
@@ -166,7 +250,7 @@ export async function loadWorkAliasIndexForCandidates({
       const workId = normalizeNullableString(row.work_id);
       const title = normalizeNullableString(row.normalized_title);
       const artist = normalizeNullableString(row.normalized_artist);
-      const isrc = normalizeNullableString(row.normalized_isrc);
+      const isrc = normalizeIsrcLike(normalizeNullableString(row.normalized_isrc));
 
       if (!workId) continue;
 
@@ -186,7 +270,9 @@ export async function loadWorkAliasIndexForCandidates({
 
   const { data: blacklistRows, error: blacklistError } = await supabaseAdmin
     .from("work_alias_blacklist")
-    .select("id, company_id, normalized_title, normalized_artist, normalized_isrc, reason, created_at")
+    .select(
+      "id, company_id, normalized_title, normalized_artist, normalized_isrc, reason, created_at"
+    )
     .eq("company_id", companyId);
 
   if (blacklistError) {
@@ -197,7 +283,7 @@ export async function loadWorkAliasIndexForCandidates({
     for (const row of (blacklistRows ?? []) as WorkBlacklistRow[]) {
       const title = normalizeNullableString(row.normalized_title);
       const artist = normalizeNullableString(row.normalized_artist);
-      const isrc = normalizeNullableString(row.normalized_isrc);
+      const isrc = normalizeIsrcLike(normalizeNullableString(row.normalized_isrc));
 
       if (title) {
         blacklist.add(title);
@@ -227,18 +313,21 @@ export async function loadWorkAliasIndexForCandidates({
 export async function saveWorkAlias(params: SaveWorkAliasParams): Promise<void> {
   const companyId = normalizeNullableString(params.companyId);
   const workId = normalizeNullableString(params.workId);
-  const normalizedTitle = normalizeNullableString(params.normalizedTitle);
-  const normalizedArtist = normalizeNullableString(params.normalizedArtist);
-  const normalizedIsrc = normalizeNullableString(params.normalizedIsrc);
+  const sourceName = normalizeNullableString(params.sourceName);
+
+  const { normalizedTitle, normalizedArtist, normalizedIsrc } =
+    resolveAliasFields(params);
 
   if (!companyId) {
     throw new Error("saveWorkAlias requires companyId");
   }
+
   if (!workId) {
     throw new Error("saveWorkAlias requires workId");
   }
+
   if (!normalizedTitle) {
-    throw new Error("saveWorkAlias requires normalizedTitle");
+    throw new Error("saveWorkAlias requires title or normalizedTitle");
   }
 
   const payload = {
@@ -247,6 +336,7 @@ export async function saveWorkAlias(params: SaveWorkAliasParams): Promise<void> 
     normalized_title: normalizedTitle,
     normalized_artist: normalizedArtist,
     normalized_isrc: normalizedIsrc,
+    source_name: sourceName,
   };
 
   const { error } = await supabaseAdmin.from("work_aliases").upsert(payload, {
@@ -265,16 +355,17 @@ export async function createAlias(params: CreateAliasParams): Promise<void> {
 
 export async function addToBlacklist(params: AddToBlacklistParams): Promise<void> {
   const companyId = normalizeNullableString(params.companyId);
-  const normalizedTitle = normalizeNullableString(params.normalizedTitle);
-  const normalizedArtist = normalizeNullableString(params.normalizedArtist);
-  const normalizedIsrc = normalizeNullableString(params.normalizedIsrc);
   const reason = normalizeNullableString(params.reason);
+
+  const { normalizedTitle, normalizedArtist, normalizedIsrc } =
+    resolveBlacklistFields(params);
 
   if (!companyId) {
     throw new Error("addToBlacklist requires companyId");
   }
+
   if (!normalizedTitle && !normalizedIsrc) {
-    throw new Error("addToBlacklist requires normalizedTitle or normalizedIsrc");
+    throw new Error("addToBlacklist requires title/isrc or normalizedTitle/normalizedIsrc");
   }
 
   const payload = {
