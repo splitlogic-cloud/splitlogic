@@ -52,17 +52,27 @@ type MatchImportRowsResult = {
   reviewRows: number;
 };
 
+type SeedWorkCandidate = {
+  title: string;
+  artist: string | null;
+  normalizedTitle: string;
+  normalizedArtist: string | null;
+  isrc: string | null;
+};
+
 const MATCH_BATCH_SIZE = 200;
 const UPDATE_CHUNK_SIZE = 500;
-
-// -----------------
-// Helpers
-// -----------------
+const UPSERT_CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
-  if (size <= 0) throw new Error("chunk size must be > 0");
+  if (size <= 0) {
+    throw new Error("chunk size must be > 0");
+  }
+
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
   return out;
 }
 
@@ -82,6 +92,7 @@ function pickFirstString(...values: unknown[]): string | null {
 
 function normalizeText(value: string | null | undefined): string | null {
   if (!value) return null;
+
   const normalized = value
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -98,12 +109,9 @@ function normalizeText(value: string | null | undefined): string | null {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
   return normalized.length > 0 ? normalized : null;
 }
-
-// -----------------
-// Candidate extraction
-// -----------------
 
 function extractCandidate(row: ImportRowRecord): CandidateRow {
   const canonical = row.canonical ?? {};
@@ -146,78 +154,268 @@ function extractCandidate(row: ImportRowRecord): CandidateRow {
       pickFirstString(canonical.isrc, normalized.isrc, raw.isrc, raw.ISRC)
     ) ?? null;
 
-  return { rowId: row.id, title, artist, isrc };
+  return {
+    rowId: row.id,
+    title,
+    artist,
+    isrc,
+  };
 }
 
-// -----------------
-// Load rows
-// -----------------
+function extractSeedWorkCandidate(row: ImportRowRecord): SeedWorkCandidate | null {
+  const candidate = extractCandidate(row);
+  const normalizedTitle = normalizeText(candidate.title);
 
-async function listImportRowsForMatching(importJobId: string): Promise<ImportRowRecord[]> {
+  if (!candidate.title || !normalizedTitle) {
+    return null;
+  }
+
+  const normalizedArtist = normalizeText(candidate.artist);
+
+  return {
+    title: candidate.title,
+    artist: candidate.artist,
+    normalizedTitle,
+    normalizedArtist,
+    isrc: candidate.isrc,
+  };
+}
+
+async function listImportRowsForMatching(
+  importJobId: string
+): Promise<ImportRowRecord[]> {
   const allRows: ImportRowRecord[] = [];
   let from = 0;
 
   while (true) {
     const to = from + MATCH_BATCH_SIZE - 1;
+
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("id, raw_title, canonical, normalized, raw")
       .eq("import_job_id", importJobId)
       .order("row_number", { ascending: true })
       .range(from, to);
-    if (error) throw new Error(`Failed to load import rows: ${error.message}`);
-    if (!data || data.length === 0) break;
+
+    if (error) {
+      throw new Error(`Failed to load import rows for matching: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
     allRows.push(...(data as ImportRowRecord[]));
-    if (data.length < MATCH_BATCH_SIZE) break;
+
+    if (data.length < MATCH_BATCH_SIZE) {
+      break;
+    }
+
     from += MATCH_BATCH_SIZE;
   }
 
   return allRows;
 }
 
-// -----------------
-// Load works by ISRC
-// -----------------
+async function ensureWorksExistForImport(
+  companyId: string,
+  rows: ImportRowRecord[]
+): Promise<void> {
+  const uniqueByKey = new Map<string, SeedWorkCandidate>();
 
-async function loadWorksByIsrc(companyId: string, isrcs: string[]): Promise<Map<string, string>> {
+  for (const row of rows) {
+    const candidate = extractSeedWorkCandidate(row);
+    if (!candidate) continue;
+
+    const uniqueKey = candidate.isrc
+      ? `isrc:${candidate.isrc}`
+      : candidate.normalizedArtist
+      ? buildAliasKey(candidate.normalizedTitle, candidate.normalizedArtist)
+      : candidate.normalizedTitle;
+
+    if (!uniqueByKey.has(uniqueKey)) {
+      uniqueByKey.set(uniqueKey, candidate);
+    }
+  }
+
+  const candidates = Array.from(uniqueByKey.values());
+  if (candidates.length === 0) return;
+
+  const normalizedTitles = Array.from(
+    new Set(candidates.map((row) => row.normalizedTitle))
+  );
+
+  const isrcs = Array.from(
+    new Set(
+      candidates
+        .map((row) => row.isrc)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const existingByTitleArtist = new Set<string>();
+  const existingByTitleOnly = new Set<string>();
+  const existingByIsrc = new Set<string>();
+
+  for (const titleChunk of chunk(normalizedTitles, 500)) {
+    const { data, error } = await supabaseAdmin
+      .from("works")
+      .select("normalized_title, normalized_artist")
+      .eq("company_id", companyId)
+      .in("normalized_title", titleChunk);
+
+    if (error) {
+      throw new Error(`Failed to load existing works by title: ${error.message}`);
+    }
+
+    for (const row of data ?? []) {
+      const record = row as {
+        normalized_title: string | null;
+        normalized_artist: string | null;
+      };
+
+      const title = readString(record.normalized_title);
+      const artist = readString(record.normalized_artist);
+
+      if (!title) continue;
+
+      existingByTitleOnly.add(title);
+
+      if (artist) {
+        existingByTitleArtist.add(buildAliasKey(title, artist));
+      }
+    }
+  }
+
+  if (isrcs.length > 0) {
+    for (const isrcChunk of chunk(isrcs, 500)) {
+      const { data, error } = await supabaseAdmin
+        .from("works")
+        .select("isrc")
+        .eq("company_id", companyId)
+        .in("isrc", isrcChunk);
+
+      if (error) {
+        throw new Error(`Failed to load existing works by ISRC: ${error.message}`);
+      }
+
+      for (const row of data ?? []) {
+        const record = row as { isrc: string | null };
+        const isrc = normalizeIsrc(readString(record.isrc));
+        if (isrc) {
+          existingByIsrc.add(isrc);
+        }
+      }
+    }
+  }
+
+  const toInsert: Array<{
+    company_id: string;
+    title: string;
+    artist: string | null;
+    normalized_title: string;
+    normalized_artist: string | null;
+    isrc: string | null;
+  }> = [];
+
+  for (const candidate of candidates) {
+    const existsByIsrc = candidate.isrc ? existingByIsrc.has(candidate.isrc) : false;
+    const existsByTitleArtist = candidate.normalizedArtist
+      ? existingByTitleArtist.has(
+          buildAliasKey(candidate.normalizedTitle, candidate.normalizedArtist)
+        )
+      : false;
+    const existsByTitleOnly = existingByTitleOnly.has(candidate.normalizedTitle);
+
+    if (existsByIsrc || existsByTitleArtist || existsByTitleOnly) {
+      continue;
+    }
+
+    toInsert.push({
+      company_id: companyId,
+      title: candidate.title,
+      artist: candidate.artist,
+      normalized_title: candidate.normalizedTitle,
+      normalized_artist: candidate.normalizedArtist,
+      isrc: candidate.isrc,
+    });
+
+    existingByTitleOnly.add(candidate.normalizedTitle);
+
+    if (candidate.normalizedArtist) {
+      existingByTitleArtist.add(
+        buildAliasKey(candidate.normalizedTitle, candidate.normalizedArtist)
+      );
+    }
+
+    if (candidate.isrc) {
+      existingByIsrc.add(candidate.isrc);
+    }
+  }
+
+  for (const insertChunk of chunk(toInsert, UPSERT_CHUNK_SIZE)) {
+    const { error } = await supabaseAdmin.from("works").insert(insertChunk);
+
+    if (error) {
+      throw new Error(`Failed to insert seeded works: ${error.message}`);
+    }
+  }
+}
+
+async function loadWorksByIsrc(
+  companyId: string,
+  isrcs: string[]
+): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  if (!isrcs.length) return map;
-  for (const chunked of chunk(isrcs, 500)) {
+
+  if (isrcs.length === 0) {
+    return map;
+  }
+
+  for (const isrcChunk of chunk(isrcs, 500)) {
     const { data, error } = await supabaseAdmin
       .from("works")
       .select("id, isrc")
       .eq("company_id", companyId)
-      .in("isrc", chunked);
-    if (error) throw new Error(`Failed to load works by ISRC: ${error.message}`);
+      .in("isrc", isrcChunk);
+
+    if (error) {
+      throw new Error(`Failed to load works by ISRC: ${error.message}`);
+    }
+
     for (const row of data ?? []) {
-      const workId = readString((row as any).id);
-      const isrc = normalizeIsrc(readString((row as any).isrc));
+      const record = row as JsonRecord;
+      const workId = readString(record.id);
+      const isrc = normalizeIsrc(readString(record.isrc));
+
       if (!workId || !isrc) continue;
-      if (!map.has(isrc)) map.set(isrc, workId);
+      if (!map.has(isrc)) {
+        map.set(isrc, workId);
+      }
     }
   }
+
   return map;
 }
 
-// -----------------
-// Build alias keys
-// -----------------
-
 function buildAliasKeysFromCandidates(candidates: CandidateRow[]): string[] {
   const keys = new Set<string>();
-  for (const c of candidates) {
-    const title = normalizeText(c.title);
-    const artist = normalizeText(c.artist);
-    if (!title) continue;
-    // Use title+artist if available
-    keys.add(artist ? buildAliasKey(title, artist) : title);
+
+  for (const candidate of candidates) {
+    const normalizedTitle = normalizeText(candidate.title);
+    const normalizedArtist = normalizeText(candidate.artist);
+
+    if (!normalizedTitle) continue;
+
+    keys.add(normalizedTitle);
+
+    if (normalizedArtist) {
+      keys.add(buildAliasKey(normalizedTitle, normalizedArtist));
+    }
   }
+
   return Array.from(keys);
 }
-
-// -----------------
-// Resolve rows with fallback
-// -----------------
 
 function resolveRows(
   candidates: CandidateRow[],
@@ -226,29 +424,33 @@ function resolveRows(
 ): RowResolution[] {
   const results: RowResolution[] = [];
 
-  for (const c of candidates) {
-    // 1️⃣ Try ISRC exact
-    if (c.isrc && worksByIsrc.has(c.isrc)) {
-      results.push({
-        rowId: c.rowId,
-        workId: worksByIsrc.get(c.isrc) ?? null,
-        matched: true,
-        source: "isrc_exact",
-        confidence: 1,
-      });
-      continue;
+  for (const candidate of candidates) {
+    if (candidate.isrc) {
+      const workId = worksByIsrc.get(candidate.isrc);
+
+      if (workId) {
+        results.push({
+          rowId: candidate.rowId,
+          workId,
+          matched: true,
+          source: "isrc_exact",
+          confidence: 1,
+        });
+        continue;
+      }
     }
 
-    const title = normalizeText(c.title);
-    const artist = normalizeText(c.artist);
+    const normalizedTitle = normalizeText(candidate.title);
+    const normalizedArtist = normalizeText(candidate.artist);
 
-    // 2️⃣ Try title+artist exact
-    if (title && artist) {
-      const key = buildAliasKey(title, artist);
-      if (aliasIndex.has(key)) {
+    if (normalizedTitle && normalizedArtist) {
+      const aliasKey = buildAliasKey(normalizedTitle, normalizedArtist);
+      const workId = aliasIndex.get(aliasKey);
+
+      if (workId) {
         results.push({
-          rowId: c.rowId,
-          workId: aliasIndex.get(key) ?? null,
+          rowId: candidate.rowId,
+          workId,
           matched: true,
           source: "title_artist_exact",
           confidence: 0.95,
@@ -257,21 +459,23 @@ function resolveRows(
       }
     }
 
-    // 3️⃣ Fallback: title only fuzzy
-    if (title && aliasIndex.has(title)) {
-      results.push({
-        rowId: c.rowId,
-        workId: aliasIndex.get(title) ?? null,
-        matched: true,
-        source: "fuzzy",
-        confidence: 0.7,
-      });
-      continue;
+    if (normalizedTitle) {
+      const workId = aliasIndex.get(normalizedTitle);
+
+      if (workId) {
+        results.push({
+          rowId: candidate.rowId,
+          workId,
+          matched: true,
+          source: "fuzzy",
+          confidence: 0.7,
+        });
+        continue;
+      }
     }
 
-    // 4️⃣ Needs review
     results.push({
-      rowId: c.rowId,
+      rowId: candidate.rowId,
       workId: null,
       matched: false,
       source: null,
@@ -282,36 +486,32 @@ function resolveRows(
   return results;
 }
 
-// -----------------
-// Build updates
-// -----------------
+function buildImportRowUpdates(
+  resolutions: RowResolution[],
+  now: string
+): ImportRowUpdate[] {
+  return resolutions.map((resolution) => {
+    const matched = resolution.matched && !!resolution.workId;
 
-function buildImportRowUpdates(resolutions: RowResolution[], now: string): ImportRowUpdate[] {
-  return resolutions.map((r) => {
-    const matched = r.matched && !!r.workId;
     return {
-      id: r.rowId,
-      work_id: matched ? r.workId : null,
-      matched_work_id: matched ? r.workId : null,
-      match_confidence: matched ? r.confidence : 0,
-      match_source: matched ? r.source : null,
+      id: resolution.rowId,
+      work_id: matched ? resolution.workId : null,
+      matched_work_id: matched ? resolution.workId : null,
+      match_confidence: matched ? resolution.confidence : 0,
+      match_source: matched ? resolution.source : null,
       status: matched ? "matched" : "needs_review",
       updated_at: now,
     };
   });
 }
 
-// -----------------
-// Apply updates
-// -----------------
-
 async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
-  if (!updates.length) return;
+  if (updates.length === 0) return;
 
-  const matched = updates.filter((u) => u.status === "matched");
-  const review = updates.filter((u) => u.status === "needs_review");
+  const matchedUpdates = updates.filter((row) => row.status === "matched");
+  const reviewUpdates = updates.filter((row) => row.status === "needs_review");
 
-  for (const batch of chunk(matched, UPDATE_CHUNK_SIZE)) {
+  for (const batch of chunk(matchedUpdates, UPDATE_CHUNK_SIZE)) {
     await Promise.all(
       batch.map(async (row) => {
         const { error } = await supabaseAdmin
@@ -325,14 +525,20 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
             updated_at: row.updated_at,
           })
           .eq("id", row.id);
-        if (error) throw new Error(`Failed matched row ${row.id}: ${error.message}`);
+
+        if (error) {
+          throw new Error(
+            `Failed to update matched import row ${row.id}: ${error.message}`
+          );
+        }
       })
     );
   }
 
-  for (const batch of chunk(review, UPDATE_CHUNK_SIZE)) {
-    const ids = batch.map((r) => r.id);
+  for (const batch of chunk(reviewUpdates, UPDATE_CHUNK_SIZE)) {
+    const ids = batch.map((row) => row.id);
     const updatedAt = batch[0]?.updated_at ?? new Date().toISOString();
+
     const { error } = await supabaseAdmin
       .from("import_rows")
       .update({
@@ -344,25 +550,39 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
         updated_at: updatedAt,
       })
       .in("id", ids);
-    if (error) throw new Error(`Failed review batch: ${error.message}`);
+
+    if (error) {
+      throw new Error(`Failed bulk update review rows: ${error.message}`);
+    }
   }
 }
-
-// -----------------
-// Main
-// -----------------
 
 export async function matchImportRowsForImport(
   companyId: string,
   importJobId: string
 ): Promise<MatchImportRowsResult> {
-  if (!companyId) throw new Error("companyId required");
-  if (!importJobId) throw new Error("importJobId required");
+  if (!companyId) {
+    throw new Error("matchImportRowsForImport requires companyId");
+  }
+
+  if (!importJobId) {
+    throw new Error("matchImportRowsForImport requires importJobId");
+  }
 
   const rows = await listImportRowsForMatching(importJobId);
+
+  await ensureWorksExistForImport(companyId, rows);
+
   const candidates = rows.map(extractCandidate);
 
-  const uniqueIsrcs = Array.from(new Set(candidates.map((c) => c.isrc).filter(Boolean)));
+  const uniqueIsrcs = Array.from(
+    new Set(
+      candidates
+        .map((row) => row.isrc)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
   const aliasKeys = buildAliasKeysFromCandidates(candidates);
 
   const worksByIsrc = await loadWorksByIsrc(companyId, uniqueIsrcs);
@@ -383,7 +603,7 @@ export async function matchImportRowsForImport(
 
   return {
     totalRows: updates.length,
-    matchedRows: updates.filter((r) => r.status === "matched").length,
-    reviewRows: updates.filter((r) => r.status === "needs_review").length,
+    matchedRows: updates.filter((row) => row.status === "matched").length,
+    reviewRows: updates.filter((row) => row.status === "needs_review").length,
   };
 }
