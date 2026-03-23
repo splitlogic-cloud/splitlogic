@@ -25,6 +25,22 @@ type WorkRow = {
   isrc: string | null;
 };
 
+type SaveWorkAliasParams = {
+  companyId: string;
+  workId: string;
+  normalizedTitle: string;
+  normalizedArtist?: string | null;
+  normalizedIsrc?: string | null;
+};
+
+type CreateAliasParams = {
+  companyId: string;
+  workId: string;
+  normalizedTitle: string;
+  normalizedArtist?: string | null;
+  normalizedIsrc?: string | null;
+};
+
 export function buildAliasKey(title: string, artist: string) {
   return `${title}__${artist}`;
 }
@@ -144,8 +160,7 @@ export async function loadWorkAliasIndexForCandidates({
 
   for (const key of blacklist) {
     if (key.startsWith("isrc:")) {
-      const isrc = key.slice(5);
-      byIsrc.delete(isrc);
+      byIsrc.delete(key.slice(5));
     } else {
       byKey.delete(key);
     }
@@ -158,13 +173,7 @@ export async function loadWorkAliasIndexForCandidates({
   };
 }
 
-export async function saveWorkAlias(params: {
-  companyId: string;
-  workId: string;
-  normalizedTitle: string;
-  normalizedArtist?: string | null;
-  normalizedIsrc?: string | null;
-}): Promise<void> {
+export async function saveWorkAlias(params: SaveWorkAliasParams): Promise<void> {
   const companyId = normalizeNullableString(params.companyId);
   const workId = normalizeNullableString(params.workId);
   const normalizedTitle = normalizeNullableString(params.normalizedTitle);
@@ -199,4 +208,8 @@ export async function saveWorkAlias(params: {
   if (error) {
     throw new Error(`Failed to save work alias: ${error.message}`);
   }
+}
+
+export async function createAlias(params: CreateAliasParams): Promise<void> {
+  await saveWorkAlias(params);
 }
