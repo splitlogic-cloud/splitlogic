@@ -3,6 +3,7 @@ import "server-only";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { parseImportFile } from "@/features/imports/parse-import-file";
 import { canonicalizeImportRow } from "@/features/imports/canonicalize-import-row";
+import { normalizeIsrc } from "@/features/matching/normalize";
 
 type ImportJobRecord = {
   id: string;
@@ -13,6 +14,14 @@ type ImportJobRecord = {
 };
 
 type CanonicalRow = ReturnType<typeof canonicalizeImportRow>;
+
+type WorkSeedCandidate = {
+  title: string;
+  artist: string | null;
+  normalizedTitle: string;
+  normalizedArtist: string | null;
+  isrc: string | null;
+};
 
 function normalizeRowStatus(params: {
   title: string | null;
@@ -83,11 +92,238 @@ async function downloadImportFileText(job: ImportJobRecord): Promise<string> {
   return text;
 }
 
+function normalizeText(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const normalized = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[’'`]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\b(feat|ft|featuring)\.?\b.*$/gi, " ")
+    .replace(
+      /\b(remix|mix|edit|version|radio edit|extended|live|mono|stereo)\b/gi,
+      " "
+    )
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return normalized.length > 0 ? normalized : null;
+}
+
+function buildTitleArtistKey(
+  normalizedTitle: string,
+  normalizedArtist: string
+): string {
+  return `${normalizedTitle}__${normalizedArtist}`;
+}
+
+function extractWorkSeedCandidate(canonical: CanonicalRow): WorkSeedCandidate | null {
+  const title = canonical.title?.trim() ?? null;
+  if (!title) return null;
+
+  const normalizedTitle = normalizeText(title);
+  if (!normalizedTitle) return null;
+
+  const artist = canonical.artist?.trim() ?? null;
+  const normalizedArtist = normalizeText(artist);
+  const isrc = normalizeIsrc(canonical.isrc ?? null) ?? null;
+
+  return {
+    title,
+    artist,
+    normalizedTitle,
+    normalizedArtist,
+    isrc,
+  };
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    throw new Error("chunk size must be > 0");
+  }
+
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+async function ensureWorksExistForCandidates(params: {
+  companyId: string;
+  candidates: WorkSeedCandidate[];
+  now: string;
+}): Promise<number> {
+  const { companyId, candidates, now } = params;
+
+  if (candidates.length === 0) {
+    return 0;
+  }
+
+  const uniqueByKey = new Map<string, WorkSeedCandidate>();
+
+  for (const candidate of candidates) {
+    const key = candidate.isrc
+      ? `isrc:${candidate.isrc}`
+      : candidate.normalizedArtist
+        ? buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
+        : candidate.normalizedTitle;
+
+    if (!uniqueByKey.has(key)) {
+      uniqueByKey.set(key, candidate);
+    }
+  }
+
+  const uniqueCandidates = Array.from(uniqueByKey.values());
+
+  const normalizedTitles = Array.from(
+    new Set(uniqueCandidates.map((candidate) => candidate.normalizedTitle))
+  );
+
+  const isrcs = Array.from(
+    new Set(
+      uniqueCandidates
+        .map((candidate) => candidate.isrc)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const existingByIsrc = new Set<string>();
+  const existingByTitleArtist = new Set<string>();
+  const existingByTitleOnly = new Set<string>();
+
+  for (const titleChunk of chunk(normalizedTitles, 500)) {
+    const { data, error } = await supabaseAdmin
+      .from("works")
+      .select("normalized_title, normalized_artist")
+      .eq("company_id", companyId)
+      .in("normalized_title", titleChunk);
+
+    if (error) {
+      throw new Error(`Failed to load existing works by title: ${error.message}`);
+    }
+
+    for (const row of data ?? []) {
+      const record = row as {
+        normalized_title: string | null;
+        normalized_artist: string | null;
+      };
+
+      const normalizedTitle = record.normalized_title?.trim() ?? null;
+      const normalizedArtist = record.normalized_artist?.trim() ?? null;
+
+      if (!normalizedTitle) continue;
+
+      existingByTitleOnly.add(normalizedTitle);
+
+      if (normalizedArtist) {
+        existingByTitleArtist.add(
+          buildTitleArtistKey(normalizedTitle, normalizedArtist)
+        );
+      }
+    }
+  }
+
+  if (isrcs.length > 0) {
+    for (const isrcChunk of chunk(isrcs, 500)) {
+      const { data, error } = await supabaseAdmin
+        .from("works")
+        .select("isrc")
+        .eq("company_id", companyId)
+        .in("isrc", isrcChunk);
+
+      if (error) {
+        throw new Error(`Failed to load existing works by ISRC: ${error.message}`);
+      }
+
+      for (const row of data ?? []) {
+        const record = row as { isrc: string | null };
+        const isrc = normalizeIsrc(record.isrc ?? null);
+        if (isrc) {
+          existingByIsrc.add(isrc);
+        }
+      }
+    }
+  }
+
+  const worksToInsert: Array<{
+    company_id: string;
+    title: string;
+    artist: string | null;
+    normalized_title: string;
+    normalized_artist: string | null;
+    isrc: string | null;
+    created_at: string;
+    updated_at: string;
+  }> = [];
+
+  for (const candidate of uniqueCandidates) {
+    const existsByIsrc = candidate.isrc ? existingByIsrc.has(candidate.isrc) : false;
+
+    const existsByTitleArtist = candidate.normalizedArtist
+      ? existingByTitleArtist.has(
+          buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
+        )
+      : false;
+
+    const existsByTitleOnly = existingByTitleOnly.has(candidate.normalizedTitle);
+
+    if (existsByIsrc || existsByTitleArtist || existsByTitleOnly) {
+      continue;
+    }
+
+    worksToInsert.push({
+      company_id: companyId,
+      title: candidate.title,
+      artist: candidate.artist,
+      normalized_title: candidate.normalizedTitle,
+      normalized_artist: candidate.normalizedArtist,
+      isrc: candidate.isrc,
+      created_at: now,
+      updated_at: now,
+    });
+
+    existingByTitleOnly.add(candidate.normalizedTitle);
+
+    if (candidate.normalizedArtist) {
+      existingByTitleArtist.add(
+        buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
+      );
+    }
+
+    if (candidate.isrc) {
+      existingByIsrc.add(candidate.isrc);
+    }
+  }
+
+  if (worksToInsert.length === 0) {
+    return 0;
+  }
+
+  for (const insertChunk of chunk(worksToInsert, 200)) {
+    const { error } = await supabaseAdmin
+      .from("works")
+      .insert(insertChunk);
+
+    if (error) {
+      throw new Error(`Failed to insert works from import: ${error.message}`);
+    }
+  }
+
+  return worksToInsert.length;
+}
+
 export async function runImportParse(importJobId: string): Promise<{
   importJobId: string;
   insertedRowCount: number;
   parsedRowCount: number;
   invalidRowCount: number;
+  createdWorkCount: number;
 }> {
   const { data: importJob, error: importJobError } = await supabaseAdmin
     .from("import_jobs")
@@ -145,6 +381,8 @@ export async function runImportParse(importJobId: string): Promise<{
       throw new Error(`Failed to clear old import rows: ${deleteRowsError.message}`);
     }
 
+    const workCandidates: WorkSeedCandidate[] = [];
+
     const rowsToInsert = parsedFile.rows.map((raw, index) => {
       const canonical = canonicalizeImportRow(raw);
       const normalized = buildNormalizedRow(canonical);
@@ -163,38 +401,49 @@ export async function runImportParse(importJobId: string): Promise<{
         (typeof raw["track_title"] === "string" ? raw["track_title"].trim() : null) ??
         (typeof raw["work_title"] === "string" ? raw["work_title"].trim() : null) ??
         null;
-        
-        return {
-          company_id: job.company_id,
-          import_id: importJobId,
-          import_job_id: importJobId,
-          row_number: index + 1,
-          status,
-          raw,
-          canonical,
-          normalized,
-          raw_title: rawTitle,
-          currency: canonical.currency ?? null,
-          net_amount: canonical.net_amount ?? null,
-          gross_amount: canonical.gross_amount ?? null,
-          created_at: now,
-          updated_at: now,
-        };
+
+      const workCandidate = extractWorkSeedCandidate(canonical);
+      if (workCandidate) {
+        workCandidates.push(workCandidate);
+      }
+
+      return {
+        company_id: job.company_id,
+        import_id: importJobId,
+        import_job_id: importJobId,
+        row_number: index + 1,
+        status,
+        raw,
+        canonical,
+        normalized,
+        raw_title: rawTitle,
+        currency: canonical.currency ?? null,
+        net_amount: canonical.net_amount ?? null,
+        gross_amount: canonical.gross_amount ?? null,
+        created_at: now,
+        updated_at: now,
+      };
     });
 
     const chunkSize = 500;
 
     for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
-      const chunk = rowsToInsert.slice(i, i + chunkSize);
+      const currentChunk = rowsToInsert.slice(i, i + chunkSize);
 
       const { error } = await supabaseAdmin
         .from("import_rows")
-        .insert(chunk);
+        .insert(currentChunk);
 
       if (error) {
         throw new Error(`Failed to insert import rows: ${error.message}`);
       }
     }
+
+    const createdWorkCount = await ensureWorksExistForCandidates({
+      companyId: job.company_id,
+      candidates: workCandidates,
+      now,
+    });
 
     const insertedRowCount = rowsToInsert.length;
     const parsedRowCount = rowsToInsert.filter((row) => row.status === "parsed").length;
@@ -222,6 +471,7 @@ export async function runImportParse(importJobId: string): Promise<{
       insertedRowCount,
       parsedRowCount,
       invalidRowCount,
+      createdWorkCount,
     };
   } catch (error) {
     const message =
