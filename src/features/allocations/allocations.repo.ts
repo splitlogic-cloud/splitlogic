@@ -22,11 +22,16 @@ export async function createAllocationRun(params: {
   createdBy?: string | null;
   idempotencyKey?: string | null;
 }): Promise<{ id: string }> {
+  const now = new Date().toISOString();
+
   const insertPayload: Record<string, unknown> = {
     company_id: params.companyId,
     import_job_id: params.importJobId,
-    status: "running",
+    status: "processing",
     currency: params.currency,
+    started_at: now,
+    created_at: now,
+    updated_at: now,
   };
 
   if (params.createdBy !== undefined) {
@@ -65,13 +70,25 @@ export async function setAllocationRunStatus(params: {
     total_gross_amount: number;
   }>;
 }): Promise<void> {
+  const now = new Date().toISOString();
+
   const payload: Record<string, unknown> = {
     status: params.status,
-    updated_at: new Date().toISOString(),
+    updated_at: now,
   };
 
-  if (params.status !== "running") {
-    payload.finished_at = new Date().toISOString();
+  if (params.status === "processing") {
+    payload.started_at = now;
+  }
+
+  if (params.status === "completed") {
+    payload.finished_at = now;
+    payload.completed_at = now;
+  }
+
+  if (params.status === "failed") {
+    payload.finished_at = now;
+    payload.failed_at = now;
   }
 
   if (params.totals) {
@@ -335,7 +352,10 @@ export async function markRowsAllocated(params: {
 
   const { error } = await supabaseAdmin
     .from("import_rows")
-    .update({ status: "allocated" })
+    .update({
+      status: "allocated",
+      updated_at: new Date().toISOString(),
+    })
     .in("id", params.importRowIds);
 
   if (error) {
@@ -466,11 +486,13 @@ export async function failAllocationRun(params: {
   errorMessage?: string | null;
 }) {
   const { allocationRunId, errorMessage } = params;
+  const now = new Date().toISOString();
 
   const payload: Record<string, unknown> = {
     status: "failed",
-    finished_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    failed_at: now,
+    finished_at: now,
+    updated_at: now,
   };
 
   if (errorMessage) {
@@ -504,10 +526,13 @@ export async function finalizeAllocationRun(params: {
     totalAllocatedAmount = null,
   } = params;
 
+  const now = new Date().toISOString();
+
   const payload: Record<string, unknown> = {
     status: "completed",
-    finished_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    completed_at: now,
+    finished_at: now,
+    updated_at: now,
   };
 
   if (lineCount !== null) {
