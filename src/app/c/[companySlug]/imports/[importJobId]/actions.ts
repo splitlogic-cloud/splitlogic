@@ -109,10 +109,7 @@ export async function runMatchingAction(formData: FormData) {
   }
 
   try {
-    await matchImportRowsForImport({
-      companyId: company.id,
-      importJobId,
-    });
+    await matchImportRowsForImport(company.id, importJobId);
   } catch (error) {
     await supabaseAdmin
       .from("import_jobs")
