@@ -11,6 +11,50 @@ import type {
   WorkSplitRecord,
 } from "./allocations-types";
 
+type AllocationLineInsert = {
+  allocation_run_id: string;
+  company_id: string;
+  import_job_id: string;
+  import_row_id: string;
+  work_id: string | null;
+  party_id: string;
+  role?: string | null;
+  source_split_id?: string | null;
+  row_amount?: number | null;
+  share_bps?: number | null;
+  allocated_amount: number;
+  currency?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+function serializeError(error: unknown): string {
+  if (!error) return "unknown";
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+
+  return String(error);
+}
+
+function assertAllocationRunStatus(status: string): asserts status is AllocationRunStatus {
+  const allowed: AllocationRunStatus[] = ["pending", "processing", "completed", "failed"];
+
+  if (!allowed.includes(status as AllocationRunStatus)) {
+    throw new Error(
+      `Invalid allocation run status "${status}". Allowed: ${allowed.join(", ")}`
+    );
+  }
+}
+
 /**
  * Create allocation run
  */
@@ -42,6 +86,8 @@ export async function createAllocationRun(params: {
     insertPayload.idempotency_key = params.idempotencyKey;
   }
 
+  console.log("[allocation_runs.create] insertPayload =", insertPayload);
+
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
     .insert(insertPayload)
@@ -49,8 +95,19 @@ export async function createAllocationRun(params: {
     .single();
 
   if (error || !data) {
-    throw new Error(`createAllocationRun failed: ${error?.message ?? "unknown"}`);
+    console.error("[allocation_runs.create] failed", {
+      insertPayload,
+      error,
+    });
+
+    throw new Error(
+      `createAllocationRun failed: ${error?.message ?? "unknown"} | payload=${serializeError(
+        insertPayload
+      )} | dbError=${serializeError(error)}`
+    );
   }
+
+  console.log("[allocation_runs.create] created", data);
 
   return data;
 }
@@ -71,6 +128,8 @@ export async function setAllocationRunStatus(params: {
   }>;
 }): Promise<void> {
   const now = new Date().toISOString();
+
+  assertAllocationRunStatus(params.status);
 
   const payload: Record<string, unknown> = {
     status: params.status,
@@ -95,13 +154,26 @@ export async function setAllocationRunStatus(params: {
     Object.assign(payload, params.totals);
   }
 
+  console.log("[allocation_runs.setStatus] payload =", {
+    allocationRunId: params.allocationRunId,
+    payload,
+  });
+
   const { error } = await supabaseAdmin
     .from("allocation_runs")
     .update(payload)
     .eq("id", params.allocationRunId);
 
   if (error) {
-    throw new Error(`setAllocationRunStatus failed: ${error.message}`);
+    console.error("[allocation_runs.setStatus] failed", {
+      allocationRunId: params.allocationRunId,
+      payload,
+      error,
+    });
+
+    throw new Error(
+      `setAllocationRunStatus failed: ${error.message} | payload=${serializeError(payload)}`
+    );
   }
 }
 
@@ -174,8 +246,7 @@ export async function listImportRowsForAllocation(
 ): Promise<ImportRowForAllocation[]> {
   const { data, error } = await supabaseAdmin
     .from("import_rows")
-    .select(
-      `
+    .select(`
       id,
       company_id,
       import_job_id,
@@ -186,8 +257,7 @@ export async function listImportRowsForAllocation(
       currency,
       net_amount,
       gross_amount
-      `
-    )
+    `)
     .eq("company_id", companyId)
     .eq("import_job_id", importJobId)
     .in("status", ["matched", "allocated"])
@@ -199,10 +269,8 @@ export async function listImportRowsForAllocation(
   }
 
   const rows = (data ?? []).map((row) => {
-    const netAmount =
-      row.net_amount == null ? null : Number(row.net_amount);
-    const grossAmount =
-      row.gross_amount == null ? null : Number(row.gross_amount);
+    const netAmount = row.net_amount == null ? null : Number(row.net_amount);
+    const grossAmount = row.gross_amount == null ? null : Number(row.gross_amount);
 
     return {
       ...row,
@@ -276,26 +344,16 @@ export async function insertAllocationLines(lines: AllocationLineInsert[]): Prom
     const { error } = await supabaseAdmin.from("allocation_lines").insert(chunk);
 
     if (error) {
+      console.error("[allocation_lines.insertAllocationLines] failed", {
+        chunkSize: chunk.length,
+        firstRow: chunk[0] ?? null,
+        error,
+      });
+
       throw new Error(`insertAllocationLines failed: ${error.message}`);
     }
   }
 }
-
-type AllocationLineInsert = {
-  allocation_run_id: string;
-  company_id: string;
-  import_job_id: string;
-  import_row_id: string;
-  work_id: string | null;
-  party_id: string;
-  role?: string | null;
-  source_split_id?: string | null;
-  row_amount?: number | null;
-  share_bps?: number | null;
-  allocated_amount: number;
-  currency?: string | null;
-  metadata?: Record<string, unknown> | null;
-};
 
 export async function insertAllocationRunLines(
   lines: AllocationCandidateLine[]
@@ -312,6 +370,12 @@ export async function insertAllocationRunLines(
     const { error } = await supabaseAdmin.from("allocation_lines").insert(chunk);
 
     if (error) {
+      console.error("[allocation_lines.insertAllocationRunLines] failed", {
+        chunkSize: chunk.length,
+        firstRow: chunk[0] ?? null,
+        error,
+      });
+
       throw new Error(`insertAllocationRunLines failed: ${error.message}`);
     }
   }
@@ -334,6 +398,12 @@ export async function insertAllocationRunBlockers(
       .insert(chunk);
 
     if (error) {
+      console.error("[allocation_run_blockers.insert] failed", {
+        chunkSize: chunk.length,
+        firstRow: chunk[0] ?? null,
+        error,
+      });
+
       throw new Error(`insertAllocationRunBlockers failed: ${error.message}`);
     }
   }
@@ -350,12 +420,14 @@ export async function markRowsAllocated(params: {
     return;
   }
 
+  const payload = {
+    status: "allocated",
+    updated_at: new Date().toISOString(),
+  };
+
   const { error } = await supabaseAdmin
     .from("import_rows")
-    .update({
-      status: "allocated",
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .in("id", params.importRowIds);
 
   if (error) {
@@ -367,12 +439,14 @@ export async function updateImportRowsAllocationStatus(
   importJobId: string,
   status: string
 ): Promise<void> {
+  const payload = {
+    allocation_status: status,
+    updated_at: new Date().toISOString(),
+  };
+
   const { error } = await supabaseAdmin
     .from("import_rows")
-    .update({
-      allocation_status: status,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .eq("import_job_id", importJobId);
 
   if (error) {
@@ -384,12 +458,14 @@ export async function setImportJobStatus(
   importJobId: string,
   status: string
 ): Promise<void> {
+  const payload = {
+    status,
+    updated_at: new Date().toISOString(),
+  };
+
   const { error } = await supabaseAdmin
     .from("import_jobs")
-    .update({
-      status,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .eq("id", importJobId);
 
   if (error) {
@@ -447,7 +523,7 @@ export async function listAllocationRunsByCompany(companyId: string) {
 export async function listAllocationBlockersForImport(importJobId: string) {
   const { data, error } = await supabaseAdmin
     .from("import_rows")
-    .select("id,status,row_number,raw_title")
+    .select("id, status, row_number, raw_title")
     .eq("import_job_id", importJobId)
     .in("status", ["invalid", "needs_review", "unmatched"])
     .order("row_number", { ascending: true });
@@ -499,6 +575,11 @@ export async function failAllocationRun(params: {
     payload.error_message = errorMessage;
   }
 
+  console.log("[allocation_runs.fail] payload =", {
+    allocationRunId,
+    payload,
+  });
+
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
     .update(payload)
@@ -507,6 +588,12 @@ export async function failAllocationRun(params: {
     .maybeSingle();
 
   if (error) {
+    console.error("[allocation_runs.fail] failed", {
+      allocationRunId,
+      payload,
+      error,
+    });
+
     throw new Error(`failAllocationRun failed: ${error.message}`);
   }
 
@@ -547,6 +634,11 @@ export async function finalizeAllocationRun(params: {
     payload.total_allocated_amount = totalAllocatedAmount;
   }
 
+  console.log("[allocation_runs.finalize] payload =", {
+    allocationRunId,
+    payload,
+  });
+
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
     .update(payload)
@@ -555,6 +647,12 @@ export async function finalizeAllocationRun(params: {
     .maybeSingle();
 
   if (error) {
+    console.error("[allocation_runs.finalize] failed", {
+      allocationRunId,
+      payload,
+      error,
+    });
+
     throw new Error(`finalizeAllocationRun failed: ${error.message}`);
   }
 
