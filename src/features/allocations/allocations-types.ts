@@ -1,6 +1,6 @@
 export type AllocationRunStatus =
-  | "queued"
-  | "running"
+  | "pending"
+  | "processing"
   | "completed"
   | "failed";
 
