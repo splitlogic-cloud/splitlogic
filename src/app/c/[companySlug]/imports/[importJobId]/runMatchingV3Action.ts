@@ -40,7 +40,7 @@ export async function runMatchingV3Action(formData: FormData) {
     throw new Error("Import job not found");
   }
 
-  await supabaseAdmin
+  const { error: setStatusError } = await supabaseAdmin
     .from("import_jobs")
     .update({
       status: "matching",
@@ -48,11 +48,12 @@ export async function runMatchingV3Action(formData: FormData) {
     })
     .eq("id", importJobId);
 
+  if (setStatusError) {
+    throw new Error(`Failed to set import job to matching: ${setStatusError.message}`);
+  }
+
   try {
-    await matchImportRowsForImport({
-      companyId: typedCompany.id,
-      importJobId,
-    });
+    await matchImportRowsForImport(typedCompany.id, importJobId);
   } catch (error) {
     await supabaseAdmin
       .from("import_jobs")
