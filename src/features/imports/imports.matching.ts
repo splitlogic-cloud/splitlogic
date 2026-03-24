@@ -1,6 +1,9 @@
 import "server-only";
 
-export { matchImportRowsForImport, normalizeIsrc } from "@/features/matching/match-import-rows";
+export {
+  matchImportRowsForImport,
+  normalizeIsrc,
+} from "@/features/matching/match-import-rows";
 
 function readString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -8,17 +11,29 @@ function readString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function readRawIsrc(raw: Record<string, unknown> | null | undefined): string | null {
-  if (!raw) return null;
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+export function readRawIsrc(raw: unknown): string | null {
+  const record = asRecord(raw);
+
+  if (!record) {
+    return null;
+  }
 
   const candidates = [
-    raw["isrc"],
-    raw["ISRC"],
-    raw["isrc_code"],
-    raw["track_isrc"],
-    raw["trackISRC"],
-    raw["product_isrc"],
-    raw["productISRC"],
+    record["isrc"],
+    record["ISRC"],
+    record["isrc_code"],
+    record["track_isrc"],
+    record["trackISRC"],
+    record["product_isrc"],
+    record["productISRC"],
   ];
 
   for (const value of candidates) {
