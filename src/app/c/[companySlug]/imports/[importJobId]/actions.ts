@@ -70,6 +70,53 @@ async function verifyContext(params: {
   };
 }
 
+async function refreshImportJobAggregates(importJobId: string): Promise<void> {
+  const { data: aggregates, error: aggregateError } = await supabaseAdmin
+    .from("import_rows")
+    .select("status, work_id, matched_work_id")
+    .eq("import_job_id", importJobId);
+
+  if (aggregateError) {
+    throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
+  }
+
+  const parsedRowCount = (aggregates ?? []).filter((row) => row.status === "parsed").length;
+  const invalidRowCount = (aggregates ?? []).filter((row) => row.status === "invalid").length;
+  const matchedRowCount = (aggregates ?? []).filter(
+    (row) => row.work_id != null || row.matched_work_id != null || row.status === "matched"
+  ).length;
+  const reviewRowCount = (aggregates ?? []).filter(
+    (row) => row.status === "needs_review" || row.status === "unmatched"
+  ).length;
+  const allocatedRowCount = (aggregates ?? []).filter((row) => row.status === "allocated").length;
+
+  let nextStatus = "parsed";
+
+  if (allocatedRowCount > 0) {
+    nextStatus = "completed";
+  } else if (matchedRowCount > 0) {
+    nextStatus = "matched";
+  } else if (parsedRowCount > 0 || invalidRowCount > 0 || reviewRowCount > 0) {
+    nextStatus = "parsed";
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: nextStatus,
+      parsed_row_count: parsedRowCount,
+      invalid_row_count: invalidRowCount,
+      matched_row_count: matchedRowCount,
+      review_row_count: reviewRowCount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", importJobId);
+
+  if (updateError) {
+    throw new Error(`Failed to update import job aggregates: ${updateError.message}`);
+  }
+}
+
 export async function runImportParseAction(formData: FormData) {
   const companySlug = String(formData.get("companySlug") ?? "");
   const importJobId = String(formData.get("importJobId") ?? "");
@@ -80,6 +127,7 @@ export async function runImportParseAction(formData: FormData) {
 
   await verifyContext({ companySlug, importJobId });
   await runImportParse(importJobId);
+  await refreshImportJobAggregates(importJobId);
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
 }
@@ -111,6 +159,7 @@ export async function runMatchingAction(formData: FormData) {
 
   try {
     await matchImportRowsForImport(company.id, importJobId);
+    await refreshImportJobAggregates(importJobId);
   } catch (error) {
     await supabaseAdmin
       .from("import_jobs")
@@ -124,6 +173,7 @@ export async function runMatchingAction(formData: FormData) {
   }
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+  revalidatePath(`/c/${companySlug}/allocations`);
 }
 
 export async function runAllocationAction(formData: FormData) {
@@ -136,6 +186,7 @@ export async function runAllocationAction(formData: FormData) {
 
   await verifyContext({ companySlug, importJobId });
   await runAllocation(importJobId);
+  await refreshImportJobAggregates(importJobId);
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
   revalidatePath(`/c/${companySlug}/allocations`);
@@ -226,33 +277,7 @@ export async function manualMatchImportRowAction(formData: FormData) {
     });
   }
 
-  const { data: aggregates, error: aggregateError } = await supabaseAdmin
-    .from("import_rows")
-    .select("status, work_id")
-    .eq("import_job_id", importJob.id);
-
-  if (aggregateError) {
-    throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
-  }
-
-  const parsedRowCount = (aggregates ?? []).filter((row) => row.status === "parsed").length;
-  const invalidRowCount = (aggregates ?? []).filter((row) => row.status === "invalid").length;
-  const matchedRowCount = (aggregates ?? []).filter((row) => row.work_id != null).length;
-  const reviewRowCount = (aggregates ?? []).filter(
-    (row) => row.status === "needs_review"
-  ).length;
-
-  await supabaseAdmin
-    .from("import_jobs")
-    .update({
-      status: matchedRowCount > 0 ? "matched" : "parsed",
-      parsed_row_count: parsedRowCount,
-      invalid_row_count: invalidRowCount,
-      matched_row_count: matchedRowCount,
-      review_row_count: reviewRowCount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", importJob.id);
+  await refreshImportJobAggregates(importJob.id);
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
 }
@@ -288,33 +313,7 @@ export async function clearImportRowMatchAction(formData: FormData) {
     throw new Error(`clear match failed: ${error.message}`);
   }
 
-  const { data: aggregates, error: aggregateError } = await supabaseAdmin
-    .from("import_rows")
-    .select("status, work_id")
-    .eq("import_job_id", importJob.id);
-
-  if (aggregateError) {
-    throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
-  }
-
-  const parsedRowCount = (aggregates ?? []).filter((row) => row.status === "parsed").length;
-  const invalidRowCount = (aggregates ?? []).filter((row) => row.status === "invalid").length;
-  const matchedRowCount = (aggregates ?? []).filter((row) => row.work_id != null).length;
-  const reviewRowCount = (aggregates ?? []).filter(
-    (row) => row.status === "needs_review"
-  ).length;
-
-  await supabaseAdmin
-    .from("import_jobs")
-    .update({
-      status: matchedRowCount > 0 ? "matched" : "parsed",
-      parsed_row_count: parsedRowCount,
-      invalid_row_count: invalidRowCount,
-      matched_row_count: matchedRowCount,
-      review_row_count: reviewRowCount,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", importJob.id);
+  await refreshImportJobAggregates(importJob.id);
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
 }
