@@ -13,16 +13,30 @@ export default function RunAllocationButton({
   importJobId,
   disabled = false,
 }: Props) {
-  async function debugClick() {
-    console.log("[RunAllocationButton] clicked", {
-      companySlug,
-      importJobId,
-      disabled,
-    });
-  }
-
   return (
-    <div className="relative z-[9999] pointer-events-auto">
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          alert(
+            JSON.stringify({
+              source: "debug-button",
+              companySlug,
+              importJobId,
+              disabled,
+            })
+          );
+          console.log("[RunAllocationButton] debug button clicked", {
+            companySlug,
+            importJobId,
+            disabled,
+          });
+        }}
+        className="fixed bottom-6 right-6 z-[999999] rounded-md bg-red-600 px-4 py-3 text-sm font-semibold text-white shadow-lg"
+      >
+        DEBUG CLICK
+      </button>
+
       <form
         action={runAllocationAction}
         className="inline-block relative z-[9999] pointer-events-auto"
@@ -32,13 +46,12 @@ export default function RunAllocationButton({
 
         <button
           type="submit"
-          onClick={debugClick}
           disabled={disabled}
-          className="relative z-[9999] pointer-events-auto inline-flex items-center rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           Run allocation
         </button>
       </form>
-    </div>
+    </>
   );
 }
