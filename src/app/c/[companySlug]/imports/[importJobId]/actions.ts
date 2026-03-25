@@ -176,9 +176,12 @@ export async function runMatchingAction(formData: FormData) {
   revalidatePath(`/c/${companySlug}/allocations`);
 }
 
-export async function runAllocationAction(formData: FormData) {
-  const companySlug = String(formData.get("companySlug") ?? "");
-  const importJobId = String(formData.get("importJobId") ?? "");
+export async function runAllocationAction(params: {
+  companySlug: string;
+  importJobId: string;
+}) {
+  const companySlug = String(params.companySlug ?? "");
+  const importJobId = String(params.importJobId ?? "");
 
   if (!companySlug || !importJobId) {
     throw new Error("Missing companySlug or importJobId");
@@ -190,6 +193,8 @@ export async function runAllocationAction(formData: FormData) {
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
   revalidatePath(`/c/${companySlug}/allocations`);
+
+  return { ok: true };
 }
 
 export async function manualMatchImportRowAction(formData: FormData) {
