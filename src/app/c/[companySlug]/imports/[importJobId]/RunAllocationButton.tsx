@@ -1,8 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { runAllocationAction } from "./actions";
+import { useState } from "react";
 
 type Props = {
   companySlug: string;
@@ -16,32 +15,48 @@ export default function RunAllocationButton({
   disabled = false,
 }: Props) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isDisabled = disabled || isPending;
+  async function handleClick() {
+    if (disabled || isLoading) return;
 
-  function handleClick() {
+    setIsLoading(true);
     setError(null);
 
-    startTransition(async () => {
-      try {
-        console.log("[RunAllocationButton] clicked", {
+    try {
+      console.log("[RunAllocationButton] clicked", {
+        companySlug,
+        importJobId,
+      });
+
+      const response = await fetch("/api/imports/run-allocation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
           companySlug,
           importJobId,
-        });
+        }),
+      });
 
-        await runAllocationAction({
-          companySlug,
-          importJobId,
-        });
+      const data = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+      };
 
-        router.refresh();
-      } catch (err) {
-        console.error("[RunAllocationButton] failed", err);
-        setError(err instanceof Error ? err.message : "Allocation failed");
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Allocation failed");
       }
-    });
+
+      router.refresh();
+    } catch (err) {
+      console.error("[RunAllocationButton] failed", err);
+      setError(err instanceof Error ? err.message : "Allocation failed");
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -49,15 +64,13 @@ export default function RunAllocationButton({
       <button
         type="button"
         onClick={handleClick}
-        disabled={isDisabled}
+        disabled={disabled || isLoading}
         className="inline-flex items-center rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isPending ? "Running allocation..." : "Run allocation"}
+        {isLoading ? "Running allocation..." : "Run allocation"}
       </button>
 
-      {error ? (
-        <p className="text-sm text-red-600">{error}</p>
-      ) : null}
+      {error ? <p className="text-sm text-red-600">{error}</p> : null}
     </div>
   );
 }
