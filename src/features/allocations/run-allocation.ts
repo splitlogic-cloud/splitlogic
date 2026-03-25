@@ -36,6 +36,8 @@ function normalizeShareBps(split: {
 export async function runAllocation(importJobId: string): Promise<AllocationRunResult> {
   const importJob = await getImportJobCompany(importJobId);
 
+  await setImportJobStatus(importJobId, "allocating");
+
   const matchedRows = await getMatchedRowsForAllocation(importJobId);
 
   const currency =
@@ -50,7 +52,11 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
   });
 
   try {
-    const workIds = [...new Set(matchedRows.map((row) => row.matched_work_id).filter(Boolean))] as string[];
+    const workIds = [
+      ...new Set(
+        matchedRows.map((row) => row.matched_work_id).filter(Boolean)
+      ),
+    ] as string[];
 
     const splits = await getWorkSplitsForWorks({
       companyId: importJob.company_id,
@@ -58,6 +64,7 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
     });
 
     const splitsByWorkId = new Map<string, typeof splits>();
+
     for (const split of splits) {
       const current = splitsByWorkId.get(split.work_id) ?? [];
       current.push(split);
@@ -86,6 +93,7 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
       }
 
       const workSplits = splitsByWorkId.get(row.matched_work_id) ?? [];
+
       if (workSplits.length === 0) {
         blockedRows += 1;
         continue;
@@ -106,7 +114,7 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
       workSplits.forEach((split, index) => {
         const shareBps = normalizeShareBps(split);
 
-        let allocatedAmount =
+        const allocatedAmount =
           index === workSplits.length - 1
             ? Math.round((amount - allocatedSoFar) * 100) / 100
             : Math.round(((amount * shareBps) / 10000) * 100) / 100;
@@ -135,7 +143,12 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
     }
 
     await insertAllocationLines(lines);
-    await markRowsAllocated({ importRowIds: allocatedImportRowIds });
+
+    await markRowsAllocated({
+      importRowIds: allocatedImportRowIds,
+    });
+
+    await setImportJobStatus(importJobId, "completed");
 
     await setAllocationRunStatus({
       allocationRunId: run.id,
@@ -149,19 +162,31 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
       },
     });
 
-    await setImportJobStatus(importJobId, "allocated");
-
     return {
       id: run.id,
       status: "completed",
     };
   } catch (error) {
-    await setAllocationRunStatus({
-      allocationRunId: run.id,
-      status: "failed",
-    });
+    try {
+      await setImportJobStatus(importJobId, "failed");
+    } catch (importJobStatusError) {
+      console.error("[runAllocation] failed to set import job status to failed", {
+        importJobId,
+        importJobStatusError,
+      });
+    }
 
-    await setImportJobStatus(importJobId, "allocation_failed");
+    try {
+      await setAllocationRunStatus({
+        allocationRunId: run.id,
+        status: "failed",
+      });
+    } catch (allocationRunStatusError) {
+      console.error("[runAllocation] failed to set allocation run status to failed", {
+        allocationRunId: run.id,
+        allocationRunStatusError,
+      });
+    }
 
     throw error;
   }

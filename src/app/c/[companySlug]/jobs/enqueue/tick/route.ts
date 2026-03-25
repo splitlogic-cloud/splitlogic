@@ -6,12 +6,6 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /c/[companySlug]/jobs/enqueue/tick
- * Kicks the job runner (one tick). This is typically called by UI or a cron.
- *
- * If you already have an RPC/function for ticking, replace the body with that call.
- */
 export async function POST(req: Request, context: any): Promise<Response> {
   const companySlug = String(context?.params?.companySlug ?? "");
   if (!companySlug) {
@@ -23,11 +17,9 @@ export async function POST(req: Request, context: any): Promise<Response> {
 
   const company = await requireCompanyBySlugForUser(companySlug);
 
-  // Example: mark the oldest queued job as "running" (one tick).
-  // Adjust to your schema if needed.
   const { data: job, error: pickErr } = await supabaseAdmin
     .from("engine_jobs")
-    .select("id,status")
+    .select("id, status")
     .eq("company_id", company.id)
     .eq("status", "queued")
     .order("created_at", { ascending: true })
@@ -50,7 +42,11 @@ export async function POST(req: Request, context: any): Promise<Response> {
 
   const { error: updErr } = await supabaseAdmin
     .from("engine_jobs")
-    .update({ status: "running", started_at: new Date().toISOString() } as any)
+    .update({
+      status: "running",
+      started_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", job.id);
 
   if (updErr) {
