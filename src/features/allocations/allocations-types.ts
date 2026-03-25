@@ -59,7 +59,6 @@ export type AllocationLineInsert = {
   share_bps?: number | null;
   allocated_amount: number;
   currency?: string | null;
-  metadata?: Record<string, unknown> | null;
 };
 
 export type AllocationCandidateLine = {

@@ -91,10 +91,6 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
       if (!row.matched_work_id) {
         blockedRows += 1;
-        console.error("[runAllocation] blocked row: missing matched_work_id", {
-          importJobId,
-          importRowId: row.id,
-        });
         continue;
       }
 
@@ -102,11 +98,6 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
       if (workSplits.length === 0) {
         blockedRows += 1;
-        console.error("[runAllocation] blocked row: no splits found for work", {
-          importJobId,
-          importRowId: row.id,
-          workId: row.matched_work_id,
-        });
         continue;
       }
 
@@ -122,20 +113,6 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
       if (totalShareBps !== 10000) {
         blockedRows += 1;
-        console.error("[runAllocation] blocked row: invalid split total", {
-          importJobId,
-          importRowId: row.id,
-          workId: row.matched_work_id,
-          totalShareBps,
-          splitCount: normalizedSplits.length,
-          splits: normalizedSplits.map((split) => ({
-            splitId: split.id,
-            partyId: split.party_id,
-            shareBps: split.normalized_share_bps,
-            role: split.role ?? null,
-            priority: split.priority ?? null,
-          })),
-        });
         continue;
       }
 
@@ -164,11 +141,6 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
           share_bps: shareBps,
           allocated_amount: allocatedAmount,
           currency: row.currency ?? null,
-          metadata: {
-            allocation_method: "share_bps",
-            split_count: normalizedSplits.length,
-            total_share_bps: totalShareBps,
-          },
         });
       });
 
