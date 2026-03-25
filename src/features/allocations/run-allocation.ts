@@ -33,6 +33,10 @@ function normalizeShareBps(split: {
   return 0;
 }
 
+function roundCurrency(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 export async function runAllocation(importJobId: string): Promise<AllocationRunResult> {
   const importJob = await getImportJobCompany(importJobId);
 
@@ -53,9 +57,7 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
   try {
     const workIds = [
-      ...new Set(
-        matchedRows.map((row) => row.matched_work_id).filter(Boolean)
-      ),
+      ...new Set(matchedRows.map((row) => row.matched_work_id).filter(Boolean)),
     ] as string[];
 
     const splits = await getWorkSplitsForWorks({
@@ -89,6 +91,10 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
       if (!row.matched_work_id) {
         blockedRows += 1;
+        console.error("[runAllocation] blocked row: missing matched_work_id", {
+          importJobId,
+          importRowId: row.id,
+        });
         continue;
       }
 
@@ -96,28 +102,52 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
       if (workSplits.length === 0) {
         blockedRows += 1;
+        console.error("[runAllocation] blocked row: no splits found for work", {
+          importJobId,
+          importRowId: row.id,
+          workId: row.matched_work_id,
+        });
         continue;
       }
 
-      const totalShareBps = workSplits.reduce(
-        (sum, split) => sum + normalizeShareBps(split),
+      const normalizedSplits = workSplits.map((split) => ({
+        ...split,
+        normalized_share_bps: normalizeShareBps(split),
+      }));
+
+      const totalShareBps = normalizedSplits.reduce(
+        (sum, split) => sum + split.normalized_share_bps,
         0
       );
 
-      if (totalShareBps <= 0) {
+      if (totalShareBps !== 10000) {
         blockedRows += 1;
+        console.error("[runAllocation] blocked row: invalid split total", {
+          importJobId,
+          importRowId: row.id,
+          workId: row.matched_work_id,
+          totalShareBps,
+          splitCount: normalizedSplits.length,
+          splits: normalizedSplits.map((split) => ({
+            splitId: split.id,
+            partyId: split.party_id,
+            shareBps: split.normalized_share_bps,
+            role: split.role ?? null,
+            priority: split.priority ?? null,
+          })),
+        });
         continue;
       }
 
       let allocatedSoFar = 0;
 
-      workSplits.forEach((split, index) => {
-        const shareBps = normalizeShareBps(split);
+      normalizedSplits.forEach((split, index) => {
+        const shareBps = split.normalized_share_bps;
 
         const allocatedAmount =
-          index === workSplits.length - 1
-            ? Math.round((amount - allocatedSoFar) * 100) / 100
-            : Math.round(((amount * shareBps) / 10000) * 100) / 100;
+          index === normalizedSplits.length - 1
+            ? roundCurrency(amount - allocatedSoFar)
+            : roundCurrency((amount * shareBps) / 10000);
 
         allocatedSoFar += allocatedAmount;
 
@@ -134,7 +164,11 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
           share_bps: shareBps,
           allocated_amount: allocatedAmount,
           currency: row.currency ?? null,
-          metadata: null,
+          metadata: {
+            allocation_method: "share_bps",
+            split_count: normalizedSplits.length,
+            total_share_bps: totalShareBps,
+          },
         });
       });
 
@@ -142,11 +176,15 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
       allocatedImportRowIds.push(row.id);
     }
 
-    await insertAllocationLines(lines);
+    if (lines.length > 0) {
+      await insertAllocationLines(lines);
+    }
 
-    await markRowsAllocated({
-      importRowIds: allocatedImportRowIds,
-    });
+    if (allocatedImportRowIds.length > 0) {
+      await markRowsAllocated({
+        importRowIds: allocatedImportRowIds,
+      });
+    }
 
     await setImportJobStatus(importJobId, "completed");
 
@@ -157,8 +195,8 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
         total_rows: totalRows,
         allocated_rows: allocatedRows,
         blocked_rows: blockedRows,
-        total_net_amount: Math.round(totalNetAmount * 100) / 100,
-        total_gross_amount: Math.round(totalGrossAmount * 100) / 100,
+        total_net_amount: roundCurrency(totalNetAmount),
+        total_gross_amount: roundCurrency(totalGrossAmount),
       },
     });
 
