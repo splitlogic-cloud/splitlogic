@@ -421,7 +421,7 @@ export async function markRowsAllocated(params: {
   }
 
   const payload = {
-    status: "allocated",
+    allocation_status: "allocated",
     updated_at: new Date().toISOString(),
   };
 
@@ -431,6 +431,13 @@ export async function markRowsAllocated(params: {
     .in("id", params.importRowIds);
 
   if (error) {
+    console.error("[import_rows.markRowsAllocated] failed", {
+      importRowIdsCount: params.importRowIds.length,
+      firstImportRowId: params.importRowIds[0] ?? null,
+      payload,
+      error,
+    });
+
     throw new Error(`markRowsAllocated failed: ${error.message}`);
   }
 }
@@ -450,6 +457,12 @@ export async function updateImportRowsAllocationStatus(
     .eq("import_job_id", importJobId);
 
   if (error) {
+    console.error("[import_rows.updateAllocationStatus] failed", {
+      importJobId,
+      payload,
+      error,
+    });
+
     throw new Error(`updateImportRowsAllocationStatus failed: ${error.message}`);
   }
 }
