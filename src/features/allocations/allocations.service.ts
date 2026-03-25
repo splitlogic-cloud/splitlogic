@@ -202,7 +202,7 @@ function validateWorkSplits(
   let duplicateFound = false;
 
   for (const split of splits) {
-    const key = `${split.party_id}:${split.role}`;
+    const key = `${split.party_id}:${split.role ?? ""}`;
     if (duplicateKeySet.has(key)) {
       duplicateFound = true;
       break;
@@ -249,17 +249,12 @@ function buildAllocationLines(
     import_row_id: row.id,
     work_id: row.matched_work_id,
     party_id: split.party_id,
-    role: split.role,
+    role: split.role ?? null,
     source_split_id: split.id,
     row_amount: rowAmount,
     share_bps: split.share_bps,
     allocated_amount: roundMoney((rowAmount * split.share_bps) / 10000),
     currency,
-    metadata: {
-      matched_work_confidence: row.matched_work_confidence,
-      recoupable: split.recoupable,
-      split_priority: split.priority,
-    },
   }));
 
   const totalAllocated = rawLines.reduce(

@@ -74,7 +74,6 @@ export type AllocationCandidateLine = {
   share_bps: number;
   allocated_amount: number;
   currency: string | null;
-  metadata: Record<string, unknown>;
 };
 
 export type AllocationCandidateBlocker = {
