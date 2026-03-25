@@ -28,6 +28,7 @@ export default function RunAllocationButton({
       console.log("[RunAllocationButton] clicked", {
         companySlug,
         importJobId,
+        disabled,
       });
 
       const response = await fetch("/api/imports/run-allocation", {
@@ -45,6 +46,11 @@ export default function RunAllocationButton({
         ok: boolean;
         error?: string;
       };
+
+      console.log("[RunAllocationButton] api response", {
+        status: response.status,
+        data,
+      });
 
       if (!response.ok || !data.ok) {
         throw new Error(data.error || "Allocation failed");
