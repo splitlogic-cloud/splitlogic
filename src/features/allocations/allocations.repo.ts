@@ -24,7 +24,6 @@ type AllocationLineInsert = {
   share_bps?: number | null;
   allocated_amount: number;
   currency?: string | null;
-  metadata?: Record<string, unknown> | null;
 };
 
 function serializeError(error: unknown): string {
@@ -45,8 +44,15 @@ function serializeError(error: unknown): string {
   return String(error);
 }
 
-function assertAllocationRunStatus(status: string): asserts status is AllocationRunStatus {
-  const allowed: AllocationRunStatus[] = ["pending", "processing", "completed", "failed"];
+function assertAllocationRunStatus(
+  status: string
+): asserts status is AllocationRunStatus {
+  const allowed: AllocationRunStatus[] = [
+    "pending",
+    "processing",
+    "completed",
+    "failed",
+  ];
 
   if (!allowed.includes(status as AllocationRunStatus)) {
     throw new Error(
@@ -58,7 +64,6 @@ function assertAllocationRunStatus(status: string): asserts status is Allocation
 /**
  * Create allocation run
  */
-
 export async function createAllocationRun(params: {
   companyId: string;
   importJobId: string;
@@ -115,7 +120,6 @@ export async function createAllocationRun(params: {
 /**
  * Legacy status setter kept for compatibility
  */
-
 export async function setAllocationRunStatus(params: {
   allocationRunId: string;
   status: AllocationRunStatus;
@@ -180,7 +184,6 @@ export async function setAllocationRunStatus(params: {
 /**
  * Import job lookups
  */
-
 export async function getImportJobCompany(importJobId: string): Promise<{
   id: string;
   company_id: string;
@@ -219,7 +222,6 @@ export async function getImportJobForCompany(
 /**
  * Import row fetchers
  */
-
 export async function getMatchedRowsForAllocation(
   importJobId: string
 ): Promise<MatchedImportRowForAllocation[]> {
@@ -284,7 +286,6 @@ export async function listImportRowsForAllocation(
 /**
  * Work split fetchers
  */
-
 export async function getWorkSplitsForWorks(params: {
   companyId: string;
   workIds: string[];
@@ -330,8 +331,9 @@ export async function listWorkSplitsForWorkIds(
 /**
  * Allocation line inserts
  */
-
-export async function insertAllocationLines(lines: AllocationLineInsert[]): Promise<void> {
+export async function insertAllocationLines(
+  lines: AllocationLineInsert[]
+): Promise<void> {
   if (lines.length === 0) {
     return;
   }
@@ -412,7 +414,6 @@ export async function insertAllocationRunBlockers(
 /**
  * Import row / job status updates
  */
-
 export async function markRowsAllocated(params: {
   importRowIds: string[];
 }): Promise<void> {
@@ -420,25 +421,31 @@ export async function markRowsAllocated(params: {
     return;
   }
 
-  const payload = {
-    allocation_status: "allocated",
-    updated_at: new Date().toISOString(),
-  };
+  const chunkSize = 200;
 
-  const { error } = await supabaseAdmin
-    .from("import_rows")
-    .update(payload)
-    .in("id", params.importRowIds);
+  for (let i = 0; i < params.importRowIds.length; i += chunkSize) {
+    const chunk = params.importRowIds.slice(i, i + chunkSize);
 
-  if (error) {
-    console.error("[import_rows.markRowsAllocated] failed", {
-      importRowIdsCount: params.importRowIds.length,
-      firstImportRowId: params.importRowIds[0] ?? null,
-      payload,
-      error,
-    });
+    const payload = {
+      allocation_status: "allocated",
+      updated_at: new Date().toISOString(),
+    };
 
-    throw new Error(`markRowsAllocated failed: ${error.message}`);
+    const { error } = await supabaseAdmin
+      .from("import_rows")
+      .update(payload)
+      .in("id", chunk);
+
+    if (error) {
+      console.error("[import_rows.markRowsAllocated] failed", {
+        chunkSize: chunk.length,
+        firstImportRowId: chunk[0] ?? null,
+        payload,
+        error,
+      });
+
+      throw new Error(`markRowsAllocated failed: ${error.message}`);
+    }
   }
 }
 
@@ -489,7 +496,6 @@ export async function setImportJobStatus(
 /**
  * Run summaries
  */
-
 export async function getLatestAllocationRunForImport(importJobId: string): Promise<{
   id: string;
   status: string;
@@ -551,7 +557,6 @@ export async function listAllocationBlockersForImport(importJobId: string) {
 /**
  * Company lookup
  */
-
 export async function getCompanyBySlug(companySlug: string) {
   const { data, error } = await supabaseAdmin
     .from("companies")
@@ -569,7 +574,6 @@ export async function getCompanyBySlug(companySlug: string) {
 /**
  * Finalization / failure lifecycle
  */
-
 export async function failAllocationRun(params: {
   allocationRunId: string;
   errorMessage?: string | null;
@@ -675,5 +679,4 @@ export async function finalizeAllocationRun(params: {
 /**
  * Small compatibility alias for older imports
  */
-
 export type { AllocationRunResult };
