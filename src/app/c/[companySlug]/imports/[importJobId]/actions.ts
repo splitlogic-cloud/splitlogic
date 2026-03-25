@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runImportParse } from "@/features/imports/run-import-parse";
 import { matchImportRowsForImport } from "@/features/imports/imports.matching";
 import { saveWorkAlias } from "@/features/matching/work-alias.repo";
+import { runAllocation } from "@/features/allocations/run-allocation";
 
 type CompanyRecord = {
   id: string;
@@ -123,6 +124,21 @@ export async function runMatchingAction(formData: FormData) {
   }
 
   revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+}
+
+export async function runAllocationAction(formData: FormData) {
+  const companySlug = String(formData.get("companySlug") ?? "");
+  const importJobId = String(formData.get("importJobId") ?? "");
+
+  if (!companySlug || !importJobId) {
+    throw new Error("Missing companySlug or importJobId");
+  }
+
+  await verifyContext({ companySlug, importJobId });
+  await runAllocation(importJobId);
+
+  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+  revalidatePath(`/c/${companySlug}/allocations`);
 }
 
 export async function manualMatchImportRowAction(formData: FormData) {
