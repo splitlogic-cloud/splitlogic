@@ -46,6 +46,7 @@ type ImportRowUpdate = {
   matched_work_id: string | null;
   match_confidence: number;
   match_source: MatchSource | null;
+  allocation_status: "pending";
   status: "matched" | "needs_review";
   updated_at: string;
 };
@@ -64,9 +65,9 @@ type WorkIndex = {
   blacklistedTitleOnly: Set<string>;
 };
 
-const MATCH_BATCH_SIZE = 500;
-const UPDATE_CHUNK_SIZE = 500;
+const READ_BATCH_SIZE = 1000;
 const INSERT_CHUNK_SIZE = 200;
+const UPDATE_CHUNK_SIZE = 100;
 
 function chunk<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
@@ -201,7 +202,7 @@ async function listImportRowsForMatching(
   let from = 0;
 
   while (true) {
-    const to = from + MATCH_BATCH_SIZE - 1;
+    const to = from + READ_BATCH_SIZE - 1;
 
     const { data, error } = await supabaseAdmin
       .from("import_rows")
@@ -220,11 +221,11 @@ async function listImportRowsForMatching(
 
     allRows.push(...(data as ImportRowRecord[]));
 
-    if (data.length < MATCH_BATCH_SIZE) {
+    if (data.length < READ_BATCH_SIZE) {
       break;
     }
 
-    from += MATCH_BATCH_SIZE;
+    from += READ_BATCH_SIZE;
   }
 
   return allRows;
@@ -243,8 +244,8 @@ async function ensureWorksExistForImport(
     const key = candidate.isrc
       ? `isrc:${candidate.isrc}`
       : candidate.normalizedArtist
-      ? buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
-      : candidate.normalizedTitle;
+        ? buildTitleArtistKey(candidate.normalizedTitle, candidate.normalizedArtist)
+        : candidate.normalizedTitle;
 
     if (!uniqueByKey.has(key)) {
       uniqueByKey.set(key, candidate);
@@ -418,10 +419,8 @@ async function loadWorkIndex(companyId: string): Promise<WorkIndex> {
 
       if (!workId) continue;
 
-      if (isrc) {
-        if (!byIsrc.has(isrc)) {
-          byIsrc.set(isrc, workId);
-        }
+      if (isrc && !byIsrc.has(isrc)) {
+        byIsrc.set(isrc, workId);
       }
 
       if (!normalizedTitle) continue;
@@ -548,43 +547,38 @@ function buildImportRowUpdates(
       matched_work_id: matched ? resolution.workId : null,
       match_confidence: matched ? resolution.confidence : 0,
       match_source: matched ? resolution.source : null,
+      allocation_status: "pending",
       status: matched ? "matched" : "needs_review",
       updated_at: now,
     };
   });
 }
 
-async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
-  if (updates.length === 0) return;
-
-  const matchedUpdates = updates.filter((row) => row.status === "matched");
-  const reviewUpdates = updates.filter((row) => row.status === "needs_review");
-
-  for (const batch of chunk(matchedUpdates, UPDATE_CHUNK_SIZE)) {
-    await Promise.all(
-      batch.map(async (row) => {
-        const { error } = await supabaseAdmin
-          .from("import_rows")
-          .update({
-            work_id: row.work_id,
-            matched_work_id: row.matched_work_id,
-            match_confidence: row.match_confidence,
-            match_source: row.match_source,
-            status: "matched",
-            updated_at: row.updated_at,
-          })
-          .eq("id", row.id);
-
-        if (error) {
-          throw new Error(
-            `Failed to update matched import row ${row.id}: ${error.message}`
-          );
-        }
+async function applyMatchedRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
+  for (const row of updates) {
+    const { error } = await supabaseAdmin
+      .from("import_rows")
+      .update({
+        work_id: row.work_id,
+        matched_work_id: row.matched_work_id,
+        match_confidence: row.match_confidence,
+        match_source: row.match_source,
+        allocation_status: "pending",
+        status: "matched",
+        updated_at: row.updated_at,
       })
-    );
-  }
+      .eq("id", row.id);
 
-  for (const batch of chunk(reviewUpdates, UPDATE_CHUNK_SIZE)) {
+    if (error) {
+      throw new Error(
+        `Failed to update matched import row ${row.id}: ${error.message}`
+      );
+    }
+  }
+}
+
+async function applyReviewRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
+  for (const batch of chunk(updates, UPDATE_CHUNK_SIZE)) {
     const ids = batch.map((row) => row.id);
     const updatedAt = batch[0]?.updated_at ?? new Date().toISOString();
 
@@ -595,6 +589,7 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
         matched_work_id: null,
         match_confidence: 0,
         match_source: null,
+        allocation_status: "pending",
         status: "needs_review",
         updated_at: updatedAt,
       })
@@ -603,6 +598,21 @@ async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> 
     if (error) {
       throw new Error(`Failed bulk update review rows: ${error.message}`);
     }
+  }
+}
+
+async function applyImportRowUpdates(updates: ImportRowUpdate[]): Promise<void> {
+  if (updates.length === 0) return;
+
+  const matchedUpdates = updates.filter((row) => row.status === "matched");
+  const reviewUpdates = updates.filter((row) => row.status === "needs_review");
+
+  for (const batch of chunk(matchedUpdates, UPDATE_CHUNK_SIZE)) {
+    await applyMatchedRowUpdates(batch);
+  }
+
+  for (const batch of chunk(reviewUpdates, UPDATE_CHUNK_SIZE)) {
+    await applyReviewRowUpdates(batch);
   }
 }
 
