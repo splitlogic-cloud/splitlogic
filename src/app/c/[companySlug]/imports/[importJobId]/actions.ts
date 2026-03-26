@@ -24,6 +24,13 @@ type ImportRowRecord = {
   raw: Record<string, unknown> | null;
 };
 
+type ImportRowAggregateRecord = {
+  status: string | null;
+  allocation_status: string | null;
+  work_id?: string | null;
+  matched_work_id?: string | null;
+};
+
 function pickString(raw: Record<string, unknown> | null, keys: string[]): string {
   if (!raw) return "";
 
@@ -35,6 +42,10 @@ function pickString(raw: Record<string, unknown> | null, keys: string[]): string
   }
 
   return "";
+}
+
+function isAllocatedAllocationStatus(value: string | null | undefined): boolean {
+  return value === "allocated" || value === "completed";
 }
 
 async function verifyContext(params: {
@@ -71,32 +82,72 @@ async function verifyContext(params: {
 }
 
 async function refreshImportJobAggregates(importJobId: string): Promise<void> {
-  const { data: aggregates, error: aggregateError } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("import_rows")
-    .select("status, work_id, matched_work_id")
+    .select("status, allocation_status, work_id, matched_work_id")
     .eq("import_job_id", importJobId);
 
-  if (aggregateError) {
-    throw new Error(`Failed to reload import row aggregates: ${aggregateError.message}`);
+  if (error) {
+    throw new Error(`Failed to reload import row aggregates: ${error.message}`);
   }
 
-  const parsedRowCount = (aggregates ?? []).filter((row) => row.status === "parsed").length;
-  const invalidRowCount = (aggregates ?? []).filter((row) => row.status === "invalid").length;
-  const matchedRowCount = (aggregates ?? []).filter(
-    (row) => row.work_id != null || row.matched_work_id != null || row.status === "matched"
-  ).length;
-  const reviewRowCount = (aggregates ?? []).filter(
-    (row) => row.status === "needs_review" || row.status === "unmatched"
-  ).length;
-  const allocatedRowCount = (aggregates ?? []).filter((row) => row.status === "allocated").length;
+  const rows = (data ?? []) as ImportRowAggregateRecord[];
 
-  let nextStatus = "parsed";
+  let totalRowCount = 0;
+  let parsedRowCount = 0;
+  let invalidRowCount = 0;
+  let matchedRowCount = 0;
+  let reviewRowCount = 0;
+  let allocatedRowCount = 0;
 
-  if (allocatedRowCount > 0) {
+  for (const row of rows) {
+    totalRowCount += 1;
+
+    const status = row.status ?? null;
+    const allocationStatus = row.allocation_status ?? null;
+    const hasMatch = row.work_id != null || row.matched_work_id != null || status === "matched";
+    const isAllocated = isAllocatedAllocationStatus(allocationStatus);
+
+    if (status === "invalid") {
+      invalidRowCount += 1;
+      continue;
+    }
+
+    if (status === "needs_review" || status === "unmatched") {
+      reviewRowCount += 1;
+      continue;
+    }
+
+    if (isAllocated) {
+      allocatedRowCount += 1;
+      continue;
+    }
+
+    if (hasMatch) {
+      matchedRowCount += 1;
+      continue;
+    }
+
+    if (status === "parsed") {
+      parsedRowCount += 1;
+      continue;
+    }
+
+    if (status === "allocated") {
+      allocatedRowCount += 1;
+      continue;
+    }
+  }
+
+  let nextStatus: string = "uploaded";
+
+  if (totalRowCount === 0) {
+    nextStatus = "uploaded";
+  } else if (allocatedRowCount > 0) {
     nextStatus = "completed";
   } else if (matchedRowCount > 0) {
     nextStatus = "matched";
-  } else if (parsedRowCount > 0 || invalidRowCount > 0 || reviewRowCount > 0) {
+  } else {
     nextStatus = "parsed";
   }
 
@@ -104,6 +155,7 @@ async function refreshImportJobAggregates(importJobId: string): Promise<void> {
     .from("import_jobs")
     .update({
       status: nextStatus,
+      row_count: totalRowCount,
       parsed_row_count: parsedRowCount,
       invalid_row_count: invalidRowCount,
       matched_row_count: matchedRowCount,
@@ -117,6 +169,12 @@ async function refreshImportJobAggregates(importJobId: string): Promise<void> {
   }
 }
 
+function revalidateImportPaths(companySlug: string, importJobId: string) {
+  revalidatePath(`/c/${companySlug}/imports`);
+  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+  revalidatePath(`/c/${companySlug}/allocations`);
+}
+
 export async function runImportParseAction(formData: FormData) {
   const companySlug = String(formData.get("companySlug") ?? "");
   const importJobId = String(formData.get("importJobId") ?? "");
@@ -126,10 +184,23 @@ export async function runImportParseAction(formData: FormData) {
   }
 
   await verifyContext({ companySlug, importJobId });
-  await runImportParse(importJobId);
-  await refreshImportJobAggregates(importJobId);
 
-  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+  try {
+    await runImportParse(importJobId);
+    await refreshImportJobAggregates(importJobId);
+  } catch (error) {
+    await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", importJobId);
+
+    throw error;
+  }
+
+  revalidateImportPaths(companySlug, importJobId);
 }
 
 export async function runMatchingAction(formData: FormData) {
@@ -172,8 +243,7 @@ export async function runMatchingAction(formData: FormData) {
     throw error;
   }
 
-  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
-  revalidatePath(`/c/${companySlug}/allocations`);
+  revalidateImportPaths(companySlug, importJobId);
 }
 
 export async function runAllocationAction(params: {
@@ -188,11 +258,35 @@ export async function runAllocationAction(params: {
   }
 
   await verifyContext({ companySlug, importJobId });
-  await runAllocation(importJobId);
-  await refreshImportJobAggregates(importJobId);
 
-  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
-  revalidatePath(`/c/${companySlug}/allocations`);
+  const { error: setStatusError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: "allocating",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", importJobId);
+
+  if (setStatusError) {
+    throw new Error(`Failed to set import job to allocating: ${setStatusError.message}`);
+  }
+
+  try {
+    await runAllocation(importJobId);
+    await refreshImportJobAggregates(importJobId);
+  } catch (error) {
+    await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", importJobId);
+
+    throw error;
+  }
+
+  revalidateImportPaths(companySlug, importJobId);
 
   return { ok: true };
 }
@@ -233,6 +327,7 @@ export async function manualMatchImportRowAction(formData: FormData) {
       match_source: "manual",
       match_confidence: 1,
       status: "matched",
+      allocation_status: "pending",
       updated_at: new Date().toISOString(),
     })
     .eq("id", rowId)
@@ -284,7 +379,7 @@ export async function manualMatchImportRowAction(formData: FormData) {
 
   await refreshImportJobAggregates(importJob.id);
 
-  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+  revalidateImportPaths(companySlug, importJobId);
 }
 
 export async function clearImportRowMatchAction(formData: FormData) {
@@ -309,6 +404,7 @@ export async function clearImportRowMatchAction(formData: FormData) {
       match_source: null,
       match_confidence: 0,
       status: "needs_review",
+      allocation_status: "pending",
       updated_at: new Date().toISOString(),
     })
     .eq("id", rowId)
@@ -320,5 +416,5 @@ export async function clearImportRowMatchAction(formData: FormData) {
 
   await refreshImportJobAggregates(importJob.id);
 
-  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
+  revalidateImportPaths(companySlug, importJobId);
 }
