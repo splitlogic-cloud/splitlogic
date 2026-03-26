@@ -1,130 +1,124 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import type {
-  ImportJobStatus,
-  ImportRowStatus,
-  RawImportRow,
-} from "@/features/imports/imports-types";
 
-export async function setImportJobStatus(
-  importJobId: string,
-  status: ImportJobStatus,
-): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("import_jobs")
-    .update({ status })
-    .eq("id", importJobId);
+export type ImportRowInsert = {
+  company_id: string;
+  import_id: string;
+  import_job_id: string;
+  row_number: number;
+  status: string;
+  raw: Record<string, unknown>;
+  canonical: Record<string, unknown>;
+  normalized: Record<string, unknown>;
+  raw_title: string | null;
+  currency: string | null;
+  net_amount: number | null;
+  gross_amount: number | null;
+  created_at: string;
+  updated_at: string;
+};
 
-  if (error) {
-    throw new Error(`setImportJobStatus failed: ${error.message}`);
+export async function resetImportJobData(params: {
+  importJobId: string;
+}): Promise<void> {
+  const { importJobId } = params;
+
+  const { data: allocationRuns, error: allocationRunsError } = await supabaseAdmin
+    .from("allocation_runs")
+    .select("id")
+    .eq("import_job_id", importJobId);
+
+  if (allocationRunsError) {
+    throw new Error(
+      `resetImportJobData: failed to load allocation runs: ${allocationRunsError.message}`
+    );
   }
-}
 
-export async function replaceImportRowsForJob(
-  companyId: string,
-  importJobId: string,
-  rows: Array<{
-    rowNumber: number;
-    raw: RawImportRow;
-    normalized: Record<string, unknown> | null;
-    canonical: Record<string, unknown> | null;
-    currency: string | null;
-    netAmount: string | null;
-    grossAmount: string | null;
-    sourceWorkRef: string | null;
-    status: ImportRowStatus;
-    errorCodes: string[];
-  }>,
-): Promise<void> {
-  const { error: deleteError } = await supabaseAdmin
+  const allocationRunIds = (allocationRuns ?? []).map((run) => run.id);
+
+  if (allocationRunIds.length > 0) {
+    const { error: blockersError } = await supabaseAdmin
+      .from("allocation_run_blockers")
+      .delete()
+      .in("allocation_run_id", allocationRunIds);
+
+    if (blockersError) {
+      throw new Error(
+        `resetImportJobData: failed to delete allocation blockers: ${blockersError.message}`
+      );
+    }
+  }
+
+  const { error: allocationLinesError } = await supabaseAdmin
+    .from("allocation_lines")
+    .delete()
+    .eq("import_job_id", importJobId);
+
+  if (allocationLinesError) {
+    throw new Error(
+      `resetImportJobData: failed to delete allocation lines: ${allocationLinesError.message}`
+    );
+  }
+
+  const { error: allocationRunsDeleteError } = await supabaseAdmin
+    .from("allocation_runs")
+    .delete()
+    .eq("import_job_id", importJobId);
+
+  if (allocationRunsDeleteError) {
+    throw new Error(
+      `resetImportJobData: failed to delete allocation runs: ${allocationRunsDeleteError.message}`
+    );
+  }
+
+  const { error: importRowsError } = await supabaseAdmin
     .from("import_rows")
     .delete()
     .eq("import_job_id", importJobId);
 
-  if (deleteError) {
-    throw new Error(`delete import_rows failed: ${deleteError.message}`);
+  if (importRowsError) {
+    throw new Error(
+      `resetImportJobData: failed to delete import rows: ${importRowsError.message}`
+    );
   }
 
+  const { error: importJobUpdateError } = await supabaseAdmin
+    .from("import_jobs")
+    .update({
+      status: "uploaded",
+      updated_at: new Date().toISOString(),
+      row_count: 0,
+      parsed_row_count: 0,
+      invalid_row_count: 0,
+      matched_row_count: 0,
+      review_row_count: 0,
+    })
+    .eq("id", importJobId);
+
+  if (importJobUpdateError) {
+    throw new Error(
+      `resetImportJobData: failed to reset import job status: ${importJobUpdateError.message}`
+    );
+  }
+}
+
+export async function insertImportRows(rows: ImportRowInsert[]): Promise<void> {
   if (rows.length === 0) {
     return;
   }
 
-  const payload = rows.map((row) => ({
-    company_id: companyId,
-    import_job_id: importJobId,
-    row_number: row.rowNumber,
-    raw: row.raw,
-    normalized: row.normalized,
-    canonical: row.canonical,
-    currency: row.currency,
-    net_amount: row.netAmount,
-    gross_amount: row.grossAmount,
-    source_work_ref: row.sourceWorkRef,
-    status: row.status,
-    error_codes: row.errorCodes,
-  }));
-
   const chunkSize = 500;
 
-  for (let i = 0; i < payload.length; i += chunkSize) {
-    const chunk = payload.slice(i, i + chunkSize);
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
 
     const { error } = await supabaseAdmin
       .from("import_rows")
       .insert(chunk);
 
     if (error) {
-      throw new Error(`insert import_rows failed: ${error.message}`);
+      throw new Error(`insertImportRows failed: ${error.message}`);
     }
   }
-}
-
-export async function getImportJobById(importJobId: string): Promise<{
-  id: string;
-  company_id: string;
-  file_path: string | null;
-  file_name: string | null;
-  status: string;
-}> {
-  const { data, error } = await supabaseAdmin
-    .from("import_jobs")
-    .select("id, company_id, file_path, file_name, status")
-    .eq("id", importJobId)
-    .single();
-
-  if (error || !data) {
-    throw new Error(`getImportJobById failed: ${error?.message ?? "not found"}`);
-  }
-
-  return data;
-}
-
-export async function getImportJobRowCounts(importJobId: string): Promise<{
-  total: number;
-  parsed: number;
-  invalid: number;
-}> {
-  const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select("status")
-    .eq("import_job_id", importJobId);
-
-  if (error || !data) {
-    throw new Error(`getImportJobRowCounts failed: ${error?.message ?? "unknown"}`);
-  }
-
-  let parsed = 0;
-  let invalid = 0;
-
-  for (const row of data) {
-    if (row.status === "parsed") parsed += 1;
-    if (row.status === "invalid") invalid += 1;
-  }
-
-  return {
-    total: data.length,
-    parsed,
-    invalid,
-  };
 }
