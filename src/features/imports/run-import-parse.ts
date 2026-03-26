@@ -51,11 +51,9 @@ function normalizeRowStatus(params: {
   netAmount: number | null;
   grossAmount: number | null;
 }): "parsed" | "invalid" {
-  const hasIdentifier = Boolean(params.isrc || params.title);
   const hasAmount = params.netAmount !== null || params.grossAmount !== null;
-  const hasCurrency = Boolean(params.currency);
 
-  if (!hasIdentifier || !hasAmount || !hasCurrency) {
+  if (!hasAmount) {
     return "invalid";
   }
 
@@ -432,7 +430,7 @@ export async function runImportParse(importJobId: string): Promise<{
       );
     }
 
-    await resetImportJobData({ importJobId });
+    await resetImportJobData(importJobId);
 
     await setImportJobStatus(importJobId, {
       status: "parsing",
