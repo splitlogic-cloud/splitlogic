@@ -73,8 +73,7 @@ export default async function ImportDetailPage({ params }: Params) {
 
   const rows = (statusRows ?? []) as ImportRowStatusRecord[];
 
-  const totalRows = rows.length;
-
+  let totalRows = 0;
   let parsedCount = 0;
   let matchedCount = 0;
   let allocatedCount = 0;
@@ -84,6 +83,8 @@ export default async function ImportDetailPage({ params }: Params) {
   let matchedWorkCount = 0;
 
   for (const row of rows) {
+    totalRows += 1;
+
     const status = row.status ?? null;
     const allocationStatus = row.allocation_status ?? null;
     const hasMatchedWork = row.matched_work_id != null;
@@ -125,6 +126,7 @@ export default async function ImportDetailPage({ params }: Params) {
   }
 
   const reviewCount = invalidCount + needsReviewCount + unmatchedCount;
+
   const importJobStatus = String(importJob.status ?? "");
 
   const isBusy =
@@ -153,39 +155,33 @@ export default async function ImportDetailPage({ params }: Params) {
         </div>
       </div>
 
+      <div className="rounded-lg border bg-yellow-50 p-3 text-xs text-neutral-700">
+        DEBUG importJobId: {importJobId} | totalRows: {totalRows} | parsed: {parsedCount} | matched: {matchedCount} | allocated: {allocatedCount} | review: {reviewCount}
+      </div>
+
       <div className="grid gap-3 md:grid-cols-5">
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">
-            Job status
-          </div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Job status</div>
           <div className="mt-2 text-lg font-semibold">{importJob.status ?? "-"}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">
-            Parsed
-          </div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Parsed</div>
           <div className="mt-2 text-lg font-semibold">{parsedCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">
-            Matched
-          </div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Matched</div>
           <div className="mt-2 text-lg font-semibold">{matchedCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">
-            Allocated
-          </div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Allocated</div>
           <div className="mt-2 text-lg font-semibold">{allocatedCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">
-            Needs review
-          </div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">Needs review</div>
           <div className="mt-2 text-lg font-semibold">{reviewCount}</div>
         </div>
       </div>
@@ -198,6 +194,7 @@ export default async function ImportDetailPage({ params }: Params) {
           <p>Rows needing review: {reviewCount}</p>
           <p>Current import job status: {importJobStatus || "-"}</p>
         </div>
+
         {isBusy ? (
           <p className="mt-3 text-amber-700">
             This import is currently processing. Wait until the current job finishes before
