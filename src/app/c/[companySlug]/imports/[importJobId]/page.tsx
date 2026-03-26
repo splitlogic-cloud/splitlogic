@@ -11,6 +11,7 @@ import AllocationRunSummary from "./AllocationRunSummary";
 import { runMatchingAction } from "./actions";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Params = {
   params: Promise<{
@@ -18,6 +19,16 @@ type Params = {
     importJobId: string;
   }>;
 };
+
+type ImportRowStatusRecord = {
+  status: string | null;
+  allocation_status: string | null;
+  matched_work_id: string | null;
+};
+
+function isAllocatedAllocationStatus(value: string | null | undefined): boolean {
+  return value === "allocated" || value === "completed";
+}
 
 export default async function ImportDetailPage({ params }: Params) {
   const { companySlug, importJobId } = await params;
@@ -53,31 +64,67 @@ export default async function ImportDetailPage({ params }: Params) {
 
   const { data: statusRows, error: statusRowsError } = await supabaseAdmin
     .from("import_rows")
-    .select("status, matched_work_id")
+    .select("status, allocation_status, matched_work_id")
     .eq("import_job_id", importJobId);
 
   if (statusRowsError) {
     throw new Error(statusRowsError.message);
   }
 
-  const counts = (statusRows ?? []).reduce<Record<string, number>>((acc, row) => {
-    const status = String(row.status ?? "unknown");
-    acc[status] = (acc[status] ?? 0) + 1;
-    return acc;
-  }, {});
+  const rows = (statusRows ?? []) as ImportRowStatusRecord[];
 
-  const totalRows = statusRows?.length ?? 0;
-  const parsedCount = counts.parsed ?? 0;
-  const matchedCount = counts.matched ?? 0;
-  const allocatedCount = counts.allocated ?? 0;
-  const invalidCount = counts.invalid ?? 0;
-  const needsReviewCount = counts.needs_review ?? 0;
-  const unmatchedCount = counts.unmatched ?? 0;
+  const totalRows = rows.length;
+
+  let parsedCount = 0;
+  let matchedCount = 0;
+  let allocatedCount = 0;
+  let invalidCount = 0;
+  let needsReviewCount = 0;
+  let unmatchedCount = 0;
+  let matchedWorkCount = 0;
+
+  for (const row of rows) {
+    const status = row.status ?? null;
+    const allocationStatus = row.allocation_status ?? null;
+    const hasMatchedWork = row.matched_work_id != null;
+    const isAllocated = isAllocatedAllocationStatus(allocationStatus);
+
+    if (hasMatchedWork) {
+      matchedWorkCount += 1;
+    }
+
+    if (status === "invalid") {
+      invalidCount += 1;
+      continue;
+    }
+
+    if (status === "needs_review") {
+      needsReviewCount += 1;
+      continue;
+    }
+
+    if (status === "unmatched") {
+      unmatchedCount += 1;
+      continue;
+    }
+
+    if (isAllocated) {
+      allocatedCount += 1;
+      continue;
+    }
+
+    if (status === "matched" || hasMatchedWork) {
+      matchedCount += 1;
+      continue;
+    }
+
+    if (status === "parsed") {
+      parsedCount += 1;
+      continue;
+    }
+  }
+
   const reviewCount = invalidCount + needsReviewCount + unmatchedCount;
-
-  const matchedWorkCount =
-    statusRows?.filter((row) => row.matched_work_id != null).length ?? 0;
-
   const importJobStatus = String(importJob.status ?? "");
 
   const isBusy =
@@ -108,27 +155,37 @@ export default async function ImportDetailPage({ params }: Params) {
 
       <div className="grid gap-3 md:grid-cols-5">
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Job status</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Job status
+          </div>
           <div className="mt-2 text-lg font-semibold">{importJob.status ?? "-"}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Parsed</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Parsed
+          </div>
           <div className="mt-2 text-lg font-semibold">{parsedCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Matched</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Matched
+          </div>
           <div className="mt-2 text-lg font-semibold">{matchedCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Allocated</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Allocated
+          </div>
           <div className="mt-2 text-lg font-semibold">{allocatedCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Needs review</div>
+          <div className="text-xs uppercase tracking-wide text-neutral-500">
+            Needs review
+          </div>
           <div className="mt-2 text-lg font-semibold">{reviewCount}</div>
         </div>
       </div>
