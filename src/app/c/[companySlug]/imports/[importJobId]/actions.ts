@@ -81,17 +81,41 @@ async function verifyContext(params: {
   };
 }
 
-async function refreshImportJobAggregates(importJobId: string): Promise<void> {
-  const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select("status, allocation_status, work_id, matched_work_id")
-    .eq("import_job_id", importJobId);
+async function listAllImportRowAggregates(
+  importJobId: string
+): Promise<ImportRowAggregateRecord[]> {
+  const pageSize = 1000;
+  const rows: ImportRowAggregateRecord[] = [];
+  let from = 0;
 
-  if (error) {
-    throw new Error(`Failed to reload import row aggregates: ${error.message}`);
+  while (true) {
+    const to = from + pageSize - 1;
+
+    const { data, error } = await supabaseAdmin
+      .from("import_rows")
+      .select("status, allocation_status, work_id, matched_work_id")
+      .eq("import_job_id", importJobId)
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Failed to reload import row aggregates: ${error.message}`);
+    }
+
+    const batch = (data ?? []) as ImportRowAggregateRecord[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
   }
 
-  const rows = (data ?? []) as ImportRowAggregateRecord[];
+  return rows;
+}
+
+async function refreshImportJobAggregates(importJobId: string): Promise<void> {
+  const rows = await listAllImportRowAggregates(importJobId);
 
   let totalRowCount = 0;
   let parsedRowCount = 0;

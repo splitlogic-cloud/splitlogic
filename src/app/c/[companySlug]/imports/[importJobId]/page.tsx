@@ -30,6 +30,39 @@ function isAllocatedAllocationStatus(value: string | null | undefined): boolean 
   return value === "allocated" || value === "completed";
 }
 
+async function listAllImportRowStatuses(
+  importJobId: string
+): Promise<ImportRowStatusRecord[]> {
+  const pageSize = 1000;
+  const rows: ImportRowStatusRecord[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+
+    const { data, error } = await supabaseAdmin
+      .from("import_rows")
+      .select("status, allocation_status, matched_work_id")
+      .eq("import_job_id", importJobId)
+      .range(from, to);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const batch = (data ?? []) as ImportRowStatusRecord[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
+  }
+
+  return rows;
+}
+
 export default async function ImportDetailPage({ params }: Params) {
   const { companySlug, importJobId } = await params;
 
@@ -62,16 +95,7 @@ export default async function ImportDetailPage({ params }: Params) {
     notFound();
   }
 
-  const { data: statusRows, error: statusRowsError } = await supabaseAdmin
-    .from("import_rows")
-    .select("status, allocation_status, matched_work_id")
-    .eq("import_job_id", importJobId);
-
-  if (statusRowsError) {
-    throw new Error(statusRowsError.message);
-  }
-
-  const rows = (statusRows ?? []) as ImportRowStatusRecord[];
+  const rows = await listAllImportRowStatuses(importJobId);
 
   let totalRows = 0;
   let parsedCount = 0;
