@@ -179,10 +179,6 @@ export default async function ImportDetailPage({ params }: Params) {
         </div>
       </div>
 
-      <div className="rounded-lg border bg-yellow-50 p-3 text-xs text-neutral-700">
-        DEBUG importJobId: {importJobId} | totalRows: {totalRows} | parsed: {parsedCount} | matched: {matchedCount} | allocated: {allocatedCount} | review: {reviewCount}
-      </div>
-
       <div className="grid gap-3 md:grid-cols-5">
         <div className="rounded-lg border bg-white p-4">
           <div className="text-xs uppercase tracking-wide text-neutral-500">Job status</div>
