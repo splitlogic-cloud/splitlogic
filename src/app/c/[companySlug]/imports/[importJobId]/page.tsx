@@ -14,10 +14,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type Params = {
-  params: Promise<{
-    companySlug: string;
-    importJobId: string;
-  }>;
+  params: Promise<{ companySlug: string; importJobId: string }>;
 };
 
 type ImportRowStatusRecord = {
@@ -26,37 +23,29 @@ type ImportRowStatusRecord = {
   matched_work_id: string | null;
 };
 
-function isAllocatedAllocationStatus(value: string | null | undefined): boolean {
+function isAllocatedAllocationStatus(value: string | null | undefined) {
   return value === "allocated" || value === "completed";
 }
 
-async function listAllImportRowStatuses(
-  importJobId: string
-): Promise<ImportRowStatusRecord[]> {
+async function listAllImportRowStatuses(importJobId: string) {
   const pageSize = 1000;
   const rows: ImportRowStatusRecord[] = [];
   let from = 0;
 
   while (true) {
     const to = from + pageSize - 1;
-
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("status, allocation_status, matched_work_id")
       .eq("import_job_id", importJobId)
       .range(from, to);
 
-    if (error) {
-      throw new Error(error.message);
-    }
+    if (error) throw new Error(error.message);
 
     const batch = (data ?? []) as ImportRowStatusRecord[];
     rows.push(...batch);
 
-    if (batch.length < pageSize) {
-      break;
-    }
-
+    if (batch.length < pageSize) break;
     from += pageSize;
   }
 
@@ -72,13 +61,8 @@ export default async function ImportDetailPage({ params }: Params) {
     .eq("slug", companySlug)
     .maybeSingle();
 
-  if (companyError) {
-    throw new Error(companyError.message);
-  }
-
-  if (!company) {
-    notFound();
-  }
+  if (companyError) throw new Error(companyError.message);
+  if (!company) notFound();
 
   const { data: importJob, error: importJobError } = await supabaseAdmin
     .from("import_jobs")
@@ -87,13 +71,8 @@ export default async function ImportDetailPage({ params }: Params) {
     .eq("company_id", company.id)
     .maybeSingle();
 
-  if (importJobError) {
-    throw new Error(importJobError.message);
-  }
-
-  if (!importJob) {
-    notFound();
-  }
+  if (importJobError) throw new Error(importJobError.message);
+  if (!importJob) notFound();
 
   const rows = await listAllImportRowStatuses(importJobId);
 
@@ -108,49 +87,21 @@ export default async function ImportDetailPage({ params }: Params) {
 
   for (const row of rows) {
     totalRows += 1;
-
     const status = row.status ?? null;
     const allocationStatus = row.allocation_status ?? null;
     const hasMatchedWork = row.matched_work_id != null;
     const isAllocated = isAllocatedAllocationStatus(allocationStatus);
 
-    if (hasMatchedWork) {
-      matchedWorkCount += 1;
-    }
-
-    if (status === "invalid") {
-      invalidCount += 1;
-      continue;
-    }
-
-    if (status === "needs_review") {
-      needsReviewCount += 1;
-      continue;
-    }
-
-    if (status === "unmatched") {
-      unmatchedCount += 1;
-      continue;
-    }
-
-    if (isAllocated) {
-      allocatedCount += 1;
-      continue;
-    }
-
-    if (status === "matched" || hasMatchedWork) {
-      matchedCount += 1;
-      continue;
-    }
-
-    if (status === "parsed") {
-      parsedCount += 1;
-      continue;
-    }
+    if (hasMatchedWork) matchedWorkCount += 1;
+    if (status === "invalid") invalidCount += 1;
+    else if (status === "needs_review") needsReviewCount += 1;
+    else if (status === "unmatched") unmatchedCount += 1;
+    else if (isAllocated) allocatedCount += 1;
+    else if (status === "matched" || hasMatchedWork) matchedCount += 1;
+    else if (status === "parsed") parsedCount += 1;
   }
 
   const reviewCount = invalidCount + needsReviewCount + unmatchedCount;
-
   const importJobStatus = String(importJob.status ?? "");
 
   const isBusy =
@@ -161,8 +112,12 @@ export default async function ImportDetailPage({ params }: Params) {
   const canRunMatching = !isBusy && totalRows > 0;
   const canRunAllocation = !isBusy && matchedWorkCount > 0;
 
+  const isCompleted = importJobStatus === "completed";
+  const isFullyAllocated = totalRows > 0 && allocatedCount === totalRows;
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="space-y-2">
         <Link
           href={`/c/${companySlug}/imports`}
@@ -170,7 +125,6 @@ export default async function ImportDetailPage({ params }: Params) {
         >
           ← Back to imports
         </Link>
-
         <div>
           <h1 className="text-2xl font-semibold">Import job</h1>
           <p className="text-sm text-neutral-600">
@@ -179,33 +133,25 @@ export default async function ImportDetailPage({ params }: Params) {
         </div>
       </div>
 
+      {/* Stats */}
       <div className="grid gap-3 md:grid-cols-5">
-        <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Job status</div>
-          <div className="mt-2 text-lg font-semibold">{importJob.status ?? "-"}</div>
-        </div>
-
-        <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Parsed</div>
-          <div className="mt-2 text-lg font-semibold">{parsedCount}</div>
-        </div>
-
-        <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Matched</div>
-          <div className="mt-2 text-lg font-semibold">{matchedCount}</div>
-        </div>
-
-        <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Allocated</div>
-          <div className="mt-2 text-lg font-semibold">{allocatedCount}</div>
-        </div>
-
-        <div className="rounded-lg border bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-neutral-500">Needs review</div>
-          <div className="mt-2 text-lg font-semibold">{reviewCount}</div>
-        </div>
+        {[
+          { label: "Job status", value: importJob.status ?? "-" },
+          { label: "Parsed", value: parsedCount },
+          { label: "Matched", value: matchedCount },
+          { label: "Allocated", value: allocatedCount },
+          { label: "Needs review", value: reviewCount },
+        ].map((stat) => (
+          <div key={stat.label} className="rounded-lg border bg-white p-4">
+            <div className="text-xs uppercase tracking-wide text-neutral-500">
+              {stat.label}
+            </div>
+            <div className="mt-2 text-lg font-semibold">{stat.value}</div>
+          </div>
+        ))}
       </div>
 
+      {/* Allocation readiness */}
       <div className="rounded-lg border bg-white p-4 text-sm text-neutral-700">
         <div className="font-medium">Allocation readiness</div>
         <div className="mt-2 space-y-1">
@@ -215,10 +161,14 @@ export default async function ImportDetailPage({ params }: Params) {
           <p>Current import job status: {importJobStatus || "-"}</p>
         </div>
 
-        {isBusy ? (
+        {isCompleted && isFullyAllocated ? (
+          <p className="mt-3 text-emerald-700 font-semibold">
+            ✅ Allocation completed successfully. All {totalRows} rows allocated.
+          </p>
+        ) : isBusy ? (
           <p className="mt-3 text-amber-700">
-            This import is currently processing. Wait until the current job finishes before
-            running the next step.
+            This import is currently processing. Wait until it finishes before running the
+            next step.
           </p>
         ) : matchedWorkCount === 0 ? (
           <p className="mt-3 text-amber-700">
@@ -226,29 +176,36 @@ export default async function ImportDetailPage({ params }: Params) {
           </p>
         ) : (
           <p className="mt-3 text-emerald-700">
-            Allocation can run. Unmatched or review rows will simply remain blocked and will
-            not stop allocation for already matched rows.
+            Allocation can run. Unmatched or review rows will remain blocked and will not
+            stop allocation for already matched rows.
           </p>
         )}
       </div>
 
+      {/* Action buttons */}
       <div className="flex flex-wrap gap-3">
-        <RunImportParseButton companySlug={companySlug} importJobId={importJobId} />
+        <RunImportParseButton
+          companySlug={companySlug}
+          importJobId={importJobId}
+          disabled={isCompleted}
+        />
         <RunMatchingButton
           companySlug={companySlug}
           importJobId={importJobId}
           action={runMatchingAction}
-          disabled={!canRunMatching}
+          disabled={!canRunMatching || isCompleted}
         />
         <RunAllocationButton
           companySlug={companySlug}
           importJobId={importJobId}
-          disabled={!canRunAllocation}
+          disabled={!canRunAllocation || isCompleted}
         />
       </div>
 
+      {/* Match review table */}
       <MatchReviewTable companySlug={companySlug} importJobId={importJobId} />
 
+      {/* Allocation summary */}
       <AllocationRunSummary importJobId={importJobId} />
     </div>
   );
