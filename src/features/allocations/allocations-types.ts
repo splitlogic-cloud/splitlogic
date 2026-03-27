@@ -28,6 +28,7 @@ export type ImportRowForAllocation = {
   import_job_id: string;
   row_number: number | null;
   status: string | null;
+  allocation_status: string | null;
   matched_work_id: string | null;
   matched_work_confidence: number | null;
   currency: string | null;
