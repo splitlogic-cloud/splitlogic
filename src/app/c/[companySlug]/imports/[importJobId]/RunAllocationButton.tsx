@@ -9,6 +9,11 @@ type Props = {
   disabled?: boolean;
 };
 
+type RunAllocationResponse = {
+  ok: boolean;
+  error?: string;
+};
+
 export default function RunAllocationButton({
   companySlug,
   importJobId,
@@ -25,12 +30,6 @@ export default function RunAllocationButton({
     setError(null);
 
     try {
-      console.log("[RunAllocationButton] clicked", {
-        companySlug,
-        importJobId,
-        disabled,
-      });
-
       const response = await fetch("/api/imports/run-allocation", {
         method: "POST",
         headers: {
@@ -42,23 +41,24 @@ export default function RunAllocationButton({
         }),
       });
 
-      const data = (await response.json()) as {
-        ok: boolean;
-        error?: string;
-      };
+      let data: RunAllocationResponse | null = null;
 
-      console.log("[RunAllocationButton] api response", {
-        status: response.status,
-        data,
-      });
+      try {
+        data = (await response.json()) as RunAllocationResponse;
+      } catch {
+        throw new Error("Allocation API returned invalid response");
+      }
 
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || "Allocation failed");
+      if (!response.ok) {
+        throw new Error(data?.error || `Allocation failed (${response.status})`);
+      }
+
+      if (!data?.ok) {
+        throw new Error(data?.error || "Allocation failed");
       }
 
       router.refresh();
     } catch (err) {
-      console.error("[RunAllocationButton] failed", err);
       setError(err instanceof Error ? err.message : "Allocation failed");
     } finally {
       setIsLoading(false);
