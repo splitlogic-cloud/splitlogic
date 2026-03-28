@@ -143,20 +143,6 @@ async function downloadImportFileText(job: ImportJobRecord): Promise<string> {
   return text;
 }
 
-async function setImportJobStatus(
-  importJobId: string,
-  values: Record<string, unknown>
-): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("import_jobs")
-    .update(values)
-    .eq("id", importJobId);
-
-  if (error) {
-    throw new Error(`Failed to update import job: ${error.message}`);
-  }
-}
-
 function normalizeText(value: string | null | undefined): string | null {
   if (!value) return null;
 
@@ -415,11 +401,6 @@ export async function runImportParse(importJobId: string): Promise<{
   const job = importJob as ImportJobRecord;
   const now = new Date().toISOString();
 
-  await setImportJobStatus(importJobId, {
-    status: "parsing",
-    updated_at: now,
-  });
-
   try {
     const fileText = await downloadImportFileText(job);
     const parsedFile = await parseImportFile(fileText);
@@ -431,11 +412,6 @@ export async function runImportParse(importJobId: string): Promise<{
     }
 
     await resetImportJobData(importJobId);
-
-    await setImportJobStatus(importJobId, {
-      status: "parsing",
-      updated_at: new Date().toISOString(),
-    });
 
     const workCandidates: WorkSeedCandidate[] = [];
 
@@ -488,15 +464,21 @@ export async function runImportParse(importJobId: string): Promise<{
     const parsedRowCount = rowsToInsert.filter((row) => row.status === "parsed").length;
     const invalidRowCount = rowsToInsert.filter((row) => row.status === "invalid").length;
 
-    await setImportJobStatus(importJobId, {
-      status: "parsed",
-      updated_at: new Date().toISOString(),
-      row_count: insertedRowCount,
-      parsed_row_count: parsedRowCount,
-      invalid_row_count: invalidRowCount,
-      matched_row_count: 0,
-      review_row_count: 0,
-    });
+    const { error: updateCountsError } = await supabaseAdmin
+      .from("import_jobs")
+      .update({
+        row_count: insertedRowCount,
+        parsed_row_count: parsedRowCount,
+        invalid_row_count: invalidRowCount,
+        matched_row_count: 0,
+        review_row_count: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", importJobId);
+
+    if (updateCountsError) {
+      throw new Error(`Failed to update import job counts: ${updateCountsError.message}`);
+    }
 
     return {
       importJobId,
@@ -508,14 +490,6 @@ export async function runImportParse(importJobId: string): Promise<{
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown parse error";
-
-    await supabaseAdmin
-      .from("import_jobs")
-      .update({
-        status: "failed",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", importJobId);
 
     throw new Error(message);
   }
