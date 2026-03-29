@@ -35,13 +35,6 @@ function getStringField(value: JsonObject | null, key: string): string | null {
   return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 
-function getArtistFromRow(row: MatchReviewRow): string | null {
-  return (
-    getStringField(row.canonical, "artist") ??
-    getStringField(row.normalized, "artist")
-  );
-}
-
 function normalizeStatus(status: string | null): string | null {
   if (!status) return null;
   return status.trim().toLowerCase();
@@ -65,6 +58,47 @@ function getStatusClasses(status: string | null) {
     default:
       return "bg-neutral-100 text-neutral-700";
   }
+}
+
+function getArtistFromRow(row: MatchReviewRow): string | null {
+  return (
+    getStringField(row.canonical, "artist") ??
+    getStringField(row.normalized, "artist")
+  );
+}
+
+function getIsrcFromRow(row: MatchReviewRow): string | null {
+  return (
+    getStringField(row.canonical, "isrc") ??
+    getStringField(row.normalized, "isrc")
+  );
+}
+
+function getDisplayTitle(row: MatchReviewRow): string | null {
+  return (
+    (row.raw_title?.trim() || null) ??
+    getStringField(row.canonical, "title") ??
+    getStringField(row.normalized, "title") ??
+    getStringField(row.canonical, "track_title") ??
+    getStringField(row.normalized, "track_title") ??
+    getStringField(row.canonical, "song_title") ??
+    getStringField(row.normalized, "song_title")
+  );
+}
+
+function getDebugSourceLine(row: MatchReviewRow): string | null {
+  const candidates = [
+    getStringField(row.canonical, "title"),
+    getStringField(row.normalized, "title"),
+    getStringField(row.canonical, "track_title"),
+    getStringField(row.normalized, "track_title"),
+    getStringField(row.canonical, "song_title"),
+    getStringField(row.normalized, "song_title"),
+  ].filter(Boolean) as string[];
+
+  if (candidates.length === 0) return null;
+
+  return candidates.join(" · ");
 }
 
 export default async function MatchReviewTable({
@@ -127,7 +161,7 @@ export default async function MatchReviewTable({
           <thead>
             <tr className="border-b bg-neutral-50 text-left">
               <th className="px-3 py-3">Row</th>
-              <th className="px-3 py-3">Title</th>
+              <th className="px-3 py-3">Track info</th>
               <th className="px-3 py-3">Status</th>
               <th className="px-3 py-3">Work</th>
               <th className="px-3 py-3">Currency</th>
@@ -138,13 +172,14 @@ export default async function MatchReviewTable({
 
           <tbody>
             {typedRows.map((row) => {
-              const title = row.raw_title?.trim() || "-";
-              const artist = getArtistFromRow(row);
-
               const normalizedStatus = normalizeStatus(row.status);
-
               const isNeedsReview = normalizedStatus === "needs_review";
               const isMatched = normalizedStatus === "matched";
+
+              const displayTitle = getDisplayTitle(row);
+              const artist = getArtistFromRow(row);
+              const isrc = getIsrcFromRow(row);
+              const debugSourceLine = getDebugSourceLine(row);
 
               return (
                 <tr
@@ -158,12 +193,31 @@ export default async function MatchReviewTable({
                   <td className="px-3 py-3">{row.row_number ?? "-"}</td>
 
                   <td className="px-3 py-3">
-                    <div>{title}</div>
-                    {artist && (
-                      <div className="text-xs text-neutral-500">
-                        {artist}
+                    <div className="font-medium">
+                      {displayTitle ?? "Unknown title"}
+                    </div>
+
+                    {artist ? (
+                      <div className="text-xs text-neutral-600">{artist}</div>
+                    ) : null}
+
+                    {isrc ? (
+                      <div className="mt-1 text-[11px] text-neutral-500">
+                        ISRC: {isrc}
                       </div>
-                    )}
+                    ) : null}
+
+                    {!displayTitle && debugSourceLine ? (
+                      <div className="mt-1 text-[11px] text-amber-700">
+                        Source fields: {debugSourceLine}
+                      </div>
+                    ) : null}
+
+                    {!displayTitle && !artist && !isrc ? (
+                      <div className="mt-1 text-[11px] text-red-600">
+                        No visible track metadata found on this row.
+                      </div>
+                    ) : null}
                   </td>
 
                   <td className="px-3 py-3">
@@ -184,7 +238,7 @@ export default async function MatchReviewTable({
                         companySlug={companySlug}
                         importJobId={importJobId}
                         rowId={row.id}
-                        initialTitle={row.raw_title}
+                        initialTitle={displayTitle}
                         initialArtist={artist}
                       />
                     ) : (
@@ -193,17 +247,13 @@ export default async function MatchReviewTable({
                   </td>
 
                   <td className="px-3 py-3">{row.currency ?? "-"}</td>
-                  <td className="px-3 py-3">
-                    {formatAmount(row.net_amount)}
-                  </td>
-                  <td className="px-3 py-3">
-                    {formatAmount(row.gross_amount)}
-                  </td>
+                  <td className="px-3 py-3">{formatAmount(row.net_amount)}</td>
+                  <td className="px-3 py-3">{formatAmount(row.gross_amount)}</td>
                 </tr>
               );
             })}
 
-            {typedRows.length === 0 && (
+            {typedRows.length === 0 ? (
               <tr>
                 <td
                   colSpan={7}
@@ -212,7 +262,7 @@ export default async function MatchReviewTable({
                   No import rows found.
                 </td>
               </tr>
-            )}
+            ) : null}
           </tbody>
         </table>
       </div>
