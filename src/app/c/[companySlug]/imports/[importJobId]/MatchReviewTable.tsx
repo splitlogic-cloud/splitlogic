@@ -1,4 +1,4 @@
-import "server-only";
+'import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import ManualMatchCell from "./ManualMatchCell";
@@ -36,7 +36,10 @@ function getStringField(value: JsonObject | null, key: string): string | null {
 }
 
 function getArtistFromRow(row: MatchReviewRow): string | null {
-  return getStringField(row.canonical, "artist") ?? getStringField(row.normalized, "artist");
+  return (
+    getStringField(row.canonical, "artist") ??
+    getStringField(row.normalized, "artist")
+  );
 }
 
 function formatAmount(value: number | null) {
@@ -45,22 +48,10 @@ function formatAmount(value: number | null) {
 }
 
 function getStatusClasses(status: string | null) {
-  if (status === "needs_review") {
-    return "bg-amber-100 text-amber-800";
-  }
-
-  if (status === "matched") {
-    return "bg-emerald-100 text-emerald-800";
-  }
-
-  if (status === "allocated") {
-    return "bg-blue-100 text-blue-800";
-  }
-
-  if (status === "invalid") {
-    return "bg-red-100 text-red-800";
-  }
-
+  if (status === "needs_review") return "bg-amber-100 text-amber-800";
+  if (status === "matched") return "bg-emerald-100 text-emerald-800";
+  if (status === "allocated") return "bg-blue-100 text-blue-800";
+  if (status === "invalid") return "bg-red-100 text-red-800";
   return "bg-neutral-100 text-neutral-700";
 }
 
@@ -137,8 +128,11 @@ export default async function MatchReviewTable({
             {typedRows.map((row) => {
               const title = row.raw_title?.trim() || "-";
               const artist = getArtistFromRow(row);
-              const isNeedsReview = row.status === "needs_review";
-              const isMatched = row.status === "matched";
+
+              const rawStatus = row.status ?? null;
+              const normalizedStatus = rawStatus?.trim() ?? null;
+              const isNeedsReview = normalizedStatus === "needs_review";
+              const isMatched = normalizedStatus === "matched";
 
               return (
                 <tr
@@ -162,10 +156,10 @@ export default async function MatchReviewTable({
                     <span
                       className={[
                         "inline-flex rounded-full px-2 py-1 text-xs font-medium",
-                        getStatusClasses(row.status),
+                        getStatusClasses(normalizedStatus),
                       ].join(" ")}
                     >
-                      {row.status ?? "-"}
+                      {normalizedStatus ?? "-"}
                     </span>
                   </td>
 
@@ -206,4 +200,4 @@ export default async function MatchReviewTable({
       </div>
     </div>
   );
-}
+}'
