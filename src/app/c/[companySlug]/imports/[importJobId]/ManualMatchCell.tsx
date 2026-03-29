@@ -1,167 +1,220 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { manualMatchImportRowAction } from "./actions";
 
-type WorkOption = {
+type WorkSearchResult = {
   id: string;
-  title: string | null;
+  title: string;
   artist: string | null;
-  isrc: string | null;
 };
 
 type Props = {
+  companyId: string;
   companySlug: string;
   importJobId: string;
   rowId: string;
-  rowTitle: string;
-  rowArtist: string;
-  rowIsrc: string;
-  works: WorkOption[];
+  initialTitle?: string | null;
+  initialArtist?: string | null;
 };
 
-function normalize(value: string) {
-  return value.trim().toLowerCase();
+function formatWorkLabel(work: WorkSearchResult) {
+  return work.artist ? `${work.title} — ${work.artist}` : work.title;
 }
 
 export default function ManualMatchCell({
+  companyId,
   companySlug,
   importJobId,
   rowId,
-  rowTitle,
-  rowArtist,
-  rowIsrc,
-  works,
+  initialTitle = "",
+  initialArtist = "",
 }: Props) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(
-    [rowTitle, rowArtist, rowIsrc].filter(Boolean).join(" ").trim()
-  );
+  const [query, setQuery] = useState(initialTitle ?? "");
+  const [artist, setArtist] = useState(initialArtist ?? "");
+  const [results, setResults] = useState<WorkSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const filtered = useMemo(() => {
-    const q = normalize(query);
-    if (!q) {
-      return works.slice(0, 12);
+  const canCreate = useMemo(() => {
+    return query.trim().length > 0;
+  }, [query]);
+
+  async function runSearch(nextQuery: string) {
+    setQuery(nextQuery);
+    setError(null);
+    setNotice(null);
+
+    const trimmed = nextQuery.trim();
+
+    if (!trimmed) {
+      setResults([]);
+      return;
     }
 
-    const terms = q.split(/\s+/).filter(Boolean);
+    setIsSearching(true);
 
-    const scored = works.map((work) => {
-      const haystack = normalize(
-        `${work.title ?? ""} ${work.artist ?? ""} ${work.isrc ?? ""}`
+    try {
+      const res = await fetch(
+        `/api/works/search?companyId=${encodeURIComponent(companyId)}&q=${encodeURIComponent(trimmed)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+        }
       );
 
-      let score = 0;
-      for (const term of terms) {
-        if (haystack.includes(term)) score += 1;
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+
+        throw new Error(payload?.error || "Work search failed");
       }
 
-      if (rowIsrc && work.isrc && normalize(work.isrc) === normalize(rowIsrc)) {
-        score += 10;
-      }
+      const payload = (await res.json()) as WorkSearchResult[];
+      setResults(Array.isArray(payload) ? payload : []);
+    } catch (err) {
+      setResults([]);
+      setError(err instanceof Error ? err.message : "Work search failed");
+    } finally {
+      setIsSearching(false);
+    }
+  }
 
-      if (
-        rowTitle &&
-        work.title &&
-        normalize(work.title).includes(normalize(rowTitle))
-      ) {
-        score += 4;
-      }
-
-      if (
-        rowArtist &&
-        work.artist &&
-        normalize(work.artist).includes(normalize(rowArtist))
-      ) {
-        score += 4;
-      }
-
-      return { work, score };
-    });
-
-    return scored
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 12)
-      .map((x) => x.work);
-  }, [query, rowArtist, rowIsrc, rowTitle, works]);
-
-  function submit(workId: string) {
-    const formData = new FormData();
-    formData.set("companySlug", companySlug);
-    formData.set("importJobId", importJobId);
-    formData.set("rowId", rowId);
-    formData.set("workId", workId);
+  async function matchExistingWork(workId: string) {
+    setError(null);
+    setNotice(null);
 
     startTransition(async () => {
-      await manualMatchImportRowAction(formData);
-      setOpen(false);
+      try {
+        const res = await fetch("/api/imports/manual-match", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            companySlug,
+            importJobId,
+            rowId,
+            workId,
+          }),
+        });
+
+        const payload = (await res.json().catch(() => null)) as
+          | { ok?: boolean; error?: string }
+          | null;
+
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error || "Manual match failed");
+        }
+
+        setNotice("Matched.");
+        window.location.reload();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Manual match failed");
+      }
     });
   }
 
+  async function createWorkAndMatch() {
+    if (!canCreate) return;
+
+    setError(null);
+    setNotice(null);
+
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/works/create-and-match", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            companyId,
+            companySlug,
+            importJobId,
+            rowId,
+            title: query.trim(),
+            artist: artist.trim() || null,
+          }),
+        });
+
+        const payload = (await res.json().catch(() => null)) as
+          | { ok?: boolean; error?: string }
+          | null;
+
+        if (!res.ok || !payload?.ok) {
+          throw new Error(payload?.error || "Create work and match failed");
+        }
+
+        setNotice("Created and matched.");
+        window.location.reload();
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Create work and match failed"
+        );
+      }
+    });
+  }
+
+  const disabled = isPending || isSearching;
+
   return (
-    <div className="min-w-[280px]">
-      {!open ? (
+    <div className="min-w-[320px] space-y-2">
+      <div className="grid gap-2 md:grid-cols-[1fr_1fr]">
+        <input
+          value={query}
+          onChange={(e) => void runSearch(e.target.value)}
+          placeholder="Search work title..."
+          disabled={disabled}
+          className="rounded-md border px-2 py-1 text-sm"
+        />
+
+        <input
+          value={artist}
+          onChange={(e) => setArtist(e.target.value)}
+          placeholder="Artist (for create new work)"
+          disabled={disabled}
+          className="rounded-md border px-2 py-1 text-sm"
+        />
+      </div>
+
+      {isSearching ? (
+        <p className="text-xs text-neutral-500">Searching...</p>
+      ) : null}
+
+      {results.length > 0 ? (
+        <div className="max-h-40 space-y-1 overflow-auto rounded-md border p-2">
+          {results.map((work) => (
+            <button
+              key={work.id}
+              type="button"
+              onClick={() => void matchExistingWork(work.id)}
+              disabled={disabled}
+              className="block w-full rounded-md border px-2 py-1 text-left text-sm hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {formatWorkLabel(work)}
+            </button>
+          ))}
+        </div>
+      ) : query.trim() && !isSearching ? (
+        <p className="text-xs text-neutral-500">No matching works found.</p>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => setOpen(true)}
-          className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-50"
+          onClick={() => void createWorkAndMatch()}
+          disabled={!canCreate || disabled}
+          className="rounded-md border border-black px-2 py-1 text-sm font-medium text-black disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Match manually
+          {isPending ? "Working..." : "Create new work + match"}
         </button>
-      ) : (
-        <div className="space-y-3 rounded-lg border border-zinc-200 bg-white p-3 shadow-sm">
-          <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Search work
-            </div>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by title, artist or ISRC"
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
-            />
-          </div>
+      </div>
 
-          <div className="max-h-64 space-y-2 overflow-auto">
-            {filtered.length === 0 ? (
-              <div className="text-sm text-zinc-500">No matching works found</div>
-            ) : (
-              filtered.map((work) => (
-                <button
-                  key={work.id}
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => submit(work.id)}
-                  className="block w-full rounded-md border border-zinc-200 p-3 text-left hover:bg-zinc-50 disabled:opacity-50"
-                >
-                  <div className="text-sm font-semibold text-zinc-900">
-                    {work.title || "Untitled"}
-                  </div>
-                  <div className="text-sm text-zinc-600">
-                    {work.artist || "Unknown artist"}
-                  </div>
-                  <div className="text-xs text-zinc-500">{work.isrc || "No ISRC"}</div>
-                </button>
-              ))
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50"
-            >
-              Cancel
-            </button>
-            {isPending ? (
-              <span className="text-sm text-zinc-500">Saving…</span>
-            ) : null}
-          </div>
-        </div>
-      )}
+      {notice ? <p className="text-xs text-emerald-700">{notice}</p> : null}
+      {error ? <p className="text-xs text-red-600">{error}</p> : null}
     </div>
   );
 }
