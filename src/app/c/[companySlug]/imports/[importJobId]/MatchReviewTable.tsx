@@ -42,17 +42,29 @@ function getArtistFromRow(row: MatchReviewRow): string | null {
   );
 }
 
+function normalizeStatus(status: string | null): string | null {
+  if (!status) return null;
+  return status.trim().toLowerCase();
+}
+
 function formatAmount(value: number | null) {
   if (value == null) return "-";
   return String(value);
 }
 
 function getStatusClasses(status: string | null) {
-  if (status === "needs_review") return "bg-amber-100 text-amber-800";
-  if (status === "matched") return "bg-emerald-100 text-emerald-800";
-  if (status === "allocated") return "bg-blue-100 text-blue-800";
-  if (status === "invalid") return "bg-red-100 text-red-800";
-  return "bg-neutral-100 text-neutral-700";
+  switch (status) {
+    case "needs_review":
+      return "bg-amber-100 text-amber-800";
+    case "matched":
+      return "bg-emerald-100 text-emerald-800";
+    case "allocated":
+      return "bg-blue-100 text-blue-800";
+    case "invalid":
+      return "bg-red-100 text-red-800";
+    default:
+      return "bg-neutral-100 text-neutral-700";
+  }
 }
 
 export default async function MatchReviewTable({
@@ -129,8 +141,8 @@ export default async function MatchReviewTable({
               const title = row.raw_title?.trim() || "-";
               const artist = getArtistFromRow(row);
 
-              const rawStatus = row.status ?? null;
-              const normalizedStatus = rawStatus?.trim() ?? null;
+              const normalizedStatus = normalizeStatus(row.status);
+
               const isNeedsReview = normalizedStatus === "needs_review";
               const isMatched = normalizedStatus === "matched";
 
@@ -147,9 +159,11 @@ export default async function MatchReviewTable({
 
                   <td className="px-3 py-3">
                     <div>{title}</div>
-                    {artist ? (
-                      <div className="text-xs text-neutral-500">{artist}</div>
-                    ) : null}
+                    {artist && (
+                      <div className="text-xs text-neutral-500">
+                        {artist}
+                      </div>
+                    )}
                   </td>
 
                   <td className="px-3 py-3">
@@ -179,13 +193,17 @@ export default async function MatchReviewTable({
                   </td>
 
                   <td className="px-3 py-3">{row.currency ?? "-"}</td>
-                  <td className="px-3 py-3">{formatAmount(row.net_amount)}</td>
-                  <td className="px-3 py-3">{formatAmount(row.gross_amount)}</td>
+                  <td className="px-3 py-3">
+                    {formatAmount(row.net_amount)}
+                  </td>
+                  <td className="px-3 py-3">
+                    {formatAmount(row.gross_amount)}
+                  </td>
                 </tr>
               );
             })}
 
-            {typedRows.length === 0 ? (
+            {typedRows.length === 0 && (
               <tr>
                 <td
                   colSpan={7}
@@ -194,7 +212,7 @@ export default async function MatchReviewTable({
                   No import rows found.
                 </td>
               </tr>
-            ) : null}
+            )}
           </tbody>
         </table>
       </div>
