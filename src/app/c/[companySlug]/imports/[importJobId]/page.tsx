@@ -345,6 +345,7 @@ export default async function ImportDetailPage({ params }: Params) {
         </div>
       </div>
 
+      {/* HÄR hookas manual review-tabellen in */}
       <MatchReviewTable
         companySlug={companySlug}
         importJobId={importJobId}

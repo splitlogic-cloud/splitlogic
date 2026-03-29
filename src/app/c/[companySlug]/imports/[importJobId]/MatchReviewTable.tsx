@@ -41,6 +41,11 @@ function getArtistFromRow(row: MatchReviewRow): string | null {
   return null;
 }
 
+function formatAmount(value: number | null) {
+  if (value == null) return "-";
+  return String(value);
+}
+
 export default async function MatchReviewTable({
   companySlug,
   importJobId,
@@ -91,7 +96,8 @@ export default async function MatchReviewTable({
       <div className="border-b p-4">
         <div className="font-medium">Match review</div>
         <p className="mt-1 text-sm text-neutral-600">
-          Review matched / unmatched rows before allocation.
+          Review rows before allocation. Rows in needs review can be matched
+          manually or used to create a new work directly.
         </p>
       </div>
 
@@ -113,19 +119,44 @@ export default async function MatchReviewTable({
             {typedRows.map((row) => {
               const title = row.raw_title ?? "-";
               const artist = getArtistFromRow(row);
+              const isNeedsReview = row.status === "needs_review";
+              const isMatched = row.status === "matched";
 
               return (
-                <tr key={row.id} className="border-b align-top">
+                <tr
+                  key={row.id}
+                  className={[
+                    "border-b align-top",
+                    isNeedsReview ? "bg-amber-50" : "",
+                    isMatched ? "bg-emerald-50/40" : "",
+                  ].join(" ")}
+                >
                   <td className="px-3 py-3">{row.row_number ?? "-"}</td>
+
                   <td className="px-3 py-3">
                     <div>{title}</div>
                     {artist ? (
                       <div className="text-xs text-neutral-500">{artist}</div>
                     ) : null}
                   </td>
-                  <td className="px-3 py-3">{row.status ?? "-"}</td>
+
                   <td className="px-3 py-3">
-                    {row.status === "needs_review" ? (
+                    <span
+                      className={[
+                        "inline-flex rounded-full px-2 py-1 text-xs font-medium",
+                        isNeedsReview
+                          ? "bg-amber-100 text-amber-800"
+                          : isMatched
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-neutral-100 text-neutral-700",
+                      ].join(" ")}
+                    >
+                      {row.status ?? "-"}
+                    </span>
+                  </td>
+
+                  <td className="px-3 py-3">
+                    {isNeedsReview ? (
                       <ManualMatchCell
                         companyId={typedCompany.id}
                         companySlug={companySlug}
@@ -136,13 +167,10 @@ export default async function MatchReviewTable({
                       />
                     ) : row.matched_work_id ?? row.work_id ?? "-"}
                   </td>
+
                   <td className="px-3 py-3">{row.currency ?? "-"}</td>
-                  <td className="px-3 py-3">
-                    {row.net_amount != null ? row.net_amount : "-"}
-                  </td>
-                  <td className="px-3 py-3">
-                    {row.gross_amount != null ? row.gross_amount : "-"}
-                  </td>
+                  <td className="px-3 py-3">{formatAmount(row.net_amount)}</td>
+                  <td className="px-3 py-3">{formatAmount(row.gross_amount)}</td>
                 </tr>
               );
             })}
