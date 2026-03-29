@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { manualMatchImportRowAction } from "@/app/c/[companySlug]/imports/[importJobId]/actions";
-import { normalizeIsrc } from "@/features/matching/normalize";
 
 type Body = {
   companyId?: string;
@@ -74,7 +73,7 @@ export async function POST(req: Request) {
 
     const { data: existing, error: existingError } = await supabaseAdmin
       .from("works")
-      .select("id, title, artist")
+      .select("id")
       .eq("company_id", companyId)
       .eq("normalized_title", normalizedTitle)
       .eq("normalized_artist", normalizedArtist)
@@ -100,7 +99,6 @@ export async function POST(req: Request) {
           artist,
           normalized_title: normalizedTitle,
           normalized_artist: normalizedArtist,
-          isrc: normalizeIsrc(null),
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })

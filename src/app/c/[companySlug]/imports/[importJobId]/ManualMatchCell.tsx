@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
 type WorkSearchResult = {
@@ -29,6 +30,8 @@ export default function ManualMatchCell({
   initialTitle = "",
   initialArtist = "",
 }: Props) {
+  const router = useRouter();
+
   const [query, setQuery] = useState(initialTitle ?? "");
   const [artist, setArtist] = useState(initialArtist ?? "");
   const [results, setResults] = useState<WorkSearchResult[]>([]);
@@ -109,8 +112,8 @@ export default function ManualMatchCell({
           throw new Error(payload?.error || "Manual match failed");
         }
 
-        setNotice("Matched.");
-        window.location.reload();
+        setNotice("Matched successfully.");
+        router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Manual match failed");
       }
@@ -148,8 +151,8 @@ export default function ManualMatchCell({
           throw new Error(payload?.error || "Create work and match failed");
         }
 
-        setNotice("Created and matched.");
-        window.location.reload();
+        setNotice("Created and matched successfully.");
+        router.refresh();
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Create work and match failed"
@@ -174,7 +177,7 @@ export default function ManualMatchCell({
         <input
           value={artist}
           onChange={(e) => setArtist(e.target.value)}
-          placeholder="Artist (for create new work)"
+          placeholder="Artist (optional)"
           disabled={disabled}
           className="rounded-md border px-2 py-1 text-sm"
         />
@@ -198,7 +201,9 @@ export default function ManualMatchCell({
             </button>
           ))}
         </div>
-      ) : query.trim() && !isSearching ? (
+      ) : null}
+
+      {results.length === 0 && query.trim() && !isSearching ? (
         <p className="text-xs text-neutral-500">No matching works found.</p>
       ) : null}
 
