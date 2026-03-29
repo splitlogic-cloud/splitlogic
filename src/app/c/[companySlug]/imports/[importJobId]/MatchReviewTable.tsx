@@ -1,4 +1,4 @@
-'import "server-only";
+import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import ManualMatchCell from "./ManualMatchCell";
