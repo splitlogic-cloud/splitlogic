@@ -155,8 +155,7 @@ function summarizeImportRows(rows: ImportRowStatusRecord[]): ImportRowSummary {
 }
 
 function getImportJobStatusLabel(status: string | null | undefined) {
-  if (!status) return "-";
-  return status;
+  return status || "-";
 }
 
 export default async function ImportDetailPage({ params }: Params) {
@@ -274,8 +273,7 @@ export default async function ImportDetailPage({ params }: Params) {
           <p>Rows with matched work: {summary.matchedWorkCount}</p>
           <p>Rows needing review: {totalReviewCount}</p>
           <p>
-            Current import job status:{" "}
-            {getImportJobStatusLabel(importJobStatus)}
+            Current import job status: {getImportJobStatusLabel(importJobStatus)}
           </p>
         </div>
 
@@ -331,9 +329,7 @@ export default async function ImportDetailPage({ params }: Params) {
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Invalid rows
           </div>
-          <div className="mt-2 text-lg font-semibold">
-            {summary.invalidCount}
-          </div>
+          <div className="mt-2 text-lg font-semibold">{summary.invalidCount}</div>
         </div>
 
         <div className="rounded-lg border bg-white p-4 text-sm">
@@ -349,9 +345,7 @@ export default async function ImportDetailPage({ params }: Params) {
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Unmatched
           </div>
-          <div className="mt-2 text-lg font-semibold">
-            {summary.unmatchedCount}
-          </div>
+          <div className="mt-2 text-lg font-semibold">{summary.unmatchedCount}</div>
         </div>
       </div>
 
