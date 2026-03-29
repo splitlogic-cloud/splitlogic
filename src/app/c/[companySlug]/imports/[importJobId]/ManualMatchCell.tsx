@@ -40,9 +40,7 @@ export default function ManualMatchCell({
   const [notice, setNotice] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const canCreate = useMemo(() => {
-    return query.trim().length > 0;
-  }, [query]);
+  const canCreate = useMemo(() => query.trim().length > 0, [query]);
 
   async function runSearch(nextQuery: string) {
     setQuery(nextQuery);
@@ -50,28 +48,24 @@ export default function ManualMatchCell({
     setNotice(null);
 
     const trimmed = nextQuery.trim();
-
     if (!trimmed) {
       setResults([]);
       return;
     }
 
     setIsSearching(true);
-
     try {
       const res = await fetch(
-        `/api/works/search?companyId=${encodeURIComponent(companyId)}&q=${encodeURIComponent(trimmed)}`,
-        {
-          method: "GET",
-          cache: "no-store",
-        }
+        `/api/works/search?companyId=${encodeURIComponent(
+          companyId
+        )}&q=${encodeURIComponent(trimmed)}`,
+        { method: "GET", cache: "no-store" }
       );
 
       if (!res.ok) {
         const payload = (await res.json().catch(() => null)) as
           | { error?: string }
           | null;
-
         throw new Error(payload?.error || "Work search failed");
       }
 
@@ -93,15 +87,8 @@ export default function ManualMatchCell({
       try {
         const res = await fetch("/api/imports/manual-match", {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            companySlug,
-            importJobId,
-            rowId,
-            workId,
-          }),
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ companySlug, importJobId, rowId, workId }),
         });
 
         const payload = (await res.json().catch(() => null)) as
@@ -130,9 +117,7 @@ export default function ManualMatchCell({
       try {
         const res = await fetch("/api/works/create-and-match", {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({
             companyId,
             companySlug,
@@ -154,9 +139,7 @@ export default function ManualMatchCell({
         setNotice("Created and matched successfully.");
         router.refresh();
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Create work and match failed"
-        );
+        setError(err instanceof Error ? err.message : "Create work and match failed");
       }
     });
   }
@@ -173,7 +156,6 @@ export default function ManualMatchCell({
           disabled={disabled}
           className="rounded-md border px-2 py-1 text-sm"
         />
-
         <input
           value={artist}
           onChange={(e) => setArtist(e.target.value)}
@@ -183,11 +165,9 @@ export default function ManualMatchCell({
         />
       </div>
 
-      {isSearching ? (
-        <p className="text-xs text-neutral-500">Searching...</p>
-      ) : null}
+      {isSearching && <p className="text-xs text-neutral-500">Searching...</p>}
 
-      {results.length > 0 ? (
+      {results.length > 0 && (
         <div className="max-h-40 space-y-1 overflow-auto rounded-md border p-2">
           {results.map((work) => (
             <button
@@ -201,11 +181,11 @@ export default function ManualMatchCell({
             </button>
           ))}
         </div>
-      ) : null}
+      )}
 
-      {results.length === 0 && query.trim() && !isSearching ? (
+      {results.length === 0 && query.trim() && !isSearching && (
         <p className="text-xs text-neutral-500">No matching works found.</p>
-      ) : null}
+      )}
 
       <div className="flex flex-wrap gap-2">
         <button
@@ -218,8 +198,8 @@ export default function ManualMatchCell({
         </button>
       </div>
 
-      {notice ? <p className="text-xs text-emerald-700">{notice}</p> : null}
-      {error ? <p className="text-xs text-red-600">{error}</p> : null}
+      {notice && <p className="text-xs text-emerald-700">{notice}</p>}
+      {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
   );
 }

@@ -273,17 +273,21 @@ export default async function ImportDetailPage({ params }: Params) {
           <p>Total rows: {summary.totalRows}</p>
           <p>Rows with matched work: {summary.matchedWorkCount}</p>
           <p>Rows needing review: {totalReviewCount}</p>
-          <p>Current import job status: {getImportJobStatusLabel(importJobStatus)}</p>
+          <p>
+            Current import job status:{" "}
+            {getImportJobStatusLabel(importJobStatus)}
+          </p>
         </div>
 
         {isCompleted && isFullyAllocated ? (
           <p className="mt-3 font-semibold text-emerald-700">
-            ✅ Allocation completed successfully. All {summary.totalRows} rows allocated.
+            ✅ Allocation completed successfully. All {summary.totalRows} rows
+            allocated.
           </p>
         ) : isBusy ? (
           <p className="mt-3 text-amber-700">
-            This import is currently processing. Wait until it finishes before running the
-            next step.
+            This import is currently processing. Wait until it finishes before
+            running the next step.
           </p>
         ) : summary.matchedWorkCount === 0 ? (
           <p className="mt-3 text-amber-700">
@@ -291,8 +295,8 @@ export default async function ImportDetailPage({ params }: Params) {
           </p>
         ) : totalReviewCount > 0 ? (
           <p className="mt-3 text-emerald-700">
-            Allocation can run. Unmatched or review rows will remain blocked and will not
-            stop allocation for already matched rows.
+            Allocation can run. Unmatched or review rows will remain blocked and
+            will not stop allocation for already matched rows.
           </p>
         ) : (
           <p className="mt-3 text-emerald-700">
@@ -327,25 +331,30 @@ export default async function ImportDetailPage({ params }: Params) {
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Invalid rows
           </div>
-          <div className="mt-2 text-lg font-semibold">{summary.invalidCount}</div>
+          <div className="mt-2 text-lg font-semibold">
+            {summary.invalidCount}
+          </div>
         </div>
 
         <div className="rounded-lg border bg-white p-4 text-sm">
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Needs review
           </div>
-          <div className="mt-2 text-lg font-semibold">{summary.needsReviewCount}</div>
+          <div className="mt-2 text-lg font-semibold">
+            {summary.needsReviewCount}
+          </div>
         </div>
 
         <div className="rounded-lg border bg-white p-4 text-sm">
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Unmatched
           </div>
-          <div className="mt-2 text-lg font-semibold">{summary.unmatchedCount}</div>
+          <div className="mt-2 text-lg font-semibold">
+            {summary.unmatchedCount}
+          </div>
         </div>
       </div>
 
-      {/* HÄR hookas manual review-tabellen in */}
       <MatchReviewTable
         companySlug={companySlug}
         importJobId={importJobId}
