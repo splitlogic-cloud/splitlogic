@@ -1,0 +1,3 @@
+export const ALLOCATION_ENGINE_VERSION = "v1";
+export const ALLOCATION_RULES_VERSION = "v1";
+export const ALLOCATION_TOLERANCE = 0.0001;

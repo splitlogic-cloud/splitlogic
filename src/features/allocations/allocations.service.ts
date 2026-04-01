@@ -1,405 +1,285 @@
 import "server-only";
 
-import crypto from "node:crypto";
+import { ALLOCATION_TOLERANCE } from "./allocations.constants";
 import {
+  insertAllocationBlocker,
+  insertAllocationCandidate,
+  insertAllocationLines,
+  loadImportRowsForAllocation,
+  loadSplitsForWorks,
   createAllocationRun,
-  failAllocationRun,
-  finalizeAllocationRun,
-  getImportJobForCompany,
-  insertAllocationRunBlockers,
-  insertAllocationRunLines,
-  listImportRowsForAllocation,
-  listWorkSplitsForWorkIds,
-  updateImportRowsAllocationStatus,
+  setAllocationRunCompleted,
+  setAllocationRunFailed,
+  updateAllocationCandidateStatus,
+  buildStableHash,
+  computeAllocationRunSummary,
 } from "./allocations.repo";
+import {
+  buildNormalizedRowSnapshot,
+  buildRawRowSnapshot,
+  buildSplitSnapshot,
+  buildWorkSnapshot,
+} from "./allocations.snapshot";
+import { validateAllocationCandidate } from "./allocations.validation";
 import type {
-  AllocationCandidateBlocker,
-  AllocationCandidateLine,
-  AllocationExecutionResult,
+  AllocationLineInsert,
   ImportRowForAllocation,
-  WorkSplitRecord,
+  SplitForAllocation,
 } from "./allocations-types";
 
-function roundMoney(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function buildIdempotencyKey(
-  companyId: string,
-  importJobId: string,
-  rowCount: number
-) {
-  return crypto
-    .createHash("sha256")
-    .update(`${companyId}:${importJobId}:${rowCount}:allocation-v2`)
-    .digest("hex");
-}
-
-function groupSplitsByWorkId(splits: WorkSplitRecord[]) {
-  const map = new Map<string, WorkSplitRecord[]>();
+function groupSplitsByWorkId(splits: SplitForAllocation[]): Map<string, SplitForAllocation[]> {
+  const map = new Map<string, SplitForAllocation[]>();
 
   for (const split of splits) {
-    const current = map.get(split.work_id) ?? [];
-    current.push(split);
-    map.set(split.work_id, current);
+    const existing = map.get(split.work_id) ?? [];
+    existing.push(split);
+    map.set(split.work_id, existing);
   }
 
   return map;
 }
 
-function buildBlocker(params: {
+function buildIdempotencyKey(params: {
   companyId: string;
-  allocationRunId: string;
   importJobId: string;
-  importRowId: string | null;
-  blockerCode: string;
-  severity: "info" | "warning" | "error";
-  message: string;
-  details?: Record<string, unknown>;
-}): AllocationCandidateBlocker {
-  return {
-    company_id: params.companyId,
-    allocation_run_id: params.allocationRunId,
-    import_job_id: params.importJobId,
-    import_row_id: params.importRowId,
-    blocker_code: params.blockerCode,
-    severity: params.severity,
-    message: params.message,
-    details: params.details ?? {},
-  };
+}): string {
+  return `allocation:${params.companyId}:${params.importJobId}`;
 }
 
-function validateRowBase(
-  runId: string,
-  row: ImportRowForAllocation
-): { blockers: AllocationCandidateBlocker[]; canAllocate: boolean } {
-  const blockers: AllocationCandidateBlocker[] = [];
+function buildInputHash(rows: ImportRowForAllocation[]): string {
+  const stableInput = rows
+    .map((row) => ({
+      id: row.id,
+      workId: row.work_id,
+      currency: row.currency,
+      grossAmount: row.gross_amount,
+      netAmount: row.net_amount,
+      title: row.title ?? null,
+      artist: row.artist ?? null,
+      isrc: row.isrc ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 
-  if (row.amount == null) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "ROW_AMOUNT_MISSING",
-        severity: "error",
-        message: `Import row ${row.row_number ?? "?"} saknar belopp.`,
-        details: {
-          row_number: row.row_number,
-        },
-      })
-    );
-  }
-
-  if (!row.currency) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "ROW_CURRENCY_MISSING",
-        severity: "error",
-        message: `Import row ${row.row_number ?? "?"} saknar currency.`,
-        details: {
-          row_number: row.row_number,
-        },
-      })
-    );
-  }
-
-  if (!row.matched_work_id) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "ROW_NOT_MATCHED_TO_WORK",
-        severity: "error",
-        message: `Import row ${row.row_number ?? "?"} saknar matched work.`,
-        details: {
-          row_number: row.row_number,
-        },
-      })
-    );
-  }
-
-  if ((row.amount ?? 0) < 0) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "NEGATIVE_ROW_AMOUNT",
-        severity: "warning",
-        message: `Import row ${row.row_number ?? "?"} har negativt belopp.`,
-        details: {
-          row_number: row.row_number,
-          amount: row.amount,
-        },
-      })
-    );
-  }
-
-  return {
-    blockers,
-    canAllocate: blockers.every((blocker) => blocker.severity !== "error"),
-  };
+  return buildStableHash(stableInput);
 }
 
-function validateWorkSplits(
-  runId: string,
-  row: ImportRowForAllocation,
-  splits: WorkSplitRecord[]
-): { blockers: AllocationCandidateBlocker[]; valid: boolean } {
-  const blockers: AllocationCandidateBlocker[] = [];
-
-  if (splits.length === 0) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "NO_ACTIVE_SPLITS_FOR_WORK",
-        severity: "error",
-        message: `Ingen split-konfiguration hittades för matched work på rad ${row.row_number ?? "?"}.`,
-        details: {
-          row_number: row.row_number,
-          matched_work_id: row.matched_work_id,
-        },
-      })
-    );
-
-    return { blockers, valid: false };
-  }
-
-  const totalShareBps = splits.reduce((sum, split) => sum + split.share_bps, 0);
-
-  if (totalShareBps !== 10000) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "SPLITS_NOT_100_PERCENT",
-        severity: "error",
-        message: `Splits för work ${row.matched_work_id} summerar till ${totalShareBps / 100}% istället för 100%.`,
-        details: {
-          row_number: row.row_number,
-          matched_work_id: row.matched_work_id,
-          total_share_bps: totalShareBps,
-        },
-      })
+function assertLineSumMatches(params: {
+  netAmount: number;
+  lineAmountTotal: number;
+}): void {
+  if (Math.abs(params.netAmount - params.lineAmountTotal) > ALLOCATION_TOLERANCE) {
+    throw new Error(
+      `line_sum_mismatch: expected=${params.netAmount}, actual=${params.lineAmountTotal}`,
     );
   }
-
-  const duplicateKeySet = new Set<string>();
-  let duplicateFound = false;
-
-  for (const split of splits) {
-    const key = `${split.party_id}:${split.role ?? ""}`;
-    if (duplicateKeySet.has(key)) {
-      duplicateFound = true;
-      break;
-    }
-    duplicateKeySet.add(key);
-  }
-
-  if (duplicateFound) {
-    blockers.push(
-      buildBlocker({
-        companyId: row.company_id,
-        allocationRunId: runId,
-        importJobId: row.import_job_id,
-        importRowId: row.id,
-        blockerCode: "DUPLICATE_SPLIT_CONFIGURATION",
-        severity: "error",
-        message: `Dubbel split-konfiguration hittades för work ${row.matched_work_id}.`,
-        details: {
-          row_number: row.row_number,
-          matched_work_id: row.matched_work_id,
-        },
-      })
-    );
-  }
-
-  return {
-    blockers,
-    valid: blockers.every((blocker) => blocker.severity !== "error"),
-  };
-}
-
-function buildAllocationLines(
-  runId: string,
-  row: ImportRowForAllocation,
-  splits: WorkSplitRecord[]
-): AllocationCandidateLine[] {
-  const rowAmount = Number(row.amount ?? 0);
-  const currency = row.currency ?? null;
-
-  const rawLines: AllocationCandidateLine[] = splits.map((split) => ({
-    company_id: row.company_id,
-    allocation_run_id: runId,
-    import_job_id: row.import_job_id,
-    import_row_id: row.id,
-    work_id: row.matched_work_id,
-    party_id: split.party_id,
-    role: split.role ?? null,
-    source_split_id: split.id,
-    row_amount: rowAmount,
-    share_bps: split.share_bps,
-    allocated_amount: roundMoney((rowAmount * split.share_bps) / 10000),
-    currency,
-  }));
-
-  const totalAllocated = rawLines.reduce(
-    (sum, line) => sum + line.allocated_amount,
-    0
-  );
-  const delta = roundMoney(rowAmount - totalAllocated);
-
-  if (rawLines.length > 0 && delta !== 0) {
-    rawLines[rawLines.length - 1] = {
-      ...rawLines[rawLines.length - 1]!,
-      allocated_amount: roundMoney(
-        rawLines[rawLines.length - 1]!.allocated_amount + delta
-      ),
-    };
-  }
-
-  return rawLines;
 }
 
 export async function runAllocationForImportJob(params: {
   companyId: string;
   importJobId: string;
+  currency?: string | null;
   createdBy?: string | null;
-}): Promise<AllocationExecutionResult> {
-  const importJob = await getImportJobForCompany(
-    params.companyId,
-    params.importJobId
-  );
-
-  if (!importJob) {
-    throw new Error("Import job not found for company.");
-  }
-
-  const rows = await listImportRowsForAllocation(
-    params.companyId,
-    params.importJobId
-  );
-
-  const distinctCurrencies = [
-    ...new Set(
-      rows
-        .map((row) => row.currency)
-        .filter((value): value is string => Boolean(value))
-    ),
-  ];
-
-  const run = await createAllocationRun({
+}): Promise<{ allocationRunId: string }> {
+  const rows = await loadImportRowsForAllocation({
     companyId: params.companyId,
     importJobId: params.importJobId,
-    currency: distinctCurrencies.length === 1 ? distinctCurrencies[0] : null,
+  });
+
+  const inputHash = buildInputHash(rows);
+
+  const { id: allocationRunId } = await createAllocationRun({
+    companyId: params.companyId,
+    importJobId: params.importJobId,
+    currency: params.currency ?? null,
     createdBy: params.createdBy ?? null,
-    idempotencyKey: buildIdempotencyKey(
-      params.companyId,
-      params.importJobId,
-      rows.length
-    ),
+    idempotencyKey: buildIdempotencyKey({
+      companyId: params.companyId,
+      importJobId: params.importJobId,
+    }),
+    inputHash,
   });
 
   try {
-    const workIds = [
-      ...new Set(
-        rows
-          .map((row) => row.matched_work_id)
-          .filter((value): value is string => Boolean(value))
-      ),
-    ];
+    const workIds = [...new Set(rows.map((row) => row.work_id).filter(Boolean) as string[])];
+    const splits = await loadSplitsForWorks({
+      companyId: params.companyId,
+      workIds,
+    });
 
-    const allSplits = await listWorkSplitsForWorkIds(params.companyId, workIds);
-    const splitsByWorkId = groupSplitsByWorkId(allSplits);
-
-    const lines: AllocationCandidateLine[] = [];
-    const blockers: AllocationCandidateBlocker[] = [];
-
-    let grossAmount = 0;
-    let allocatedAmount = 0;
-    let allocatedRowCount = 0;
+    const splitsByWorkId = groupSplitsByWorkId(splits);
 
     for (const row of rows) {
-      if (row.amount != null) {
-        grossAmount += Number(row.amount);
-      }
+      const rowSplits = row.work_id ? splitsByWorkId.get(row.work_id) ?? [] : [];
 
-      const baseValidation = validateRowBase(run.id, row);
-      blockers.push(...baseValidation.blockers);
+      const rawRowSnapshot = buildRawRowSnapshot(row);
+      const normalizedRowSnapshot = buildNormalizedRowSnapshot(row);
+      const workSnapshot = buildWorkSnapshot(row);
+      const splitSnapshot = buildSplitSnapshot(rowSplits);
 
-      if (!baseValidation.canAllocate) {
+      const candidateHash = buildStableHash({
+        importRowId: row.id,
+        workId: row.work_id,
+        currency: row.currency,
+        grossAmount: row.gross_amount,
+        netAmount: row.net_amount,
+        splitSnapshot,
+      });
+
+      const { id: allocationCandidateId } = await insertAllocationCandidate({
+        company_id: params.companyId,
+        allocation_run_id: allocationRunId,
+        import_job_id: params.importJobId,
+        import_row_id: row.id,
+        work_id: row.work_id,
+        status: "pending",
+        currency: row.currency,
+        gross_amount: row.gross_amount,
+        net_amount: row.net_amount,
+        raw_row_snapshot: rawRowSnapshot,
+        normalized_row_snapshot: normalizedRowSnapshot,
+        work_snapshot: workSnapshot,
+        split_snapshot: splitSnapshot,
+        candidate_hash: candidateHash,
+      });
+
+      const validation = validateAllocationCandidate({
+        row,
+        splits: rowSplits,
+      });
+
+      if (!validation.ok) {
+        await updateAllocationCandidateStatus({
+          allocationCandidateId,
+          status: "blocked",
+          blockerCode: validation.blockerCode,
+          blockerMessage: validation.message,
+        });
+
+        await insertAllocationBlocker({
+          companyId: params.companyId,
+          allocationRunId,
+          allocationCandidateId,
+          importRowId: row.id,
+          workId: row.work_id,
+          blockerCode: validation.blockerCode,
+          message: validation.message,
+          details: validation.details ?? {},
+        });
+
         continue;
       }
 
-      const workSplits = splitsByWorkId.get(String(row.matched_work_id)) ?? [];
-      const splitValidation = validateWorkSplits(run.id, row, workSplits);
-      blockers.push(...splitValidation.blockers);
+      await updateAllocationCandidateStatus({
+        allocationCandidateId,
+        status: "eligible",
+      });
 
-      if (!splitValidation.valid) {
-        continue;
-      }
+      const netAmount = Number(row.net_amount ?? 0);
+      const grossAmount = Number(row.gross_amount ?? 0);
+      const currency = row.currency as string;
+      const workId = row.work_id as string;
 
-      const rowLines = buildAllocationLines(run.id, row, workSplits);
-      lines.push(...rowLines);
+      const allocationLines: AllocationLineInsert[] = rowSplits.map((split) => {
+        const shareFraction = Number(split.share_fraction ?? 0);
+        const allocatedAmount = netAmount * shareFraction;
 
-      allocatedRowCount += 1;
-      allocatedAmount += rowLines.reduce(
+        return {
+          company_id: params.companyId,
+          allocation_run_id: allocationRunId,
+          allocation_candidate_id: allocationCandidateId,
+          import_job_id: params.importJobId,
+          import_row_id: row.id,
+          work_id: workId,
+          party_id: split.party_id as string,
+          source_split_id: split.id,
+          split_snapshot: {
+            splitId: split.id,
+            partyId: split.party_id,
+            shareFraction,
+            role: split.role ?? null,
+            validFrom: split.valid_from ?? null,
+            validTo: split.valid_to ?? null,
+          },
+          gross_source_amount: grossAmount,
+          net_source_amount: netAmount,
+          share_fraction: shareFraction,
+          allocated_amount: allocatedAmount,
+          currency,
+          line_type: "royalty_share",
+          calc_trace: {
+            method: "net_amount_x_share_fraction",
+            engineVersion: "v1",
+            rulesVersion: "v1",
+          },
+        };
+      });
+
+      const lineAmountTotal = allocationLines.reduce(
         (sum, line) => sum + line.allocated_amount,
-        0
+        0,
       );
+
+      try {
+        assertLineSumMatches({
+          netAmount,
+          lineAmountTotal,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "line_sum_mismatch during allocation";
+
+        await updateAllocationCandidateStatus({
+          allocationCandidateId,
+          status: "blocked",
+          blockerCode: "line_sum_mismatch",
+          blockerMessage: message,
+        });
+
+        await insertAllocationBlocker({
+          companyId: params.companyId,
+          allocationRunId,
+          allocationCandidateId,
+          importRowId: row.id,
+          workId,
+          blockerCode: "line_sum_mismatch",
+          message,
+          details: {
+            expectedNetAmount: netAmount,
+            actualAllocatedTotal: lineAmountTotal,
+          },
+        });
+
+        continue;
+      }
+
+      await insertAllocationLines(allocationLines);
+
+      await updateAllocationCandidateStatus({
+        allocationCandidateId,
+        status: "allocated",
+      });
     }
 
-    await insertAllocationRunLines(lines);
-    await insertAllocationRunBlockers(blockers);
-
-    const grossRounded = roundMoney(grossAmount);
-    const allocatedRounded = roundMoney(allocatedAmount);
-    const unallocatedRounded = roundMoney(grossRounded - allocatedRounded);
-
-    await finalizeAllocationRun({
-      allocationRunId: run.id,
-      lineCount: lines.length,
-      totalSourceAmount: grossRounded,
-      totalAllocatedAmount: allocatedRounded,
+    const summary = await computeAllocationRunSummary({
+      allocationRunId,
+      companyId: params.companyId,
+      importJobId: params.importJobId,
     });
 
-    await updateImportRowsAllocationStatus(params.importJobId, "completed");
+    await setAllocationRunCompleted({
+      allocationRunId,
+      summary,
+    });
 
-    return {
-      runId: run.id,
-      status: "completed",
-      inputRowCount: rows.length,
-      allocatedRowCount,
-      blockerCount: blockers.length,
-      grossAmount: grossRounded,
-      allocatedAmount: allocatedRounded,
-      unallocatedAmount: unallocatedRounded,
-      currency: distinctCurrencies.length === 1 ? distinctCurrencies[0] : null,
-    };
+    return { allocationRunId };
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unknown allocation error";
+      error instanceof Error ? error.message : "Unknown allocation engine failure";
 
-    await failAllocationRun({
-      allocationRunId: run.id,
-      errorMessage: message,
+    await setAllocationRunFailed({
+      allocationRunId,
+      message,
     });
-
-    await updateImportRowsAllocationStatus(params.importJobId, "failed");
 
     throw error;
   }
