@@ -1,30 +1,44 @@
+import "server-only";
+
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runAllocation } from "@/features/allocations/run-allocation";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-type RequestBody = {
-  companySlug?: string;
-  importJobId?: string;
-};
-
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const body = (await req.json()) as RequestBody;
+    const body = await request.json();
 
-    const companySlug = String(body.companySlug ?? "");
-    const importJobId = String(body.importJobId ?? "");
+    const companySlug = String(body.companySlug ?? "").trim();
+    const importJobId = String(body.importJobId ?? "").trim();
 
     if (!companySlug || !importJobId) {
       return NextResponse.json(
-        { ok: false, error: "Missing companySlug or importJobId" },
-        { status: 400 }
+        { error: "companySlug and importJobId are required" },
+        { status: 400 },
       );
     }
 
+    // Hämta aktuell användare
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) {
+      return NextResponse.json(
+        { error: `auth failed: ${userError.message}` },
+        { status: 401 },
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
+
+    // Hämta companyId från slug
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
       .select("id, slug")
@@ -33,55 +47,29 @@ export async function POST(req: Request) {
 
     if (companyError || !company) {
       return NextResponse.json(
-        { ok: false, error: "Company not found" },
-        { status: 404 }
+        { error: `company not found: ${companyError?.message ?? ""}` },
+        { status: 404 },
       );
     }
 
-    const { data: importJob, error: importJobError } = await supabaseAdmin
-      .from("import_jobs")
-      .select("id, company_id")
-      .eq("id", importJobId)
-      .eq("company_id", company.id)
-      .maybeSingle();
-
-    if (importJobError || !importJob) {
-      return NextResponse.json(
-        { ok: false, error: "Import job not found" },
-        { status: 404 }
-      );
-    }
-
-    console.log("[api.run-allocation] starting", {
-      companySlug,
-      importJobId,
+    // Kör allocation med objekt
+    const result = await runAllocation({
       companyId: company.id,
+      importJobId,
+      currency: null,
+      createdBy: user.id,
     });
 
-    const result = await runAllocation(importJobId);
-
+    // Revalidate path för Next-cache
     revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
     revalidatePath(`/c/${companySlug}/allocations`);
 
-    console.log("[api.run-allocation] completed", {
-      companySlug,
-      importJobId,
-      result,
-    });
-
-    return NextResponse.json({
-      ok: true,
-      result,
-    });
-  } catch (error) {
-    console.error("[api.run-allocation] failed", error);
-
+    return NextResponse.json({ success: true, result });
+  } catch (err: unknown) {
+    console.error("run-allocation failed", err);
     return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Allocation failed",
-      },
-      { status: 500 }
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
     );
   }
 }

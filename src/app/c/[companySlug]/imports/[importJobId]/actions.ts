@@ -82,7 +82,7 @@ async function verifyContext(params: {
 }
 
 async function listAllImportRowAggregates(
-  importJobId: string
+  importJobId: string,
 ): Promise<ImportRowAggregateRecord[]> {
   const pageSize = 1000;
   const rows: ImportRowAggregateRecord[] = [];
@@ -129,7 +129,8 @@ async function refreshImportJobAggregates(importJobId: string): Promise<void> {
 
     const status = row.status ?? null;
     const allocationStatus = row.allocation_status ?? null;
-    const hasMatch = row.work_id != null || row.matched_work_id != null || status === "matched";
+    const hasMatch =
+      row.work_id != null || row.matched_work_id != null || status === "matched";
     const isAllocated = isAllocatedAllocationStatus(allocationStatus);
 
     if (status === "invalid") {
@@ -163,7 +164,7 @@ async function refreshImportJobAggregates(importJobId: string): Promise<void> {
     }
   }
 
-  let nextStatus: string = "uploaded";
+  let nextStatus = "uploaded";
 
   if (totalRowCount === 0) {
     nextStatus = "uploaded";
@@ -281,7 +282,7 @@ export async function runAllocationAction(params: {
     throw new Error("Missing companySlug or importJobId");
   }
 
-  await verifyContext({ companySlug, importJobId });
+  const { company } = await verifyContext({ companySlug, importJobId });
 
   const { error: setStatusError } = await supabaseAdmin
     .from("import_jobs")
@@ -296,7 +297,11 @@ export async function runAllocationAction(params: {
   }
 
   try {
-    await runAllocation(importJobId);
+    await runAllocation({
+      companyId: company.id,
+      importJobId,
+    });
+
     await refreshImportJobAggregates(importJobId);
   } catch (error) {
     await supabaseAdmin
@@ -388,7 +393,13 @@ export async function manualMatchImportRowAction(formData: FormData) {
   ]);
 
   const isrc = pickString(raw, ["isrc", "ISRC", "isrc_code", "track_isrc"]);
-  const sourceName = pickString(raw, ["store", "service", "source_name", "source", "platform"]);
+  const sourceName = pickString(raw, [
+    "store",
+    "service",
+    "source_name",
+    "source",
+    "platform",
+  ]);
 
   if (title || artist || isrc) {
     await saveWorkAlias({

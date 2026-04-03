@@ -86,7 +86,7 @@ export default async function AllocationsPage({ params }: PageProps) {
     ...new Set(
       runs
         .map((run) => run.import_job_id)
-        .filter((value): value is string => Boolean(value))
+        .filter((value): value is string => Boolean(value)),
     ),
   ];
 
@@ -111,7 +111,7 @@ export default async function AllocationsPage({ params }: PageProps) {
           file_name: job.file_name ? String(job.file_name) : null,
           created_at: job.created_at ? String(job.created_at) : null,
         },
-      ])
+      ]),
     );
   }
 
@@ -227,7 +227,7 @@ export default async function AllocationsPage({ params }: PageProps) {
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${statusBadgeClass(
-                          run.status
+                          run.status,
                         )}`}
                       >
                         {run.status}
@@ -256,11 +256,11 @@ export default async function AllocationsPage({ params }: PageProps) {
                     </td>
 
                     <td className="px-4 py-3">
-                      {formatMoney(run.allocated_amount, run.currency)}
+                      {formatMoney(run.allocated_amount_total, run.currency)}
                     </td>
 
                     <td className="px-4 py-3">
-                      {formatMoney(run.unallocated_amount, run.currency)}
+                      {formatMoney(run.unallocated_amount_total, run.currency)}
                     </td>
 
                     <td className="px-4 py-3">{run.blocker_count}</td>

@@ -57,7 +57,7 @@ function isAllocatedAllocationStatus(value: string | null | undefined) {
 }
 
 async function listAllImportRowStatuses(
-  importJobId: string
+  importJobId: string,
 ): Promise<ImportRowStatusRecord[]> {
   const pageSize = 1000;
   const rows: ImportRowStatusRecord[] = [];
@@ -329,7 +329,9 @@ export default async function ImportDetailPage({ params }: Params) {
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Invalid rows
           </div>
-          <div className="mt-2 text-lg font-semibold">{summary.invalidCount}</div>
+          <div className="mt-2 text-lg font-semibold">
+            {summary.invalidCount}
+          </div>
         </div>
 
         <div className="rounded-lg border bg-white p-4 text-sm">
@@ -345,7 +347,9 @@ export default async function ImportDetailPage({ params }: Params) {
           <div className="text-xs uppercase tracking-wide text-neutral-500">
             Unmatched
           </div>
-          <div className="mt-2 text-lg font-semibold">{summary.unmatchedCount}</div>
+          <div className="mt-2 text-lg font-semibold">
+            {summary.unmatchedCount}
+          </div>
         </div>
       </div>
 
@@ -354,7 +358,10 @@ export default async function ImportDetailPage({ params }: Params) {
         importJobId={importJobId}
       />
 
-      <AllocationRunSummary importJobId={importJobId} />
+      <AllocationRunSummary
+        companyId={typedCompany.id}
+        importJobId={importJobId}
+      />
     </div>
   );
 }

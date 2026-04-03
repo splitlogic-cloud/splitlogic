@@ -131,11 +131,13 @@ export async function getSplitCoverageSummary(params: {
 }): Promise<SplitCoverageSummary> {
   const rows = await loadCoverageRows(params.companyId);
 
-  const blockers = params.importJobId
-    ? ((await listAllocationBlockersForImport(
-        params.importJobId
-      )) as CoverageBlockerRow[])
-    : [];
+  const blockers =
+    params.importJobId
+      ? ((await listAllocationBlockersForImport({
+          companyId: params.companyId,
+          importJobId: params.importJobId,
+        })) as CoverageBlockerRow[])
+      : [];
 
   const totalWorks = rows.length;
   const worksWithAnySplits = rows.filter((row) => row.split_count > 0).length;
