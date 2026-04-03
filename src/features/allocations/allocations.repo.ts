@@ -14,6 +14,11 @@ import type {
   SplitForAllocation,
 } from "./allocations-types";
 
+/** Rows may link to a job via `import_job_id` and/or legacy `import_id`. */
+function importRowsForJobOrFilter(importJobId: string): string {
+  return `import_job_id.eq.${importJobId},import_id.eq.${importJobId}`;
+}
+
 export type AllocationRunListItem = {
   id: string;
   company_id: string;
@@ -350,7 +355,7 @@ export async function computeAllocationRunSummary(params: {
     .from("import_rows")
     .select("*", { count: "exact", head: true })
     .eq("company_id", params.companyId)
-    .eq("import_job_id", params.importJobId);
+    .or(importRowsForJobOrFilter(params.importJobId));
 
   if (inputCountError) {
     throw new Error(
@@ -363,7 +368,7 @@ export async function computeAllocationRunSummary(params: {
       .from("import_rows")
       .select("*", { count: "exact", head: true })
       .eq("company_id", params.companyId)
-      .eq("import_job_id", params.importJobId)
+      .or(importRowsForJobOrFilter(params.importJobId))
       .in("status", ["matched", "allocated"]);
 
   if (matchedCountError) {

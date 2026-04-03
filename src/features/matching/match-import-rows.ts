@@ -201,7 +201,9 @@ async function listImportRowsForMatching(
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("id, raw_title, canonical, normalized, raw")
-      .eq("import_job_id", importJobId)
+      .or(
+        `import_job_id.eq.${importJobId},import_id.eq.${importJobId}`,
+      )
       .order("row_number", { ascending: true })
       .range(from, to);
 

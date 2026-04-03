@@ -99,7 +99,8 @@ export async function saveMatchDecision(params: {
     match_explanation: params.explanation,
   };
 
-  if (params.status === "matched") {
+  if (params.status === "matched" && params.matchedWorkId) {
+    payload.work_id = params.matchedWorkId;
     payload.matched_at = new Date().toISOString();
   }
 

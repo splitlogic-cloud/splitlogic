@@ -6,7 +6,9 @@ export async function assertImportJobReadyForAllocation(importJobId: string): Pr
   const { data, error } = await supabaseAdmin
     .from("import_rows")
     .select("status")
-    .eq("import_job_id", importJobId);
+    .or(
+      `import_job_id.eq.${importJobId},import_id.eq.${importJobId}`,
+    );
 
   if (error || !data) {
     throw new Error(`Failed to verify allocation readiness: ${error?.message ?? "unknown"}`);
