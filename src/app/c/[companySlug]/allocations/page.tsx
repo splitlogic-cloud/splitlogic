@@ -80,7 +80,9 @@ export default async function AllocationsPage({ params }: PageProps) {
     notFound();
   }
 
-  const runs = await listAllocationRunsByCompany(company.id);
+  const runs = await listAllocationRunsByCompany({
+    companyId: company.id,
+  });
 
   const importJobIds = [
     ...new Set(
