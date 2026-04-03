@@ -19,6 +19,68 @@ export function importRowsForJobOrFilter(importJobId: string): string {
   return `import_job_id.eq.${importJobId},import_id.eq.${importJobId}`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickString(obj: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!obj) return null;
+  for (const key of keys) {
+    const v = obj[key];
+    if (typeof v === "string" && v.trim() !== "") return v.trim();
+  }
+  return null;
+}
+
+function mapImportRowDbToAllocationRow(
+  row: Record<string, unknown>,
+): ImportRowForAllocation {
+  const raw = asRecord(row.raw) ?? {};
+  const canonical = asRecord(row.canonical);
+  const normalized = asRecord(row.normalized);
+
+  const title =
+    (typeof row.raw_title === "string" && row.raw_title.trim()
+      ? row.raw_title.trim()
+      : null) ??
+    pickString(canonical, ["title", "work_title", "track_title"]) ??
+    pickString(normalized, ["title", "work_title"]) ??
+    null;
+
+  const artist =
+    pickString(canonical, ["artist", "artist_name", "track_artist"]) ??
+    pickString(normalized, ["artist", "artist_name"]) ??
+    null;
+
+  const isrc =
+    pickString(canonical, ["isrc", "isrc_code"]) ??
+    pickString(normalized, ["isrc"]) ??
+    pickString(raw, ["isrc", "ISRC"]);
+
+  const workId = (row.work_id ?? row.matched_work_id ?? null) as string | null;
+
+  const status = String(row.status ?? "parsed") as ImportRowForAllocation["status"];
+
+  return {
+    id: String(row.id),
+    company_id: String(row.company_id),
+    import_job_id: String(row.import_job_id ?? row.import_id ?? ""),
+    work_id: workId,
+    title,
+    artist,
+    isrc,
+    currency: row.currency != null ? String(row.currency) : null,
+    gross_amount:
+      row.gross_amount != null ? Number(row.gross_amount) : null,
+    net_amount: row.net_amount != null ? Number(row.net_amount) : null,
+    status,
+    raw_payload: raw,
+    normalized_payload: normalized ?? {},
+  };
+}
+
 export type AllocationRunListItem = {
   id: string;
   company_id: string;
@@ -166,26 +228,29 @@ export async function loadImportRowsForAllocation(params: {
       id,
       company_id,
       import_job_id,
+      import_id,
       work_id,
+      matched_work_id,
       currency,
       gross_amount,
       net_amount,
       status,
-      title,
-      artist,
-      isrc,
-      raw_payload,
-      normalized_payload
+      raw_title,
+      raw,
+      canonical,
+      normalized
     `)
     .eq("company_id", params.companyId)
-    .eq("import_job_id", params.importJobId)
+    .or(importRowsForJobOrFilter(params.importJobId))
     .in("status", ["matched", "allocated"]);
 
   if (error) {
     throw new Error(`loadImportRowsForAllocation failed: ${error.message}`);
   }
 
-  return (data ?? []) as ImportRowForAllocation[];
+  return (data ?? []).map((row) =>
+    mapImportRowDbToAllocationRow(row as Record<string, unknown>),
+  );
 }
 
 export async function loadSplitsForWorks(params: {
