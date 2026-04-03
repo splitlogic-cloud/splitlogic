@@ -1,6 +1,7 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { importRowsForJobOrFilter } from "@/features/allocations/allocations.repo";
 import ManualMatchCell from "./ManualMatchCell";
 
 type Props = {
@@ -136,7 +137,8 @@ export default async function MatchReviewTable({
       canonical,
       normalized
     `)
-    .eq("import_job_id", importJobId)
+    .eq("company_id", typedCompany.id)
+    .or(importRowsForJobOrFilter(importJobId))
     .order("row_number", { ascending: true })
     .limit(300);
 

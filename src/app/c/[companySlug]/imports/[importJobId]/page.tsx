@@ -9,6 +9,10 @@ import RunAllocationButton from "./RunAllocationButton";
 import MatchReviewTable from "./MatchReviewTable";
 import AllocationRunSummary from "./AllocationRunSummary";
 import { runMatchingAction } from "./actions";
+import {
+  getLatestAllocationRunForImport,
+  importRowsForJobOrFilter,
+} from "@/features/allocations/allocations.repo";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -57,6 +61,7 @@ function isAllocatedAllocationStatus(value: string | null | undefined) {
 }
 
 async function listAllImportRowStatuses(
+  companyId: string,
   importJobId: string,
 ): Promise<ImportRowStatusRecord[]> {
   const pageSize = 1000;
@@ -69,7 +74,8 @@ async function listAllImportRowStatuses(
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("status, allocation_status, matched_work_id")
-      .eq("import_job_id", importJobId)
+      .eq("company_id", companyId)
+      .or(importRowsForJobOrFilter(importJobId))
       .range(from, to);
 
     if (error) {
@@ -194,7 +200,10 @@ export default async function ImportDetailPage({ params }: Params) {
 
   const typedImportJob = importJob as ImportJobRecord;
 
-  const importRows = await listAllImportRowStatuses(importJobId);
+  const importRows = await listAllImportRowStatuses(
+    typedCompany.id,
+    importJobId,
+  );
   const summary = summarizeImportRows(importRows);
 
   const totalReviewCount =
@@ -211,9 +220,22 @@ export default async function ImportDetailPage({ params }: Params) {
   const isFullyAllocated =
     summary.totalRows > 0 && summary.allocatedCount === summary.totalRows;
 
+  const latestAllocationRun = await getLatestAllocationRunForImport({
+    companyId: typedCompany.id,
+    importJobId,
+  });
+  const latestRunSummaryEmpty =
+    latestAllocationRun != null &&
+    latestAllocationRun.status === "completed" &&
+    (latestAllocationRun.input_row_count ?? 0) === 0 &&
+    (latestAllocationRun.allocated_row_count ?? 0) === 0;
+
   const canRunParse = !isBusy;
   const canRunMatching = !isBusy && summary.totalRows > 0;
-  const canRunAllocation = !isBusy && summary.matchedWorkCount > 0;
+  const canRunAllocation =
+    !isBusy && summary.matchedWorkCount > 0 && !isCompleted;
+  const canRerunAllocation =
+    !isBusy && summary.matchedWorkCount > 0 && isCompleted;
 
   return (
     <div className="space-y-6">
@@ -320,7 +342,10 @@ export default async function ImportDetailPage({ params }: Params) {
         <RunAllocationButton
           companySlug={companySlug}
           importJobId={importJobId}
-          disabled={!canRunAllocation || isCompleted}
+          disabled={!canRunAllocation && !canRerunAllocation}
+          label={
+            canRerunAllocation ? "Re-run allocation" : undefined
+          }
         />
       </div>
 

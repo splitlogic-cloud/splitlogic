@@ -15,7 +15,7 @@ import type {
 } from "./allocations-types";
 
 /** Rows may link to a job via `import_job_id` and/or legacy `import_id`. */
-function importRowsForJobOrFilter(importJobId: string): string {
+export function importRowsForJobOrFilter(importJobId: string): string {
   return `import_job_id.eq.${importJobId},import_id.eq.${importJobId}`;
 }
 

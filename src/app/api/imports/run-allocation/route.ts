@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runAllocation } from "@/features/allocations/run-allocation";
+import { refreshImportJobAggregates } from "@/app/c/[companySlug]/imports/[importJobId]/actions";
 
 export async function POST(request: Request) {
   try {
@@ -59,6 +60,8 @@ export async function POST(request: Request) {
       currency: null,
       createdBy: user.id,
     });
+
+    await refreshImportJobAggregates(company.id, importJobId);
 
     // Revalidate path för Next-cache
     revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
