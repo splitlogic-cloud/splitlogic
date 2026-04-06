@@ -120,7 +120,6 @@ function allocateNetAcrossSplits(params: {
 }): AllocationLineInsert[] {
   const rowNet = Number(params.row.net_amount ?? 0);
   const rowGross = Number(params.row.gross_amount ?? 0);
-
   const totalMicros = toAmountMicros(rowNet);
 
   const splitWeights = params.splits.map((split, index) => {
@@ -154,11 +153,12 @@ function allocateNetAcrossSplits(params: {
   splitWeights.sort((a, b) => a.index - b.index);
 
   const createdAt = new Date().toISOString();
+  const resolvedWorkId = params.row.work_id as string;
 
   return splitWeights.map((item) => ({
     allocation_run_id: params.allocationRunId,
     import_row_id: params.row.id,
-    work_id: params.row.work_id as string,
+    work_id: resolvedWorkId,
     party_id: item.split.party_id as string,
     split_id: item.split.id,
     share_fraction: item.split.share_fraction,
@@ -170,7 +170,7 @@ function allocateNetAcrossSplits(params: {
     calc_trace: {
       engine: "allocation-v2",
       row_id: params.row.id,
-      work_id: params.row.work_id,
+      work_id: resolvedWorkId,
       row_net_amount: rowNet,
       share_fraction: item.split.share_fraction,
       allocated_amount_micros: item.floored,
@@ -241,7 +241,9 @@ export async function runAllocationForImportJob(params: {
 
   const currency =
     params.currency ??
-    normalizeCurrency(rows.find((row) => normalizeCurrency(row.currency))?.currency ?? null);
+    normalizeCurrency(
+      rows.find((row) => normalizeCurrency(row.currency))?.currency ?? null,
+    );
 
   const allocationRun = await createAllocationRun({
     companyId: params.companyId,
@@ -260,12 +262,14 @@ export async function runAllocationForImportJob(params: {
 
   try {
     for (const row of rows) {
+      const resolvedWorkId = row.work_id ?? null;
+
       const candidate = await insertAllocationCandidate({
         company_id: params.companyId,
         allocation_run_id: allocationRun.id,
         import_job_id: params.importJobId,
         import_row_id: row.id,
-        work_id: row.work_id,
+        work_id: resolvedWorkId,
         status: "pending",
         currency: normalizeCurrency(row.currency),
         gross_amount: row.gross_amount ?? 0,
@@ -273,7 +277,7 @@ export async function runAllocationForImportJob(params: {
         created_at: new Date().toISOString(),
       });
 
-      if (!row.work_id) {
+      if (!resolvedWorkId) {
         await updateAllocationCandidateStatus({
           allocationCandidateId: candidate.id,
           status: "blocked",
@@ -309,7 +313,7 @@ export async function runAllocationForImportJob(params: {
           allocationRunId: allocationRun.id,
           allocationCandidateId: candidate.id,
           importRowId: row.id,
-          workId: row.work_id,
+          workId: resolvedWorkId,
           blockerCode: "currency_missing",
           message: "Import row currency is missing.",
         });
@@ -331,7 +335,7 @@ export async function runAllocationForImportJob(params: {
           allocationRunId: allocationRun.id,
           allocationCandidateId: candidate.id,
           importRowId: row.id,
-          workId: row.work_id,
+          workId: resolvedWorkId,
           blockerCode: "amount_missing",
           message: "Import row gross_amount or net_amount is missing.",
         });
@@ -340,7 +344,7 @@ export async function runAllocationForImportJob(params: {
         continue;
       }
 
-      const rowSplits = splitsByWorkId.get(row.work_id) ?? [];
+      const rowSplits = splitsByWorkId.get(resolvedWorkId) ?? [];
       const validation = validateSplits(rowSplits);
 
       if (!validation.ok) {
@@ -348,7 +352,8 @@ export async function runAllocationForImportJob(params: {
           allocationCandidateId: candidate.id,
           status: "blocked",
           blockerCode: validation.blockerCode ?? "missing_splits",
-          blockerMessage: validation.blockerMessage ?? "Invalid split configuration.",
+          blockerMessage:
+            validation.blockerMessage ?? "Invalid split configuration.",
         });
 
         await insertAllocationBlocker({
@@ -356,13 +361,17 @@ export async function runAllocationForImportJob(params: {
           allocationRunId: allocationRun.id,
           allocationCandidateId: candidate.id,
           importRowId: row.id,
-          workId: row.work_id,
+          workId: resolvedWorkId,
           blockerCode: validation.blockerCode ?? "missing_splits",
-          message: validation.blockerMessage ?? "Invalid split configuration.",
+          message:
+            validation.blockerMessage ?? "Invalid split configuration.",
           details: {
-            work_id: row.work_id,
+            work_id: resolvedWorkId,
             split_count: rowSplits.length,
-            share_sum: rowSplits.reduce((sum, split) => sum + split.share_fraction, 0),
+            share_sum: rowSplits.reduce(
+              (sum, split) => sum + split.share_fraction,
+              0,
+            ),
           },
         });
 
@@ -376,7 +385,10 @@ export async function runAllocationForImportJob(params: {
       });
 
       const lines = allocateNetAcrossSplits({
-        row,
+        row: {
+          ...row,
+          work_id: resolvedWorkId,
+        },
         splits: rowSplits,
         allocationRunId: allocationRun.id,
       });

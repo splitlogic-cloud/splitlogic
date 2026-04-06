@@ -6,7 +6,6 @@ import { runImportParse } from "@/features/imports/run-import-parse";
 import { matchImportRowsForImport } from "@/features/imports/imports.matching";
 import { saveWorkAlias } from "@/features/matching/work-alias.repo";
 import { runAllocation } from "@/features/allocations/run-allocation";
-import { importRowsForJobOrFilter } from "@/features/allocations/allocations.repo";
 
 type CompanyRecord = {
   id: string;
@@ -83,7 +82,6 @@ async function verifyContext(params: {
 }
 
 async function listAllImportRowAggregates(
-  companyId: string,
   importJobId: string,
 ): Promise<ImportRowAggregateRecord[]> {
   const pageSize = 1000;
@@ -96,8 +94,7 @@ async function listAllImportRowAggregates(
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("status, allocation_status, work_id, matched_work_id")
-      .eq("company_id", companyId)
-      .or(importRowsForJobOrFilter(importJobId))
+      .eq("import_job_id", importJobId)
       .range(from, to);
 
     if (error) {
@@ -118,10 +115,9 @@ async function listAllImportRowAggregates(
 }
 
 export async function refreshImportJobAggregates(
-  companyId: string,
   importJobId: string,
 ): Promise<void> {
-  const rows = await listAllImportRowAggregates(companyId, importJobId);
+  const rows = await listAllImportRowAggregates(importJobId);
 
   let totalRowCount = 0;
   let parsedRowCount = 0;
@@ -214,11 +210,11 @@ export async function runImportParseAction(formData: FormData) {
     throw new Error("Missing companySlug or importJobId");
   }
 
-  const { company } = await verifyContext({ companySlug, importJobId });
+  await verifyContext({ companySlug, importJobId });
 
   try {
     await runImportParse(importJobId);
-    await refreshImportJobAggregates(company.id, importJobId);
+    await refreshImportJobAggregates(importJobId);
   } catch (error) {
     await supabaseAdmin
       .from("import_jobs")
@@ -261,7 +257,7 @@ export async function runMatchingAction(formData: FormData) {
 
   try {
     await matchImportRowsForImport(company.id, importJobId);
-    await refreshImportJobAggregates(company.id, importJobId);
+    await refreshImportJobAggregates(importJobId);
   } catch (error) {
     await supabaseAdmin
       .from("import_jobs")
@@ -306,9 +302,11 @@ export async function runAllocationAction(params: {
     await runAllocation({
       companyId: company.id,
       importJobId,
+      createdBy: null,
+      currency: null,
     });
 
-    await refreshImportJobAggregates(company.id, importJobId);
+    await refreshImportJobAggregates(importJobId);
   } catch (error) {
     await supabaseAdmin
       .from("import_jobs")
@@ -418,7 +416,7 @@ export async function manualMatchImportRowAction(formData: FormData) {
     });
   }
 
-  await refreshImportJobAggregates(company.id, importJob.id);
+  await refreshImportJobAggregates(importJob.id);
 
   revalidateImportPaths(companySlug, importJobId);
 }
@@ -432,7 +430,7 @@ export async function clearImportRowMatchAction(formData: FormData) {
     throw new Error("Missing companySlug, importJobId or rowId");
   }
 
-  const { company, importJob } = await verifyContext({
+  const { importJob } = await verifyContext({
     companySlug,
     importJobId,
   });
@@ -455,7 +453,7 @@ export async function clearImportRowMatchAction(formData: FormData) {
     throw new Error(`clear match failed: ${error.message}`);
   }
 
-  await refreshImportJobAggregates(company.id, importJob.id);
+  await refreshImportJobAggregates(importJob.id);
 
   revalidateImportPaths(companySlug, importJobId);
 }

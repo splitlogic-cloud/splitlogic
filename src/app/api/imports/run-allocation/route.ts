@@ -21,7 +21,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Hämta aktuell användare
     const supabase = await createClient();
     const {
       data: { user },
@@ -39,7 +38,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    // Hämta companyId från slug
     const { data: company, error: companyError } = await supabaseAdmin
       .from("companies")
       .select("id, slug")
@@ -53,7 +51,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Kör allocation med objekt
     const result = await runAllocation({
       companyId: company.id,
       importJobId,
@@ -61,15 +58,15 @@ export async function POST(request: Request) {
       createdBy: user.id,
     });
 
-    await refreshImportJobAggregates(company.id, importJobId);
+    await refreshImportJobAggregates(importJobId);
 
-    // Revalidate path för Next-cache
     revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
     revalidatePath(`/c/${companySlug}/allocations`);
 
     return NextResponse.json({ success: true, result });
   } catch (err: unknown) {
     console.error("run-allocation failed", err);
+
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },
       { status: 500 },

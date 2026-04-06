@@ -65,6 +65,130 @@ export type AllocationBlockerListItem = {
   created_at: string;
 };
 
+type JsonRecord = Record<string, unknown>;
+
+type ImportRowForAllocationDbRow = {
+  id: string;
+  company_id: string;
+  import_job_id: string | null;
+  work_id: string | null;
+  matched_work_id?: string | null;
+  currency: string | null;
+  gross_amount: number | null;
+  net_amount: number | null;
+  status: string | null;
+  raw: JsonRecord | null;
+  canonical: JsonRecord | null;
+  normalized: JsonRecord | null;
+};
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as JsonRecord;
+}
+
+function pickString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function pickFirstString(
+  obj: JsonRecord | null,
+  keys: string[],
+): string | null {
+  if (!obj) return null;
+
+  for (const key of keys) {
+    const value = pickString(obj[key]);
+    if (value) return value;
+  }
+
+  return null;
+}
+
+function deriveTitle(row: ImportRowForAllocationDbRow): string | null {
+  return (
+    pickFirstString(row.canonical, [
+      "title",
+      "track_title",
+      "song_title",
+      "work_title",
+      "release_title",
+      "track",
+      "product",
+    ]) ??
+    pickFirstString(row.normalized, [
+      "title",
+      "track_title",
+      "song_title",
+      "work_title",
+      "release_title",
+      "track",
+      "product",
+    ]) ??
+    pickFirstString(row.raw, [
+      "title",
+      "track_title",
+      "song_title",
+      "work_title",
+      "release_title",
+      "track",
+      "product",
+      "Track Name",
+      "Song Title",
+    ]) ??
+    null
+  );
+}
+
+function deriveArtist(row: ImportRowForAllocationDbRow): string | null {
+  return (
+    pickFirstString(row.canonical, [
+      "artist",
+      "track_artist",
+      "main_artist",
+      "artist_name",
+      "product_artist",
+    ]) ??
+    pickFirstString(row.normalized, [
+      "artist",
+      "track_artist",
+      "main_artist",
+      "artist_name",
+      "product_artist",
+    ]) ??
+    pickFirstString(row.raw, [
+      "artist",
+      "track_artist",
+      "main_artist",
+      "artist_name",
+      "product_artist",
+      "Artist",
+      "Primary Artist",
+    ]) ??
+    null
+  );
+}
+
+function deriveIsrc(row: ImportRowForAllocationDbRow): string | null {
+  return (
+    pickFirstString(row.canonical, ["isrc", "isrc_code", "track_isrc"]) ??
+    pickFirstString(row.normalized, ["isrc", "isrc_code", "track_isrc"]) ??
+    pickFirstString(row.raw, [
+      "isrc",
+      "ISRC",
+      "isrc_code",
+      "track_isrc",
+      "Track ISRC",
+    ]) ??
+    null
+  );
+}
+
 export async function createAllocationRun(params: {
   companyId: string;
   importJobId: string;
@@ -172,11 +296,9 @@ export async function loadImportRowsForAllocation(params: {
       gross_amount,
       net_amount,
       status,
-      title,
-      artist,
-      isrc,
-      raw_payload,
-      normalized_payload
+      raw,
+      canonical,
+      normalized
     `)
     .eq("company_id", params.companyId)
     .or(importRowsForJobOrFilter(params.importJobId))
@@ -186,14 +308,46 @@ export async function loadImportRowsForAllocation(params: {
     throw new Error(`loadImportRowsForAllocation failed: ${error.message}`);
   }
 
-  type ImportRowForAllocationWithMatch = ImportRowForAllocation & {
-    matched_work_id?: string | null;
-  };
+  const rows = (data ?? []) as ImportRowForAllocationDbRow[];
 
-  return ((data ?? []) as ImportRowForAllocationWithMatch[]).map((row) => ({
-    ...row,
-    work_id: row.work_id ?? row.matched_work_id ?? null,
-  }));
+  return rows.map((row) => {
+    const raw = asRecord(row.raw);
+    const canonical = asRecord(row.canonical);
+    const normalized = asRecord(row.normalized);
+    const resolvedWorkId = row.work_id ?? row.matched_work_id ?? null;
+
+    return {
+      id: row.id,
+      company_id: row.company_id,
+      import_job_id: row.import_job_id,
+      work_id: resolvedWorkId,
+      matched_work_id: row.matched_work_id ?? null,
+      currency: row.currency ?? null,
+      gross_amount: row.gross_amount ?? null,
+      net_amount: row.net_amount ?? null,
+      status: row.status ?? null,
+      title: deriveTitle({
+        ...row,
+        raw,
+        canonical,
+        normalized,
+      }),
+      artist: deriveArtist({
+        ...row,
+        raw,
+        canonical,
+        normalized,
+      }),
+      isrc: deriveIsrc({
+        ...row,
+        raw,
+        canonical,
+        normalized,
+      }),
+      raw_payload: raw,
+      normalized_payload: normalized,
+    } as ImportRowForAllocation;
+  });
 }
 
 export async function loadSplitsForWorks(params: {

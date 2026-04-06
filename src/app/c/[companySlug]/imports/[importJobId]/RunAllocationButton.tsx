@@ -7,7 +7,6 @@ type Props = {
   companySlug: string;
   importJobId: string;
   disabled?: boolean;
-  /** When set, replaces the default "Run allocation" label */
   label?: string;
 };
 
@@ -78,9 +77,7 @@ export default function RunAllocationButton({
         disabled={disabled || isLoading}
         className="inline-flex items-center rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isLoading
-          ? "Running allocation..."
-          : label ?? "Run allocation"}
+        {isLoading ? "Running allocation..." : label ?? "Run allocation"}
       </button>
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
