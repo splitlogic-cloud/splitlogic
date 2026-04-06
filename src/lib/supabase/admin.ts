@@ -28,5 +28,19 @@ export function getSupabaseAdmin(): SupabaseClient {
   return _admin;
 }
 
+/** Lazy så Next.js build (route module load) inte kräver Supabase-env förrän något anropas. */
+function createLazyAdminClient(): SupabaseClient {
+  return new Proxy({} as SupabaseClient, {
+    get(_target, prop, _receiver) {
+      const client = getSupabaseAdmin();
+      const value = Reflect.get(client, prop, client);
+      if (typeof value === "function") {
+        return value.bind(client);
+      }
+      return value;
+    },
+  });
+}
+
 // ✅ Bakåtkompatibilitet (så dina imports fortsätter funka)
-export const supabaseAdmin = getSupabaseAdmin();
+export const supabaseAdmin = createLazyAdminClient();
