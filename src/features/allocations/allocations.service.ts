@@ -21,7 +21,7 @@ import type {
   SplitForAllocation,
 } from "./allocations-types";
 
-const SHARE_SCALE = 1_000_000;
+const SHARE_BPS_SCALE = 10_000;
 const AMOUNT_SCALE = 1_000_000;
 const SPLIT_SUM_EPSILON = 0.000001;
 
@@ -33,10 +33,6 @@ function fromAmountMicros(value: number): number {
   return value / AMOUNT_SCALE;
 }
 
-function toShareUnits(value: number): number {
-  return Math.round(value * SHARE_SCALE);
-}
-
 function normalizeCurrency(value: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim().toUpperCase();
@@ -45,6 +41,10 @@ function normalizeCurrency(value: string | null): string | null {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function toShareFractionFromBps(shareBps: number | null | undefined): number {
+  return Number(shareBps ?? 0) / SHARE_BPS_SCALE;
 }
 
 function groupSplitsByWorkId(splits: SplitForAllocation[]) {
@@ -63,6 +63,7 @@ function groupSplitsByWorkId(splits: SplitForAllocation[]) {
       if (aDate !== bDate) return aDate.localeCompare(bDate);
       return a.id.localeCompare(b.id);
     });
+
     map.set(workId, items);
   }
 
@@ -91,16 +92,26 @@ function validateSplits(splits: SplitForAllocation[]): {
       };
     }
 
-    if (!isFiniteNumber(split.share_fraction) || split.share_fraction <= 0) {
+    const shareFraction = toShareFractionFromBps(
+      (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
+    );
+
+    if (!isFiniteNumber(shareFraction) || shareFraction <= 0) {
       return {
         ok: false,
         blockerCode: "split_sum_not_100",
-        blockerMessage: `Split ${split.id} has invalid share_fraction.`,
+        blockerMessage: `Split ${split.id} has invalid share_bps.`,
       };
     }
   }
 
-  const shareSum = splits.reduce((sum, split) => sum + split.share_fraction, 0);
+  const shareSum = splits.reduce((sum, split) => {
+    const shareFraction = toShareFractionFromBps(
+      (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
+    );
+
+    return sum + shareFraction;
+  }, 0);
 
   if (Math.abs(shareSum - 1) > SPLIT_SUM_EPSILON) {
     return {
@@ -123,17 +134,19 @@ function allocateNetAcrossSplits(params: {
   const totalMicros = toAmountMicros(rowNet);
 
   const splitWeights = params.splits.map((split, index) => {
-    const weight = toShareUnits(split.share_fraction);
-    const raw = totalMicros * split.share_fraction;
+    const shareFraction = toShareFractionFromBps(
+      (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
+    );
+    const raw = totalMicros * shareFraction;
     const floored = Math.floor(raw);
     const remainder = raw - floored;
 
     return {
       split,
       index,
-      weight,
       floored,
       remainder,
+      shareFraction,
     };
   });
 
@@ -153,15 +166,14 @@ function allocateNetAcrossSplits(params: {
   splitWeights.sort((a, b) => a.index - b.index);
 
   const createdAt = new Date().toISOString();
-  const resolvedWorkId = params.row.work_id as string;
 
   return splitWeights.map((item) => ({
     allocation_run_id: params.allocationRunId,
     import_row_id: params.row.id,
-    work_id: resolvedWorkId,
+    work_id: params.row.work_id as string,
     party_id: item.split.party_id as string,
     split_id: item.split.id,
-    share_fraction: item.split.share_fraction,
+    share_fraction: item.shareFraction,
     gross_source_amount: rowGross,
     net_source_amount: rowNet,
     allocated_amount: fromAmountMicros(item.floored),
@@ -170,15 +182,15 @@ function allocateNetAcrossSplits(params: {
     calc_trace: {
       engine: "allocation-v2",
       row_id: params.row.id,
-      work_id: resolvedWorkId,
+      work_id: params.row.work_id,
       row_net_amount: rowNet,
-      share_fraction: item.split.share_fraction,
+      share_fraction: item.shareFraction,
       allocated_amount_micros: item.floored,
       hash: buildStableHash({
         rowId: params.row.id,
         splitId: item.split.id,
         rowNet,
-        shareFraction: item.split.share_fraction,
+        shareFraction: item.shareFraction,
       }),
     },
     created_at: createdAt,
@@ -241,9 +253,7 @@ export async function runAllocationForImportJob(params: {
 
   const currency =
     params.currency ??
-    normalizeCurrency(
-      rows.find((row) => normalizeCurrency(row.currency))?.currency ?? null,
-    );
+    normalizeCurrency(rows.find((row) => normalizeCurrency(row.currency))?.currency ?? null);
 
   const allocationRun = await createAllocationRun({
     companyId: params.companyId,
@@ -262,14 +272,12 @@ export async function runAllocationForImportJob(params: {
 
   try {
     for (const row of rows) {
-      const resolvedWorkId = row.work_id ?? null;
-
       const candidate = await insertAllocationCandidate({
         company_id: params.companyId,
         allocation_run_id: allocationRun.id,
         import_job_id: params.importJobId,
         import_row_id: row.id,
-        work_id: resolvedWorkId,
+        work_id: row.work_id,
         status: "pending",
         currency: normalizeCurrency(row.currency),
         gross_amount: row.gross_amount ?? 0,
@@ -277,7 +285,7 @@ export async function runAllocationForImportJob(params: {
         created_at: new Date().toISOString(),
       });
 
-      if (!resolvedWorkId) {
+      if (!row.work_id) {
         await updateAllocationCandidateStatus({
           allocationCandidateId: candidate.id,
           status: "blocked",
@@ -313,7 +321,7 @@ export async function runAllocationForImportJob(params: {
           allocationRunId: allocationRun.id,
           allocationCandidateId: candidate.id,
           importRowId: row.id,
-          workId: resolvedWorkId,
+          workId: row.work_id,
           blockerCode: "currency_missing",
           message: "Import row currency is missing.",
         });
@@ -335,7 +343,7 @@ export async function runAllocationForImportJob(params: {
           allocationRunId: allocationRun.id,
           allocationCandidateId: candidate.id,
           importRowId: row.id,
-          workId: resolvedWorkId,
+          workId: row.work_id,
           blockerCode: "amount_missing",
           message: "Import row gross_amount or net_amount is missing.",
         });
@@ -344,7 +352,7 @@ export async function runAllocationForImportJob(params: {
         continue;
       }
 
-      const rowSplits = splitsByWorkId.get(resolvedWorkId) ?? [];
+      const rowSplits = splitsByWorkId.get(row.work_id) ?? [];
       const validation = validateSplits(rowSplits);
 
       if (!validation.ok) {
@@ -352,8 +360,7 @@ export async function runAllocationForImportJob(params: {
           allocationCandidateId: candidate.id,
           status: "blocked",
           blockerCode: validation.blockerCode ?? "missing_splits",
-          blockerMessage:
-            validation.blockerMessage ?? "Invalid split configuration.",
+          blockerMessage: validation.blockerMessage ?? "Invalid split configuration.",
         });
 
         await insertAllocationBlocker({
@@ -361,17 +368,20 @@ export async function runAllocationForImportJob(params: {
           allocationRunId: allocationRun.id,
           allocationCandidateId: candidate.id,
           importRowId: row.id,
-          workId: resolvedWorkId,
+          workId: row.work_id,
           blockerCode: validation.blockerCode ?? "missing_splits",
-          message:
-            validation.blockerMessage ?? "Invalid split configuration.",
+          message: validation.blockerMessage ?? "Invalid split configuration.",
           details: {
-            work_id: resolvedWorkId,
+            work_id: row.work_id,
             split_count: rowSplits.length,
-            share_sum: rowSplits.reduce(
-              (sum, split) => sum + split.share_fraction,
-              0,
-            ),
+            share_sum: rowSplits.reduce((sum, split) => {
+              return (
+                sum +
+                toShareFractionFromBps(
+                  (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
+                )
+              );
+            }, 0),
           },
         });
 
@@ -385,10 +395,7 @@ export async function runAllocationForImportJob(params: {
       });
 
       const lines = allocateNetAcrossSplits({
-        row: {
-          ...row,
-          work_id: resolvedWorkId,
-        },
+        row,
         splits: rowSplits,
         allocationRunId: allocationRun.id,
       });

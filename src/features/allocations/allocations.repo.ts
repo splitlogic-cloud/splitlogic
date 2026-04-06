@@ -82,6 +82,19 @@ type ImportRowForAllocationDbRow = {
   normalized: JsonRecord | null;
 };
 
+type SplitForAllocationDbRow = {
+  id: string;
+  company_id: string;
+  work_id: string;
+  party_id: string | null;
+  share_bps: number | null;
+  status: string | null;
+  role: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  created_at: string | null;
+};
+
 function asRecord(value: unknown): JsonRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -96,10 +109,7 @@ function pickString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function pickFirstString(
-  obj: JsonRecord | null,
-  keys: string[],
-): string | null {
+function pickFirstString(obj: JsonRecord | null, keys: string[]): string | null {
   if (!obj) return null;
 
   for (const key of keys) {
@@ -111,8 +121,12 @@ function pickFirstString(
 }
 
 function deriveTitle(row: ImportRowForAllocationDbRow): string | null {
+  const raw = asRecord(row.raw);
+  const canonical = asRecord(row.canonical);
+  const normalized = asRecord(row.normalized);
+
   return (
-    pickFirstString(row.canonical, [
+    pickFirstString(canonical, [
       "title",
       "track_title",
       "song_title",
@@ -121,7 +135,7 @@ function deriveTitle(row: ImportRowForAllocationDbRow): string | null {
       "track",
       "product",
     ]) ??
-    pickFirstString(row.normalized, [
+    pickFirstString(normalized, [
       "title",
       "track_title",
       "song_title",
@@ -130,7 +144,7 @@ function deriveTitle(row: ImportRowForAllocationDbRow): string | null {
       "track",
       "product",
     ]) ??
-    pickFirstString(row.raw, [
+    pickFirstString(raw, [
       "title",
       "track_title",
       "song_title",
@@ -146,22 +160,26 @@ function deriveTitle(row: ImportRowForAllocationDbRow): string | null {
 }
 
 function deriveArtist(row: ImportRowForAllocationDbRow): string | null {
+  const raw = asRecord(row.raw);
+  const canonical = asRecord(row.canonical);
+  const normalized = asRecord(row.normalized);
+
   return (
-    pickFirstString(row.canonical, [
+    pickFirstString(canonical, [
       "artist",
       "track_artist",
       "main_artist",
       "artist_name",
       "product_artist",
     ]) ??
-    pickFirstString(row.normalized, [
+    pickFirstString(normalized, [
       "artist",
       "track_artist",
       "main_artist",
       "artist_name",
       "product_artist",
     ]) ??
-    pickFirstString(row.raw, [
+    pickFirstString(raw, [
       "artist",
       "track_artist",
       "main_artist",
@@ -175,10 +193,14 @@ function deriveArtist(row: ImportRowForAllocationDbRow): string | null {
 }
 
 function deriveIsrc(row: ImportRowForAllocationDbRow): string | null {
+  const raw = asRecord(row.raw);
+  const canonical = asRecord(row.canonical);
+  const normalized = asRecord(row.normalized);
+
   return (
-    pickFirstString(row.canonical, ["isrc", "isrc_code", "track_isrc"]) ??
-    pickFirstString(row.normalized, ["isrc", "isrc_code", "track_isrc"]) ??
-    pickFirstString(row.raw, [
+    pickFirstString(canonical, ["isrc", "isrc_code", "track_isrc"]) ??
+    pickFirstString(normalized, ["isrc", "isrc_code", "track_isrc"]) ??
+    pickFirstString(raw, [
       "isrc",
       "ISRC",
       "isrc_code",
@@ -187,6 +209,10 @@ function deriveIsrc(row: ImportRowForAllocationDbRow): string | null {
     ]) ??
     null
   );
+}
+
+function toShareFractionFromBps(shareBps: number | null | undefined): number {
+  return Number(shareBps ?? 0) / 10_000;
 }
 
 export async function createAllocationRun(params: {
@@ -311,10 +337,9 @@ export async function loadImportRowsForAllocation(params: {
   const rows = (data ?? []) as ImportRowForAllocationDbRow[];
 
   return rows.map((row) => {
-    const raw = asRecord(row.raw);
-    const canonical = asRecord(row.canonical);
-    const normalized = asRecord(row.normalized);
     const resolvedWorkId = row.work_id ?? row.matched_work_id ?? null;
+    const raw = asRecord(row.raw);
+    const normalized = asRecord(row.normalized);
 
     return {
       id: row.id,
@@ -326,24 +351,9 @@ export async function loadImportRowsForAllocation(params: {
       gross_amount: row.gross_amount ?? null,
       net_amount: row.net_amount ?? null,
       status: row.status ?? null,
-      title: deriveTitle({
-        ...row,
-        raw,
-        canonical,
-        normalized,
-      }),
-      artist: deriveArtist({
-        ...row,
-        raw,
-        canonical,
-        normalized,
-      }),
-      isrc: deriveIsrc({
-        ...row,
-        raw,
-        canonical,
-        normalized,
-      }),
+      title: deriveTitle(row),
+      artist: deriveArtist(row),
+      isrc: deriveIsrc(row),
       raw_payload: raw,
       normalized_payload: normalized,
     } as ImportRowForAllocation;
@@ -365,7 +375,7 @@ export async function loadSplitsForWorks(params: {
       company_id,
       work_id,
       party_id,
-      share_fraction,
+      share_bps,
       status,
       role,
       valid_from,
@@ -379,7 +389,20 @@ export async function loadSplitsForWorks(params: {
     throw new Error(`loadSplitsForWorks failed: ${error.message}`);
   }
 
-  return (data ?? []) as SplitForAllocation[];
+  const rows = (data ?? []) as SplitForAllocationDbRow[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    company_id: row.company_id,
+    work_id: row.work_id,
+    party_id: row.party_id,
+    share_fraction: toShareFractionFromBps(row.share_bps),
+    status: row.status,
+    role: row.role,
+    valid_from: row.valid_from,
+    valid_to: row.valid_to,
+    created_at: row.created_at,
+  })) as SplitForAllocation[];
 }
 
 export async function insertAllocationCandidate(
