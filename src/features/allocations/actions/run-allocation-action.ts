@@ -1,40 +1,18 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { supabaseAdmin } from "@/lib/supabase/admin";
-import { runAllocation } from "../run-allocation";
+import type { AllocationRunResult } from "../allocations-types";
+import { runAllocationForImportJob } from "../allocations.service";
 
-export async function runAllocationAction(formData: FormData) {
-  const companySlug = String(formData.get("companySlug") ?? "");
-  const importJobId = String(formData.get("importJobId") ?? "");
-
-  if (!companySlug || !importJobId) {
-    throw new Error("Missing companySlug or importJobId");
-  }
-
-  // ✅ Hämta companyId från companySlug
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id")
-    .eq("slug", companySlug)
-    .maybeSingle();
-
-  if (companyError || !company) {
-    throw new Error(`Company not found: ${companyError?.message ?? ""}`);
-  }
-
-  const companyId = company.id;
-
-  // ✅ Kör allocation med korrekt objekt
-  const result = await runAllocation({
-    companyId,
-    importJobId,
+export async function runAllocation(params: {
+  companyId: string;
+  importJobId: string;
+  createdBy?: string | null;
+  currency?: string | null;
+}): Promise<AllocationRunResult> {
+  return runAllocationForImportJob({
+    companyId: params.companyId,
+    importJobId: params.importJobId,
+    createdBy: params.createdBy ?? null,
+    currency: params.currency ?? null,
   });
-
-  // ✅ Revalidate paths
-  revalidatePath(`/c/${companySlug}/imports`);
-  revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
-  revalidatePath(`/c/${companySlug}/statements`);
-
-  return result;
 }
