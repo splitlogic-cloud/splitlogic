@@ -167,6 +167,7 @@ export async function loadImportRowsForAllocation(params: {
       company_id,
       import_job_id,
       work_id,
+      matched_work_id,
       currency,
       gross_amount,
       net_amount,
@@ -178,14 +179,21 @@ export async function loadImportRowsForAllocation(params: {
       normalized_payload
     `)
     .eq("company_id", params.companyId)
-    .eq("import_job_id", params.importJobId)
+    .or(importRowsForJobOrFilter(params.importJobId))
     .in("status", ["matched", "allocated"]);
 
   if (error) {
     throw new Error(`loadImportRowsForAllocation failed: ${error.message}`);
   }
 
-  return (data ?? []) as ImportRowForAllocation[];
+  type ImportRowForAllocationWithMatch = ImportRowForAllocation & {
+    matched_work_id?: string | null;
+  };
+
+  return ((data ?? []) as ImportRowForAllocationWithMatch[]).map((row) => ({
+    ...row,
+    work_id: row.work_id ?? row.matched_work_id ?? null,
+  }));
 }
 
 export async function loadSplitsForWorks(params: {
