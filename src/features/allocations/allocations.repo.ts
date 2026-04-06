@@ -82,17 +82,20 @@ type ImportRowForAllocationDbRow = {
   normalized: JsonRecord | null;
 };
 
-type SplitForAllocationDbRow = {
+type WorkSplitDbRow = {
   id: string;
   company_id: string;
   work_id: string;
   party_id: string | null;
-  share_bps: number | null;
-  status: string | null;
   role: string | null;
-  valid_from: string | null;
-  valid_to: string | null;
+  share_bps: number | null;
+  recoupable: boolean | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  priority: number | null;
+  notes: string | null;
   created_at: string | null;
+  updated_at: string | null;
 };
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -109,7 +112,10 @@ function pickString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function pickFirstString(obj: JsonRecord | null, keys: string[]): string | null {
+function pickFirstString(
+  obj: JsonRecord | null,
+  keys: string[],
+): string | null {
   if (!obj) return null;
 
   for (const key of keys) {
@@ -211,7 +217,7 @@ function deriveIsrc(row: ImportRowForAllocationDbRow): string | null {
   );
 }
 
-function toShareFractionFromBps(shareBps: number | null | undefined): number {
+function shareFractionFromBps(shareBps: number | null | undefined): number {
   return Number(shareBps ?? 0) / 10_000;
 }
 
@@ -369,18 +375,21 @@ export async function loadSplitsForWorks(params: {
   }
 
   const { data, error } = await supabaseAdmin
-    .from("splits")
+    .from("work_splits")
     .select(`
       id,
       company_id,
       work_id,
       party_id,
-      share_fraction,
-      status,
       role,
-      valid_from,
-      valid_to,
-      created_at
+      share_bps,
+      recoupable,
+      effective_from,
+      effective_to,
+      priority,
+      notes,
+      created_at,
+      updated_at
     `)
     .eq("company_id", params.companyId)
     .in("work_id", params.workIds);
@@ -389,7 +398,19 @@ export async function loadSplitsForWorks(params: {
     throw new Error(`loadSplitsForWorks failed: ${error.message}`);
   }
 
-  return (data ?? []) as SplitForAllocation[];
+  const rows = (data ?? []) as WorkSplitDbRow[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    company_id: row.company_id,
+    work_id: row.work_id,
+    party_id: row.party_id,
+    share_fraction: shareFractionFromBps(row.share_bps),
+    role: row.role,
+    valid_from: row.effective_from,
+    valid_to: row.effective_to,
+    created_at: row.created_at,
+  })) as SplitForAllocation[];
 }
 
 export async function insertAllocationCandidate(

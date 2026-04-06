@@ -53,9 +53,18 @@ function groupSplitsByWorkId(splits: SplitForAllocation[]) {
 
   for (const [workId, items] of map.entries()) {
     items.sort((a, b) => {
-      const aDate = a.created_at ?? "";
-      const bDate = b.created_at ?? "";
-      if (aDate !== bDate) return aDate.localeCompare(bDate);
+      const aCreatedAt = a.created_at ?? "";
+      const bCreatedAt = b.created_at ?? "";
+      if (aCreatedAt !== bCreatedAt) {
+        return aCreatedAt.localeCompare(bCreatedAt);
+      }
+
+      const aValidFrom = a.valid_from ?? "";
+      const bValidFrom = b.valid_from ?? "";
+      if (aValidFrom !== bValidFrom) {
+        return aValidFrom.localeCompare(bValidFrom);
+      }
+
       return a.id.localeCompare(b.id);
     });
 
@@ -74,7 +83,7 @@ function validateSplits(splits: SplitForAllocation[]): {
     return {
       ok: false,
       blockerCode: "missing_splits",
-      blockerMessage: "No active splits found for matched work.",
+      blockerMessage: "No work_splits found for matched work.",
     };
   }
 
@@ -232,9 +241,7 @@ export async function runAllocationForImportJob(params: {
     workIds,
   });
 
-  const splitsByWorkId = groupSplitsByWorkId(
-    splits.filter((split) => split.status === "active"),
-  );
+  const splitsByWorkId = groupSplitsByWorkId(splits);
 
   const currency =
     params.currency ??
