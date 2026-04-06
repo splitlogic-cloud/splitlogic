@@ -364,7 +364,9 @@ export async function loadSplitsForWorks(params: {
   companyId: string;
   workIds: string[];
 }): Promise<SplitForAllocation[]> {
-  if (params.workIds.length === 0) return [];
+  if (params.workIds.length === 0) {
+    return [];
+  }
 
   const { data, error } = await supabaseAdmin
     .from("splits")
@@ -373,7 +375,7 @@ export async function loadSplitsForWorks(params: {
       company_id,
       work_id,
       party_id,
-      share_bps,
+      share_fraction,
       status,
       role,
       valid_from,
@@ -387,11 +389,7 @@ export async function loadSplitsForWorks(params: {
     throw new Error(`loadSplitsForWorks failed: ${error.message}`);
   }
 
-  // convert share_bps → share_fraction (1bps = 0.0001)
-  return (data ?? []).map((row) => ({
-    ...row,
-    share_fraction: row.share_bps != null ? row.share_bps / 10_000 : 0,
-  })) as SplitForAllocation[];
+  return (data ?? []) as SplitForAllocation[];
 }
 
 export async function insertAllocationCandidate(

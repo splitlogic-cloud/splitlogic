@@ -21,7 +21,6 @@ import type {
   SplitForAllocation,
 } from "./allocations-types";
 
-const SHARE_BPS_SCALE = 10_000;
 const AMOUNT_SCALE = 1_000_000;
 const SPLIT_SUM_EPSILON = 0.000001;
 
@@ -41,10 +40,6 @@ function normalizeCurrency(value: string | null): string | null {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
-}
-
-function toShareFractionFromBps(shareBps: number | null | undefined): number {
-  return Number(shareBps ?? 0) / SHARE_BPS_SCALE;
 }
 
 function groupSplitsByWorkId(splits: SplitForAllocation[]) {
@@ -92,26 +87,19 @@ function validateSplits(splits: SplitForAllocation[]): {
       };
     }
 
-    const shareFraction = toShareFractionFromBps(
-      (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
-    );
-
-    if (!isFiniteNumber(shareFraction) || shareFraction <= 0) {
+    if (!isFiniteNumber(split.share_fraction) || split.share_fraction <= 0) {
       return {
         ok: false,
         blockerCode: "split_sum_not_100",
-        blockerMessage: `Split ${split.id} has invalid share_bps.`,
+        blockerMessage: `Split ${split.id} has invalid share_fraction.`,
       };
     }
   }
 
-  const shareSum = splits.reduce((sum, split) => {
-    const shareFraction = toShareFractionFromBps(
-      (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
-    );
-
-    return sum + shareFraction;
-  }, 0);
+  const shareSum = splits.reduce(
+    (sum, split) => sum + split.share_fraction,
+    0,
+  );
 
   if (Math.abs(shareSum - 1) > SPLIT_SUM_EPSILON) {
     return {
@@ -134,10 +122,7 @@ function allocateNetAcrossSplits(params: {
   const totalMicros = toAmountMicros(rowNet);
 
   const splitWeights = params.splits.map((split, index) => {
-    const shareFraction = toShareFractionFromBps(
-      (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
-    );
-    const raw = totalMicros * shareFraction;
+    const raw = totalMicros * split.share_fraction;
     const floored = Math.floor(raw);
     const remainder = raw - floored;
 
@@ -146,7 +131,7 @@ function allocateNetAcrossSplits(params: {
       index,
       floored,
       remainder,
-      shareFraction,
+      shareFraction: split.share_fraction,
     };
   });
 
@@ -253,7 +238,9 @@ export async function runAllocationForImportJob(params: {
 
   const currency =
     params.currency ??
-    normalizeCurrency(rows.find((row) => normalizeCurrency(row.currency))?.currency ?? null);
+    normalizeCurrency(
+      rows.find((row) => normalizeCurrency(row.currency))?.currency ?? null,
+    );
 
   const allocationRun = await createAllocationRun({
     companyId: params.companyId,
@@ -360,7 +347,8 @@ export async function runAllocationForImportJob(params: {
           allocationCandidateId: candidate.id,
           status: "blocked",
           blockerCode: validation.blockerCode ?? "missing_splits",
-          blockerMessage: validation.blockerMessage ?? "Invalid split configuration.",
+          blockerMessage:
+            validation.blockerMessage ?? "Invalid split configuration.",
         });
 
         await insertAllocationBlocker({
@@ -370,18 +358,15 @@ export async function runAllocationForImportJob(params: {
           importRowId: row.id,
           workId: row.work_id,
           blockerCode: validation.blockerCode ?? "missing_splits",
-          message: validation.blockerMessage ?? "Invalid split configuration.",
+          message:
+            validation.blockerMessage ?? "Invalid split configuration.",
           details: {
             work_id: row.work_id,
             split_count: rowSplits.length,
-            share_sum: rowSplits.reduce((sum, split) => {
-              return (
-                sum +
-                toShareFractionFromBps(
-                  (split as SplitForAllocation & { share_bps?: number | null }).share_bps,
-                )
-              );
-            }, 0),
+            share_sum: rowSplits.reduce(
+              (sum, split) => sum + split.share_fraction,
+              0,
+            ),
           },
         });
 
