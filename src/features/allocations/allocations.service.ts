@@ -220,7 +220,9 @@ async function markImportRowsBlocked(importRowIds: string[]): Promise<void> {
     const { error } = await supabaseAdmin
       .from("import_rows")
       .update({
-        allocation_status: "blocked",
+        // import_rows.allocation_status does not accept "blocked" in this schema.
+        // Keep rows pending while blocker details live in allocation_blockers.
+        allocation_status: "pending",
         updated_at: new Date().toISOString(),
       })
       .in("id", chunk);
