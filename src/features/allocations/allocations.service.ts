@@ -229,6 +229,24 @@ export async function runAllocationForImportJob(params: {
   createdBy?: string | null;
   currency?: string | null;
 }): Promise<AllocationRunResult> {
+  const { data: importJob, error: importJobError } = await supabaseAdmin
+    .from("import_jobs")
+    .select("id, company_id")
+    .eq("id", params.importJobId)
+    .maybeSingle();
+
+  if (importJobError || !importJob) {
+    throw new Error(
+      `Import job not found for allocation: ${importJobError?.message ?? ""}`.trim(),
+    );
+  }
+
+  if (importJob.company_id !== params.companyId) {
+    throw new Error(
+      "Import job does not belong to the provided company. Allocation aborted.",
+    );
+  }
+
   const rows = await loadImportRowsForAllocation({
     companyId: params.companyId,
     importJobId: params.importJobId,
