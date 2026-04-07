@@ -35,6 +35,7 @@ export type SplitForAllocation = {
 
 export type AllocationLineInsert = {
   company_id: string;
+  import_job_id: string;
   allocation_run_id: string;
   import_row_id: string;
   work_id: string;

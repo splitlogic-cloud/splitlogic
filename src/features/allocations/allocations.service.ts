@@ -163,6 +163,7 @@ function allocateNetAcrossSplits(params: {
 
   return splitWeights.map((item) => ({
     company_id: params.row.company_id,
+    import_job_id: params.row.import_job_id,
     allocation_run_id: params.allocationRunId,
     import_row_id: params.row.id,
     work_id: params.row.work_id as string,
