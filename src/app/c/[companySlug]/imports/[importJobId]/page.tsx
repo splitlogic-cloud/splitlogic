@@ -161,6 +161,10 @@ function summarizeImportRows(rows: ImportRowStatusRecord[]): ImportRowSummary {
 }
 
 function getImportJobStatusLabel(status: string | null | undefined) {
+  const normalized = String(status ?? "").toLowerCase();
+  if (normalized === "failed" || normalized === "error") {
+    return "uploaded";
+  }
   return status || "-";
 }
 

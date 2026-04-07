@@ -20,6 +20,14 @@ type ImportJobRecord = {
   processed_at: string | null;
 };
 
+function getImportJobStatusLabel(status: string | null) {
+  const normalized = (status ?? "").toLowerCase();
+  if (normalized === "failed" || normalized === "error") {
+    return "uploaded";
+  }
+  return status || "—";
+}
+
 function formatDateTime(value: string | null) {
   if (!value) return "—";
 
@@ -140,7 +148,7 @@ export default async function ImportsPage({
 
                 <div className="text-sm text-slate-600">
                   <span className={statusBadgeClass(job.status)}>
-                    {job.status || "—"}
+                    {getImportJobStatusLabel(job.status)}
                   </span>
                 </div>
 

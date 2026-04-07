@@ -333,8 +333,7 @@ export async function loadImportRowsForAllocation(params: {
       normalized
     `)
     .eq("company_id", params.companyId)
-    .or(importRowsForJobOrFilter(params.importJobId))
-    .in("status", ["matched", "allocated"]);
+    .or(importRowsForJobOrFilter(params.importJobId));
 
   if (error) {
     throw new Error(`loadImportRowsForAllocation failed: ${error.message}`);
@@ -342,7 +341,8 @@ export async function loadImportRowsForAllocation(params: {
 
   const rows = (data ?? []) as ImportRowForAllocationDbRow[];
 
-  return rows.map((row) => {
+  return rows
+    .map((row) => {
     const resolvedWorkId = row.work_id ?? row.matched_work_id ?? null;
     const raw = asRecord(row.raw);
     const normalized = asRecord(row.normalized);
@@ -363,7 +363,8 @@ export async function loadImportRowsForAllocation(params: {
       raw_payload: raw,
       normalized_payload: normalized,
     } as ImportRowForAllocation;
-  });
+    })
+    .filter((row) => row.work_id != null);
 }
 
 export async function loadSplitsForWorks(params: {
