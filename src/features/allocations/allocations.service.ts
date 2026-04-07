@@ -12,7 +12,6 @@ import {
   loadSplitsForWorks,
   setAllocationRunCompleted,
   setAllocationRunFailed,
-  updateAllocationCandidateStatus,
 } from "./allocations.repo";
 import type {
   AllocationLineInsert,
@@ -283,28 +282,24 @@ export async function runAllocationForImportJob(params: {
 
   const allocatedRowIds: string[] = [];
   const blockedRowIds: string[] = [];
+  const allocationLinesToInsert: AllocationLineInsert[] = [];
 
   try {
     for (const row of rows) {
-      const candidate = await insertAllocationCandidate({
-        company_id: params.companyId,
-        allocation_run_id: allocationRun.id,
-        import_job_id: params.importJobId,
-        import_row_id: row.id,
-        work_id: row.work_id,
-        status: "pending",
-        currency: normalizeCurrency(row.currency),
-        gross_amount: row.gross_amount ?? 0,
-        net_amount: row.net_amount ?? 0,
-        created_at: new Date().toISOString(),
-      });
-
       if (!row.work_id) {
-        await updateAllocationCandidateStatus({
-          allocationCandidateId: candidate.id,
+        const candidate = await insertAllocationCandidate({
+          company_id: params.companyId,
+          allocation_run_id: allocationRun.id,
+          import_job_id: params.importJobId,
+          import_row_id: row.id,
+          work_id: row.work_id,
           status: "blocked",
-          blockerCode: "missing_work_match",
-          blockerMessage: "Import row has no matched work.",
+          blocker_code: "missing_work_match",
+          blocker_message: "Import row has no matched work.",
+          currency: normalizeCurrency(row.currency),
+          gross_amount: row.gross_amount ?? 0,
+          net_amount: row.net_amount ?? 0,
+          created_at: new Date().toISOString(),
         });
 
         await insertAllocationBlocker({
@@ -323,11 +318,19 @@ export async function runAllocationForImportJob(params: {
 
       const rowCurrency = normalizeCurrency(row.currency);
       if (!rowCurrency) {
-        await updateAllocationCandidateStatus({
-          allocationCandidateId: candidate.id,
+        const candidate = await insertAllocationCandidate({
+          company_id: params.companyId,
+          allocation_run_id: allocationRun.id,
+          import_job_id: params.importJobId,
+          import_row_id: row.id,
+          work_id: row.work_id,
           status: "blocked",
-          blockerCode: "currency_missing",
-          blockerMessage: "Import row currency is missing.",
+          blocker_code: "currency_missing",
+          blocker_message: "Import row currency is missing.",
+          currency: normalizeCurrency(row.currency),
+          gross_amount: row.gross_amount ?? 0,
+          net_amount: row.net_amount ?? 0,
+          created_at: new Date().toISOString(),
         });
 
         await insertAllocationBlocker({
@@ -345,11 +348,19 @@ export async function runAllocationForImportJob(params: {
       }
 
       if (!isFiniteNumber(row.net_amount) || !isFiniteNumber(row.gross_amount)) {
-        await updateAllocationCandidateStatus({
-          allocationCandidateId: candidate.id,
+        const candidate = await insertAllocationCandidate({
+          company_id: params.companyId,
+          allocation_run_id: allocationRun.id,
+          import_job_id: params.importJobId,
+          import_row_id: row.id,
+          work_id: row.work_id,
           status: "blocked",
-          blockerCode: "amount_missing",
-          blockerMessage: "Import row gross_amount or net_amount is missing.",
+          blocker_code: "amount_missing",
+          blocker_message: "Import row gross_amount or net_amount is missing.",
+          currency: normalizeCurrency(row.currency),
+          gross_amount: row.gross_amount ?? 0,
+          net_amount: row.net_amount ?? 0,
+          created_at: new Date().toISOString(),
         });
 
         await insertAllocationBlocker({
@@ -370,12 +381,20 @@ export async function runAllocationForImportJob(params: {
       const validation = validateSplits(rowSplits);
 
       if (!validation.ok) {
-        await updateAllocationCandidateStatus({
-          allocationCandidateId: candidate.id,
+        const candidate = await insertAllocationCandidate({
+          company_id: params.companyId,
+          allocation_run_id: allocationRun.id,
+          import_job_id: params.importJobId,
+          import_row_id: row.id,
+          work_id: row.work_id,
           status: "blocked",
-          blockerCode: validation.blockerCode ?? "missing_splits",
-          blockerMessage:
+          blocker_code: validation.blockerCode ?? "missing_splits",
+          blocker_message:
             validation.blockerMessage ?? "Invalid split configuration.",
+          currency: normalizeCurrency(row.currency),
+          gross_amount: row.gross_amount ?? 0,
+          net_amount: row.net_amount ?? 0,
+          created_at: new Date().toISOString(),
         });
 
         await insertAllocationBlocker({
@@ -401,9 +420,17 @@ export async function runAllocationForImportJob(params: {
         continue;
       }
 
-      await updateAllocationCandidateStatus({
-        allocationCandidateId: candidate.id,
-        status: "eligible",
+      await insertAllocationCandidate({
+        company_id: params.companyId,
+        allocation_run_id: allocationRun.id,
+        import_job_id: params.importJobId,
+        import_row_id: row.id,
+        work_id: row.work_id,
+        status: "allocated",
+        currency: normalizeCurrency(row.currency),
+        gross_amount: row.gross_amount ?? 0,
+        net_amount: row.net_amount ?? 0,
+        created_at: new Date().toISOString(),
       });
 
       const lines = allocateNetAcrossSplits({
@@ -412,16 +439,12 @@ export async function runAllocationForImportJob(params: {
         allocationRunId: allocationRun.id,
       });
 
-      await insertAllocationLines(lines);
-
-      await updateAllocationCandidateStatus({
-        allocationCandidateId: candidate.id,
-        status: "allocated",
-      });
+      allocationLinesToInsert.push(...lines);
 
       allocatedRowIds.push(row.id);
     }
 
+    await insertAllocationLines(allocationLinesToInsert);
     await markImportRowsAllocated(allocatedRowIds);
     await markImportRowsBlocked(blockedRowIds);
 
