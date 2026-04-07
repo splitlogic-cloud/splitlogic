@@ -8,6 +8,7 @@ export type GenerateStatementsParams = {
   periodStart: string;
   periodEnd: string;
   createdBy?: string | null;
+  allocationRunId?: string | null;
 };
 
 export type GeneratedStatementResult = {
@@ -61,12 +62,45 @@ function normalizeRow(raw: any): AllocationLedgerRow | null {
 }
 
 async function loadLedger(params: GenerateStatementsParams) {
+  let runIds: string[] = [];
+
+  if (params.allocationRunId) {
+    runIds = [params.allocationRunId];
+  } else {
+    const { data: runs, error: runsError } = await supabaseAdmin
+      .from("allocation_runs")
+      .select("id, import_job_id, created_at, status")
+      .eq("company_id", params.companyId)
+      .eq("status", "completed")
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (runsError) {
+      throw new Error(`Failed to load allocation runs: ${runsError.message}`);
+    }
+
+    const latestPerImportJob = new Map<string, string>();
+    for (const run of runs ?? []) {
+      const importJobId = asString((run as Record<string, unknown>).import_job_id);
+      const runId = asString((run as Record<string, unknown>).id);
+      if (!importJobId || !runId) continue;
+      if (!latestPerImportJob.has(importJobId)) {
+        latestPerImportJob.set(importJobId, runId);
+      }
+    }
+
+    runIds = Array.from(latestPerImportJob.values());
+  }
+
+  if (runIds.length === 0) {
+    return [];
+  }
+
   const { data, error } = await supabaseAdmin
     .from("allocation_run_lines")
-    .select("id, company_id, party_id, work_id, earning_date, allocated_amount, currency")
+    .select("id, company_id, party_id, work_id, allocated_amount, currency, allocation_run_id")
     .eq("company_id", params.companyId)
-    .gte("earning_date", params.periodStart)
-    .lte("earning_date", params.periodEnd);
+    .in("allocation_run_id", runIds);
 
   if (error) throw new Error(error.message);
 
