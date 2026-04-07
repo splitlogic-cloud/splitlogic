@@ -162,6 +162,7 @@ function allocateNetAcrossSplits(params: {
   const createdAt = new Date().toISOString();
 
   return splitWeights.map((item) => ({
+    company_id: params.row.company_id,
     allocation_run_id: params.allocationRunId,
     import_row_id: params.row.id,
     work_id: params.row.work_id as string,
