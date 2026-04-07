@@ -7,6 +7,7 @@ import {
   createAllocationRun,
   insertAllocationBlocker,
   insertAllocationCandidate,
+  insertAllocationCandidates,
   insertAllocationLines,
   loadImportRowsForAllocation,
   loadSplitsForWorks,
@@ -194,33 +195,39 @@ function allocateNetAcrossSplits(params: {
 
 async function markImportRowsAllocated(importRowIds: string[]): Promise<void> {
   if (importRowIds.length === 0) return;
+  const chunkSize = 500;
+  for (let i = 0; i < importRowIds.length; i += chunkSize) {
+    const chunk = importRowIds.slice(i, i + chunkSize);
+    const { error } = await supabaseAdmin
+      .from("import_rows")
+      .update({
+        allocation_status: "allocated",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", chunk);
 
-  const { error } = await supabaseAdmin
-    .from("import_rows")
-    .update({
-      allocation_status: "allocated",
-      updated_at: new Date().toISOString(),
-    })
-    .in("id", importRowIds);
-
-  if (error) {
-    throw new Error(`markImportRowsAllocated failed: ${error.message}`);
+    if (error) {
+      throw new Error(`markImportRowsAllocated failed: ${error.message}`);
+    }
   }
 }
 
 async function markImportRowsBlocked(importRowIds: string[]): Promise<void> {
   if (importRowIds.length === 0) return;
+  const chunkSize = 500;
+  for (let i = 0; i < importRowIds.length; i += chunkSize) {
+    const chunk = importRowIds.slice(i, i + chunkSize);
+    const { error } = await supabaseAdmin
+      .from("import_rows")
+      .update({
+        allocation_status: "blocked",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", chunk);
 
-  const { error } = await supabaseAdmin
-    .from("import_rows")
-    .update({
-      allocation_status: "blocked",
-      updated_at: new Date().toISOString(),
-    })
-    .in("id", importRowIds);
-
-  if (error) {
-    throw new Error(`markImportRowsBlocked failed: ${error.message}`);
+    if (error) {
+      throw new Error(`markImportRowsBlocked failed: ${error.message}`);
+    }
   }
 }
 
@@ -283,6 +290,7 @@ export async function runAllocationForImportJob(params: {
   const allocatedRowIds: string[] = [];
   const blockedRowIds: string[] = [];
   const allocationLinesToInsert: AllocationLineInsert[] = [];
+  const allocationCandidatesToInsert: Record<string, unknown>[] = [];
 
   try {
     for (const row of rows) {
@@ -420,7 +428,7 @@ export async function runAllocationForImportJob(params: {
         continue;
       }
 
-      await insertAllocationCandidate({
+      allocationCandidatesToInsert.push({
         company_id: params.companyId,
         allocation_run_id: allocationRun.id,
         import_job_id: params.importJobId,
@@ -444,6 +452,7 @@ export async function runAllocationForImportJob(params: {
       allocatedRowIds.push(row.id);
     }
 
+    await insertAllocationCandidates(allocationCandidatesToInsert);
     await insertAllocationLines(allocationLinesToInsert);
     await markImportRowsAllocated(allocatedRowIds);
     await markImportRowsBlocked(blockedRowIds);

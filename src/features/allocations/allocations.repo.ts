@@ -430,6 +430,27 @@ export async function insertAllocationCandidate(
   return { id: data.id };
 }
 
+export async function insertAllocationCandidates(
+  inputs: Record<string, unknown>[],
+): Promise<void> {
+  if (inputs.length === 0) {
+    return;
+  }
+
+  const chunkSize = 500;
+
+  for (let i = 0; i < inputs.length; i += chunkSize) {
+    const chunk = inputs.slice(i, i + chunkSize);
+    const { error } = await supabaseAdmin
+      .from("allocation_candidates")
+      .insert(chunk);
+
+    if (error) {
+      throw new Error(`insertAllocationCandidates failed: ${error.message}`);
+    }
+  }
+}
+
 export async function updateAllocationCandidateStatus(params: {
   allocationCandidateId: string;
   status: "eligible" | "blocked" | "allocated" | "failed";
