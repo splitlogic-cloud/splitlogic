@@ -1,5 +1,6 @@
 import "server-only";
 
+import Link from "next/link";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { importRowsForJobOrFilter } from "@/features/allocations/allocations.repo";
 import ManualMatchCell from "./ManualMatchCell";
@@ -7,6 +8,7 @@ import ManualMatchCell from "./ManualMatchCell";
 type Props = {
   companySlug: string;
   importJobId: string;
+  rowsPage?: number;
 };
 
 type CompanyRecord = {
@@ -105,7 +107,13 @@ function getDebugSourceLine(row: MatchReviewRow): string | null {
 export default async function MatchReviewTable({
   companySlug,
   importJobId,
+  rowsPage = 1,
 }: Props) {
+  const pageSize = 100;
+  const safePage = Number.isFinite(rowsPage) && rowsPage > 0 ? Math.floor(rowsPage) : 1;
+  const from = (safePage - 1) * pageSize;
+  const to = from + pageSize - 1;
+
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
     .select("id, slug")
@@ -121,6 +129,22 @@ export default async function MatchReviewTable({
   }
 
   const typedCompany = company as CompanyRecord;
+
+  const { count: totalRowsCount, error: totalRowsError } = await supabaseAdmin
+    .from("import_rows")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", typedCompany.id)
+    .or(importRowsForJobOrFilter(importJobId));
+
+  if (totalRowsError) {
+    throw new Error(`Failed to load match review row count: ${totalRowsError.message}`);
+  }
+
+  const totalRows = totalRowsCount ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.min(safePage, totalPages);
+  const pageFrom = (currentPage - 1) * pageSize;
+  const pageTo = pageFrom + pageSize - 1;
 
   const { data: rows, error: rowsError } = await supabaseAdmin
     .from("import_rows")
@@ -140,7 +164,7 @@ export default async function MatchReviewTable({
     .eq("company_id", typedCompany.id)
     .or(importRowsForJobOrFilter(importJobId))
     .order("row_number", { ascending: true })
-    .limit(300);
+    .range(pageFrom, pageTo);
 
   if (rowsError) {
     throw new Error(`Failed to load match review rows: ${rowsError.message}`);
@@ -155,6 +179,11 @@ export default async function MatchReviewTable({
         <p className="mt-1 text-sm text-neutral-600">
           Review rows before allocation. Rows in needs review can be matched
           manually or used to create a new work directly.
+        </p>
+        <p className="mt-1 text-xs text-neutral-500">
+          Showing {totalRows === 0 ? 0 : pageFrom + 1}
+          {" - "}
+          {Math.min(pageTo + 1, totalRows)} of {totalRows} rows.
         </p>
       </div>
 
@@ -268,6 +297,36 @@ export default async function MatchReviewTable({
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 ? (
+        <div className="flex items-center justify-between border-t px-4 py-3 text-sm">
+          <Link
+            href={`/c/${companySlug}/imports/${importJobId}?rowsPage=${Math.max(1, currentPage - 1)}`}
+            className={[
+              "rounded border px-3 py-1",
+              currentPage <= 1 ? "pointer-events-none opacity-50" : "hover:bg-neutral-50",
+            ].join(" ")}
+          >
+            Previous
+          </Link>
+
+          <span className="text-neutral-600">
+            Page {currentPage} / {totalPages}
+          </span>
+
+          <Link
+            href={`/c/${companySlug}/imports/${importJobId}?rowsPage=${Math.min(totalPages, currentPage + 1)}`}
+            className={[
+              "rounded border px-3 py-1",
+              currentPage >= totalPages
+                ? "pointer-events-none opacity-50"
+                : "hover:bg-neutral-50",
+            ].join(" ")}
+          >
+            Next
+          </Link>
+        </div>
+      ) : null}
     </div>
   );
 }

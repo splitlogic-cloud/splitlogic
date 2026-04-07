@@ -59,7 +59,7 @@ export default async function AllocationRunSummary({
 
         <div className="rounded-lg border border-gray-200 p-4">
           <div className="text-xs uppercase tracking-wide text-gray-500">
-            Allocated rows
+            Allocated rows (this run)
           </div>
           <div className="mt-2 text-lg font-semibold text-gray-900">
             {run.allocated_row_count} / {run.input_row_count}

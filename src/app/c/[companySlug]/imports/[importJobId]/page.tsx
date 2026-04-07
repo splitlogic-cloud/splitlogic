@@ -19,6 +19,7 @@ export const revalidate = 0;
 
 type Params = {
   params: Promise<{ companySlug: string; importJobId: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 type CompanyRecord = {
@@ -168,8 +169,15 @@ function getImportJobStatusLabel(status: string | null | undefined) {
   return status || "-";
 }
 
-export default async function ImportDetailPage({ params }: Params) {
+export default async function ImportDetailPage({ params, searchParams }: Params) {
   const { companySlug, importJobId } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const rowsPageRaw = resolvedSearchParams?.rowsPage;
+  const rowsPageValue = Array.isArray(rowsPageRaw) ? rowsPageRaw[0] : rowsPageRaw;
+  const rowsPageParsed = Number(rowsPageValue ?? "1");
+  const rowsPage = Number.isFinite(rowsPageParsed) && rowsPageParsed > 0
+    ? Math.floor(rowsPageParsed)
+    : 1;
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
@@ -385,6 +393,7 @@ export default async function ImportDetailPage({ params }: Params) {
       <MatchReviewTable
         companySlug={companySlug}
         importJobId={importJobId}
+        rowsPage={rowsPage}
       />
 
       <AllocationRunSummary
