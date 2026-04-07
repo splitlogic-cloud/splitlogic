@@ -166,7 +166,7 @@ function allocateNetAcrossSplits(params: {
     import_row_id: params.row.id,
     work_id: params.row.work_id as string,
     party_id: item.split.party_id as string,
-    split_id: item.split.id,
+    source_split_id: item.split.id,
     share_fraction: item.shareFraction,
     gross_source_amount: rowGross,
     net_source_amount: rowNet,

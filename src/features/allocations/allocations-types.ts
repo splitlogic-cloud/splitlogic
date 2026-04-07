@@ -38,7 +38,7 @@ export type AllocationLineInsert = {
   import_row_id: string;
   work_id: string;
   party_id: string;
-  split_id: string | null;
+  source_split_id: string | null;
   share_fraction: number;
   gross_source_amount: number;
   net_source_amount: number;
