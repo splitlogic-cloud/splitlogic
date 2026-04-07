@@ -316,30 +316,47 @@ export async function loadImportRowsForAllocation(params: {
   companyId: string;
   importJobId: string;
 }): Promise<ImportRowForAllocation[]> {
-  const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select(`
-      id,
-      company_id,
-      import_job_id,
-      work_id,
-      matched_work_id,
-      currency,
-      gross_amount,
-      net_amount,
-      status,
-      raw,
-      canonical,
-      normalized
-    `)
-    .eq("company_id", params.companyId)
-    .or(importRowsForJobOrFilter(params.importJobId));
+  const pageSize = 1000;
+  const rows: ImportRowForAllocationDbRow[] = [];
+  let from = 0;
 
-  if (error) {
-    throw new Error(`loadImportRowsForAllocation failed: ${error.message}`);
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await supabaseAdmin
+      .from("import_rows")
+      .select(`
+        id,
+        company_id,
+        import_job_id,
+        work_id,
+        matched_work_id,
+        currency,
+        gross_amount,
+        net_amount,
+        status,
+        allocation_status,
+        raw,
+        canonical,
+        normalized
+      `)
+      .eq("company_id", params.companyId)
+      .or(importRowsForJobOrFilter(params.importJobId))
+      .neq("allocation_status", "allocated")
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`loadImportRowsForAllocation failed: ${error.message}`);
+    }
+
+    const batch = (data ?? []) as ImportRowForAllocationDbRow[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
   }
-
-  const rows = (data ?? []) as ImportRowForAllocationDbRow[];
 
   return rows
     .map((row) => {
