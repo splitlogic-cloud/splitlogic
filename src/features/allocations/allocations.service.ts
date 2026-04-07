@@ -121,6 +121,35 @@ function validateSplits(splits: SplitForAllocation[]): {
   return { ok: true };
 }
 
+async function loadDefaultCompanyPartyId(companyId: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from("parties")
+    .select("id, type, name")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to load company fallback party: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    type: string | null;
+    name: string | null;
+  }>;
+
+  const explicitCompanyParty = rows.find((row) => {
+    const t = String(row.type ?? "").toLowerCase();
+    return t === "company" || t === "bolag";
+  });
+
+  if (explicitCompanyParty) {
+    return explicitCompanyParty.id;
+  }
+
+  return rows[0]?.id ?? null;
+}
+
 function allocateNetAcrossSplits(params: {
   row: ImportRowForAllocation;
   splits: SplitForAllocation[];
@@ -268,6 +297,7 @@ export async function runAllocationForImportJob(params: {
     companyId: params.companyId,
     workIds,
   });
+  const defaultCompanyPartyId = await loadDefaultCompanyPartyId(params.companyId);
 
   const splitsByWorkId = groupSplitsByWorkId(splits);
 
@@ -387,7 +417,22 @@ export async function runAllocationForImportJob(params: {
         continue;
       }
 
-      const rowSplits = splitsByWorkId.get(row.work_id) ?? [];
+      let rowSplits = splitsByWorkId.get(row.work_id) ?? [];
+      if (rowSplits.length === 0 && defaultCompanyPartyId) {
+        rowSplits = [
+          {
+            id: `default-company-party-${defaultCompanyPartyId}`,
+            company_id: params.companyId,
+            work_id: row.work_id,
+            party_id: defaultCompanyPartyId,
+            share_fraction: 1,
+            role: "company_fallback",
+            valid_from: null,
+            valid_to: null,
+            created_at: null,
+          } as SplitForAllocation,
+        ];
+      }
       const validation = validateSplits(rowSplits);
 
       if (!validation.ok) {
