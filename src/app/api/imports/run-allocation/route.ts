@@ -51,6 +51,29 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: importJob, error: importJobError } = await supabaseAdmin
+      .from("import_jobs")
+      .select("id, company_id")
+      .eq("id", importJobId)
+      .maybeSingle();
+
+    if (importJobError || !importJob) {
+      return NextResponse.json(
+        { error: `import job not found: ${importJobError?.message ?? ""}` },
+        { status: 404 },
+      );
+    }
+
+    if (importJob.company_id !== company.id) {
+      return NextResponse.json(
+        {
+          error:
+            "importJobId does not belong to the selected companySlug",
+        },
+        { status: 400 },
+      );
+    }
+
     const result = await runAllocation({
       companyId: company.id,
       importJobId,
