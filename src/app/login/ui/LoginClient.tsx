@@ -8,7 +8,6 @@ type Tab = "login" | "signup";
 
 export default function LoginClient() {
   const router = useRouter();
-  const supabase = createSupabaseBrowserClient();
 
   const [tab, setTab] = useState<Tab>("login");
   const [email, setEmail] = useState("");
@@ -35,6 +34,7 @@ export default function LoginClient() {
       }
 
       if (tab === "login") {
+        const supabase = createSupabaseBrowserClient();
         const { error } = await supabase.auth.signInWithPassword({
           email: trimmedEmail,
           password,
@@ -47,6 +47,7 @@ export default function LoginClient() {
         return;
       }
 
+      const supabase = createSupabaseBrowserClient();
       const { error } = await supabase.auth.signUp({
         email: trimmedEmail,
         password,
@@ -61,8 +62,8 @@ export default function LoginClient() {
       setMsg("Konto skapat. Om email-verifiering är på: kolla din mail och logga in.");
       setTab("login");
       setPassword("");
-    } catch (e: any) {
-      setErr(e?.message ?? "Okänt fel");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Okänt fel");
     } finally {
       setLoading(false);
     }

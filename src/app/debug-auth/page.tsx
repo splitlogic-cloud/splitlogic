@@ -1,5 +1,8 @@
 import { getUser } from "@/lib/auth/getUser";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function DebugAuthPage() {
   const user = await getUser();
 

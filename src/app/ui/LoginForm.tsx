@@ -23,8 +23,9 @@ export default function LoginForm() {
 
       router.refresh();
       router.push("/"); // eller din post-login route
-    } catch (err: any) {
-      setError(err?.message ?? "Login failed");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Login failed";
+      setError(message);
     } finally {
       setLoading(false);
     }

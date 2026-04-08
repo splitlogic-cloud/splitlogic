@@ -28,5 +28,13 @@ export function getSupabaseAdmin(): SupabaseClient {
   return _admin;
 }
 
-// ✅ Bakåtkompatibilitet (så dina imports fortsätter funka)
-export const supabaseAdmin = getSupabaseAdmin();
+// Lazy proxy avoids crashing module evaluation at build-time when env vars
+// are missing in the build environment. Calls still fail at runtime if env
+// vars are not configured.
+export const supabaseAdmin: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    const client = getSupabaseAdmin();
+    const value = Reflect.get(client as object, prop, receiver);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
