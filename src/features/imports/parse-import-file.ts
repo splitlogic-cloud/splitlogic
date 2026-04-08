@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import { detectImportSource } from "./source-adapters";
 import type { RawImportRow, RawImportValue } from "@/features/imports/imports-types";
 import { parseDelimitedText } from "@/features/ingestion/parse-delimited";
+import { parseWorkbook } from "@/features/ingestion/parse-xlsx";
 
 export type ParsedImportFile = {
   sourceKey: string;
@@ -121,6 +122,11 @@ function normalizeRowsFromPapa(
   return { headers, rows, looksLikeSingleColumn };
 }
 
+function isSpreadsheetFileName(fileName: string): boolean {
+  const lower = fileName.trim().toLowerCase();
+  return lower.endsWith(".xlsx") || lower.endsWith(".xls");
+}
+
 export async function parseImportFile(fileText: string): Promise<ParsedImportFile> {
   const autoParsed = parseWithDelimiter(fileText);
   const autoErrors = extractBlockingErrors(autoParsed);
@@ -178,4 +184,33 @@ export async function parseImportFile(fileText: string): Promise<ParsedImportFil
     rows: selectedNormalized.rows,
     headers: selectedNormalized.headers,
   };
+}
+
+export async function parseImportFileFromBlob(args: {
+  fileName: string;
+  fileBlob: Blob;
+}): Promise<ParsedImportFile> {
+  if (isSpreadsheetFileName(args.fileName)) {
+    const buffer = Buffer.from(await args.fileBlob.arrayBuffer());
+    const workbook = parseWorkbook(buffer);
+    const parsed = buildRowsFromMatrix(workbook.rows, workbook.headerRowIndex);
+
+    if (parsed.rows.length === 0) {
+      throw new Error("Spreadsheet parse failed: no data rows found.");
+    }
+
+    return {
+      sourceKey: detectImportSource(parsed.headers),
+      rows: parsed.rows,
+      headers: parsed.headers,
+    };
+  }
+
+  const fileText = await args.fileBlob.text();
+
+  if (!fileText.trim()) {
+    throw new Error("Import file is empty.");
+  }
+
+  return parseImportFile(fileText);
 }

@@ -21,7 +21,7 @@ export default function UploadImportsClient({ companySlug }: Props) {
     setError(null);
 
     if (!file) {
-      setError("Välj en CSV-fil först.");
+      setError("Välj en fil först (CSV, XLSX eller XLS).");
       return;
     }
 
@@ -47,7 +47,7 @@ export default function UploadImportsClient({ companySlug }: Props) {
       setMessage(`Upload klar. Import job ID: ${data.importJobId}`);
       setFile(null);
 
-      const input = document.getElementById("csv-file-input") as HTMLInputElement | null;
+      const input = document.getElementById("import-file-input") as HTMLInputElement | null;
       if (input) input.value = "";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Något gick fel vid upload.");
@@ -79,16 +79,16 @@ export default function UploadImportsClient({ companySlug }: Props) {
 
       <div className="space-y-2">
         <label
-          htmlFor="csv-file-input"
+          htmlFor="import-file-input"
           className="block text-sm font-medium text-slate-700"
         >
-          CSV-fil
+          Fil (CSV / XLSX / XLS)
         </label>
 
         <input
-          id="csv-file-input"
+          id="import-file-input"
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={(e) => {
             const selected = e.target.files?.[0] ?? null;
             setFile(selected);
@@ -102,7 +102,7 @@ export default function UploadImportsClient({ companySlug }: Props) {
         disabled={isUploading}
         className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
       >
-        {isUploading ? "Laddar upp..." : "Upload CSV"}
+        {isUploading ? "Laddar upp..." : "Upload fil"}
       </button>
 
       {message ? (

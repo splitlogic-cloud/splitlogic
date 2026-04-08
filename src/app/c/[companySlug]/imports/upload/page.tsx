@@ -15,7 +15,7 @@ export default async function UploadPage({ params }: PageProps) {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight">Upload CSV</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Upload fil</h1>
         <p className="text-sm text-slate-500">Company: {companySlug}</p>
       </div>
 

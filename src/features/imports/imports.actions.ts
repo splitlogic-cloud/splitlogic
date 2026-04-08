@@ -2,6 +2,7 @@
 
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { runImportParse } from "./run-import-parse";
 
 const BUCKET = "imports";
 
@@ -120,27 +121,7 @@ export async function markUploadCompleteAction(args: {
 export async function parseImportCsvAction(args: { importId: string }) {
   const { importId } = args;
   if (!importId) throw new Error("importId is required");
-
-  const supabase = await createClient();
-
-  // set processing
-  {
-    const { error } = await supabase.from("import_jobs").update({ status: "processing" }).eq("id", importId);
-    if (error) throw new Error(`set processing failed: ${error.message}`);
-  }
-
-  // Try RPC parse_import_csv
-  const { error: rpcErr } = await supabase.rpc("parse_import_csv", { p_import_id: importId });
-
-  if (rpcErr) {
-    await supabase.from("import_jobs").update({ status: "failed" }).eq("id", importId);
-    throw new Error(`parse_import_csv failed: ${rpcErr.message}`);
-  }
-
-  // If your RPC completes parsing synchronously, mark parsed
-  // If async/background, you may want to leave it as processing.
-  await supabase.from("import_jobs").update({ status: "parsed" }).eq("id", importId);
-
+  await runImportParse(importId);
   return { ok: true };
 }
 

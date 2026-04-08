@@ -131,10 +131,10 @@ export default function UploadImportsClient({ companySlug, companyId }: Props) {
       // 5) Go to detail page
       router.push(`/c/${companySlug}/works/imports/${importId}`);
       router.refresh();
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
       setStage("error");
-      setError(e?.message ?? "Unknown error");
+      setError(e instanceof Error ? e.message : "Unknown error");
     }
   }
 
@@ -160,7 +160,7 @@ export default function UploadImportsClient({ companySlug, companyId }: Props) {
     creating: "Skapar importjobb…",
     uploading: "Laddar upp fil…",
     marking: "Verifierar upload…",
-    parsing: "Tolkar CSV…",
+    parsing: "Tolkar fil…",
     done: "Klart!",
     error: "Fel uppstod.",
   };
@@ -206,7 +206,7 @@ export default function UploadImportsClient({ companySlug, companyId }: Props) {
         <input
           ref={inputRef}
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="hidden"
           onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
         />
@@ -214,7 +214,7 @@ export default function UploadImportsClient({ companySlug, companyId }: Props) {
         <div className="mt-4 grid gap-3">
           <div className="rounded-xl border border-dashed border-slate-200 p-4 bg-slate-50">
             <div className="text-sm text-slate-700">
-              Dra & släpp en CSV här, eller klicka “Välj fil”.
+              Dra & släpp en CSV/Excel-fil här, eller klicka “Välj fil”.
             </div>
             <div className="text-xs text-slate-500 mt-1">
               Tips: stora filer funkar, men första uploaden kan ta lite tid.

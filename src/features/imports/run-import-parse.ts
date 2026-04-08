@@ -1,7 +1,7 @@
 import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { parseImportFile } from "@/features/imports/parse-import-file";
+import { parseImportFileFromBlob } from "@/features/imports/parse-import-file";
 import { canonicalizeImportRow } from "@/features/imports/canonicalize-import-row";
 import {
   insertImportRows,
@@ -121,7 +121,10 @@ function resolveStorageLocation(job: ImportJobRecord): {
   return { bucket, path };
 }
 
-async function downloadImportFileText(job: ImportJobRecord): Promise<string> {
+async function downloadImportFileBlob(job: ImportJobRecord): Promise<{
+  fileBlob: Blob;
+  fileName: string;
+}> {
   const { bucket, path } = resolveStorageLocation(job);
 
   const { data, error } = await supabaseAdmin.storage
@@ -134,13 +137,12 @@ async function downloadImportFileText(job: ImportJobRecord): Promise<string> {
     );
   }
 
-  const text = await data.text();
+  const fileName =
+    job.file_name?.trim() ||
+    path.split("/").filter(Boolean).at(-1) ||
+    "import.csv";
 
-  if (!text.trim()) {
-    throw new Error("Downloaded import file is empty.");
-  }
-
-  return text;
+  return { fileBlob: data, fileName };
 }
 
 async function setImportJobStatus(
@@ -421,12 +423,12 @@ export async function runImportParse(importJobId: string): Promise<{
   });
 
   try {
-    const fileText = await downloadImportFileText(job);
-    const parsedFile = await parseImportFile(fileText);
+    const { fileBlob, fileName } = await downloadImportFileBlob(job);
+    const parsedFile = await parseImportFileFromBlob({ fileBlob, fileName });
 
     if (!parsedFile.rows.length) {
       throw new Error(
-        `Import file parsed successfully but returned 0 data rows. File: ${job.file_name ?? "unknown"}`
+        `Import file parsed successfully but returned 0 data rows. File: ${fileName}`
       );
     }
 
