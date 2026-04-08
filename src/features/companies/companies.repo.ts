@@ -81,7 +81,7 @@ export async function requireCompanyBySlugForUser(companySlug: string): Promise<
     console.error("requireCompanyBySlugForUser company lookup error:", companyErr);
     throw new Error("Could not load company.");
   }
-  if (!company) redirect("/companies");
+  if (!company) redirect("/select-company");
 
   // Membership check (ONLY columns that are guaranteed to exist)
   const { data: membership, error: membershipErr } = await supabase
@@ -95,7 +95,7 @@ export async function requireCompanyBySlugForUser(companySlug: string): Promise<
     console.error("requireCompanyBySlugForUser membership error:", membershipErr);
     throw new Error("Could not verify membership.");
   }
-  if (!membership) redirect("/companies");
+  if (!membership) redirect("/select-company");
 
   return company as Company;
 }

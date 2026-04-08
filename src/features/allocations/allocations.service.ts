@@ -10,7 +10,7 @@ import {
   insertAllocationRunLines,
   listImportRowsForAllocation,
   listWorkSplitsForWorkIds,
-  updateImportRowsAllocationStatus,
+  markRowsAllocated,
 } from "./allocations.repo";
 import type {
   AllocationCandidateBlocker,
@@ -328,6 +328,7 @@ export async function runAllocationForImportJob(params: {
 
     const lines: AllocationCandidateLine[] = [];
     const blockers: AllocationCandidateBlocker[] = [];
+    const allocatedImportRowIds: string[] = [];
 
     let grossAmount = 0;
     let allocatedAmount = 0;
@@ -355,6 +356,7 @@ export async function runAllocationForImportJob(params: {
 
       const rowLines = buildAllocationLines(run.id, row, workSplits);
       lines.push(...rowLines);
+      allocatedImportRowIds.push(row.id);
 
       allocatedRowCount += 1;
       allocatedAmount += rowLines.reduce(
@@ -382,7 +384,11 @@ export async function runAllocationForImportJob(params: {
       engineVersion: "v2",
     });
 
-    await updateImportRowsAllocationStatus(params.importJobId, "completed");
+    if (allocatedImportRowIds.length > 0) {
+      await markRowsAllocated({
+        importRowIds: allocatedImportRowIds,
+      });
+    }
 
     return {
       runId: run.id,
@@ -403,8 +409,6 @@ export async function runAllocationForImportJob(params: {
       allocationRunId: run.id,
       errorMessage: message,
     });
-
-    await updateImportRowsAllocationStatus(params.importJobId, "failed");
 
     throw error;
   }

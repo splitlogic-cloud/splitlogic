@@ -3,6 +3,7 @@ import "server-only";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import CreateCompanyClient from "./ui/CreateCompanyClient";
 
 export const dynamic = "force-dynamic";
 
@@ -65,27 +66,20 @@ export default async function SelectCompanyPage() {
   if (companies.length === 0) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center p-6">
-        <div className="max-w-md w-full rounded-2xl border border-slate-200 bg-white p-6 space-y-3">
+        <div className="max-w-md w-full rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
           <h1 className="text-xl font-semibold">No companies</h1>
           <p className="text-sm text-slate-600">
             You don’t seem to have access to any companies yet.
           </p>
-          <div className="text-sm">
-            <Link className="underline" href="/onboarding">
-              Go to onboarding
-            </Link>
+          <div className="flex items-center justify-end">
+            <CreateCompanyClient />
           </div>
         </div>
       </div>
     );
   }
 
-  // Om bara en company: skicka direkt
-  if (companies.length === 1) {
-    redirect(`/c/${companies[0].slug}/dashboard`);
-  }
-
-  // Annars välj
+  // Välj eller skapa bolag
   return (
     <div className="min-h-[60vh] p-6">
       <div className="mx-auto max-w-2xl space-y-4">
@@ -94,6 +88,10 @@ export default async function SelectCompanyPage() {
           <p className="text-sm text-slate-600">
             Choose which company you want to open.
           </p>
+        </div>
+
+        <div className="flex items-center justify-end">
+          <CreateCompanyClient />
         </div>
 
         <div className="grid gap-3">
