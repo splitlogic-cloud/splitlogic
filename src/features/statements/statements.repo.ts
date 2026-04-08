@@ -90,7 +90,7 @@ export type StatementLedgerInsertRow = {
   currency: string | null;
 };
 
-const STATEMENTS_SELECT_WITH_GENERATED_FROM = `
+const STATEMENTS_SELECT_BASE = `
   id,
   company_id,
   party_id,
@@ -99,27 +99,7 @@ const STATEMENTS_SELECT_WITH_GENERATED_FROM = `
   status,
   currency,
   total_amount,
-  generated_from,
-  note,
   created_at,
-  created_by,
-  parties (
-    name
-  )
-`;
-
-const STATEMENTS_SELECT_WITHOUT_GENERATED_FROM = `
-  id,
-  company_id,
-  party_id,
-  period_start,
-  period_end,
-  status,
-  currency,
-  total_amount,
-  note,
-  created_at,
-  created_by,
   parties (
     name
   )
@@ -263,41 +243,18 @@ function normalizeStatementLineRow(row: Record<string, unknown>): StatementLineR
 export async function listStatementsByCompany(
   companyId: string
 ): Promise<StatementListRow[]> {
-  const primary = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("statements")
-    .select(STATEMENTS_SELECT_WITH_GENERATED_FROM)
+    .select(STATEMENTS_SELECT_BASE)
     .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .limit(500);
 
-  if (primary.error && isMissingGeneratedFromColumnError(primary.error)) {
-    console.warn(
-      "[statements.repo.listStatementsByCompany] missing generated_from column, retrying without it"
-    );
-    const retried = await supabaseAdmin
-      .from("statements")
-      .select(STATEMENTS_SELECT_WITHOUT_GENERATED_FROM)
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false })
-      .limit(500);
-
-    if (retried.error) {
-      throw new Error(`listStatementsByCompany failed: ${retried.error.message}`);
-    }
-
-    return (retried.data ?? []).map((row: Record<string, unknown>) =>
-      normalizeStatementListRow({
-        ...row,
-        party_name: asString(asObject(row.parties)?.name) ?? null,
-      })
-    );
+  if (error) {
+    throw new Error(`listStatementsByCompany failed: ${error.message}`);
   }
 
-  if (primary.error) {
-    throw new Error(`listStatementsByCompany failed: ${primary.error.message}`);
-  }
-
-  return (primary.data ?? []).map((row: Record<string, unknown>) =>
+  return (data ?? []).map((row: Record<string, unknown>) =>
     normalizeStatementListRow({
       ...row,
       party_name: asString(asObject(row.parties)?.name) ?? null,
@@ -309,52 +266,25 @@ export async function getStatementHeader(
   companyId: string,
   statementId: string
 ): Promise<StatementHeaderRow | null> {
-  const primary = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("statements")
-    .select(STATEMENTS_SELECT_WITH_GENERATED_FROM)
+    .select(STATEMENTS_SELECT_BASE)
     .eq("company_id", companyId)
     .eq("id", statementId)
     .maybeSingle();
 
-  if (primary.error && isMissingGeneratedFromColumnError(primary.error)) {
-    console.warn(
-      "[statements.repo.getStatementHeader] missing generated_from column, retrying without it"
-    );
-    const retried = await supabaseAdmin
-      .from("statements")
-      .select(STATEMENTS_SELECT_WITHOUT_GENERATED_FROM)
-      .eq("company_id", companyId)
-      .eq("id", statementId)
-      .maybeSingle();
-
-    if (retried.error) {
-      throw new Error(`getStatementHeader failed: ${retried.error.message}`);
-    }
-
-    if (!retried.data) {
-      return null;
-    }
-
-    return {
-      ...normalizeStatementListRow({
-        ...retried.data,
-        party_name: asString(asObject(retried.data.parties)?.name) ?? null,
-      }),
-    };
+  if (error) {
+    throw new Error(`getStatementHeader failed: ${error.message}`);
   }
 
-  if (primary.error) {
-    throw new Error(`getStatementHeader failed: ${primary.error.message}`);
-  }
-
-  if (!primary.data) {
+  if (!data) {
     return null;
   }
 
   return {
     ...normalizeStatementListRow({
-      ...primary.data,
-      party_name: asString(asObject(primary.data.parties)?.name) ?? null,
+      ...data,
+      party_name: asString(asObject(data.parties)?.name) ?? null,
     }),
   };
 }
