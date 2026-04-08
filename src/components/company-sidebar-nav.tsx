@@ -22,6 +22,7 @@ export default function CompanySidebarNav({
     { label: "Works", href: `/c/${companySlug}/works` },
     { label: "Parties", href: `/c/${companySlug}/parties` },
     { label: "Statements", href: `/c/${companySlug}/statements` },
+    { label: "Rapporter", href: `/c/${companySlug}/reports` },
     { label: "Audit", href: `/c/${companySlug}/audit` },
   ];
 
