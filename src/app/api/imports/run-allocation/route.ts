@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { runAllocation } from "@/features/allocations/run-allocation";
+import { runAllocationForImportJob } from "@/features/allocations/allocations.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,7 +58,11 @@ export async function POST(req: Request) {
       companyId: company.id,
     });
 
-    const result = await runAllocation(importJobId);
+    const result = await runAllocationForImportJob({
+      companyId: company.id,
+      importJobId,
+      createdBy: null,
+    });
 
     revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
     revalidatePath(`/c/${companySlug}/allocations`);

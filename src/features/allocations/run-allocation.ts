@@ -7,7 +7,8 @@ import {
   getWorkSplitsForWorks,
   insertAllocationLines,
   markRowsAllocated,
-  setAllocationRunStatus,
+  finalizeAllocationRun,
+  failAllocationRun,
   setImportJobStatus,
 } from "./allocations.repo";
 import type {
@@ -79,14 +80,12 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
     let totalRows = 0;
     let allocatedRows = 0;
     let blockedRows = 0;
-    let totalNetAmount = 0;
     let totalGrossAmount = 0;
 
     for (const row of matchedRows) {
       totalRows += 1;
 
       const amount = toAmount(row);
-      totalNetAmount += row.net_amount ?? 0;
       totalGrossAmount += row.gross_amount ?? row.net_amount ?? 0;
 
       if (!row.matched_work_id) {
@@ -160,16 +159,22 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
 
     await setImportJobStatus(importJobId, "completed");
 
-    await setAllocationRunStatus({
+    const grossRounded = roundCurrency(totalGrossAmount);
+    const allocatedRounded = roundCurrency(
+      lines.reduce((sum, line) => sum + Number(line.allocated_amount ?? 0), 0)
+    );
+    const unallocatedRounded = roundCurrency(grossRounded - allocatedRounded);
+
+    await finalizeAllocationRun({
       allocationRunId: run.id,
-      status: "completed",
-      totals: {
-        total_rows: totalRows,
-        allocated_rows: allocatedRows,
-        blocked_rows: blockedRows,
-        total_net_amount: roundCurrency(totalNetAmount),
-        total_gross_amount: roundCurrency(totalGrossAmount),
-      },
+      lineCount: lines.length,
+      totalSourceAmount: grossRounded,
+      totalAllocatedAmount: allocatedRounded,
+      inputRowCount: totalRows,
+      allocatedRowCount: allocatedRows,
+      blockerCount: blockedRows,
+      unallocatedAmount: unallocatedRounded,
+      engineVersion: "v1",
     });
 
     return {
@@ -187,9 +192,8 @@ export async function runAllocation(importJobId: string): Promise<AllocationRunR
     }
 
     try {
-      await setAllocationRunStatus({
+      await failAllocationRun({
         allocationRunId: run.id,
-        status: "failed",
       });
     } catch (allocationRunStatusError) {
       console.error("[runAllocation] failed to set allocation run status to failed", {

@@ -375,6 +375,11 @@ export async function runAllocationForImportJob(params: {
       lineCount: lines.length,
       totalSourceAmount: grossRounded,
       totalAllocatedAmount: allocatedRounded,
+      inputRowCount: rows.length,
+      allocatedRowCount,
+      blockerCount: blockers.length,
+      unallocatedAmount: unallocatedRounded,
+      engineVersion: "v2",
     });
 
     await updateImportRowsAllocationStatus(params.importJobId, "completed");
