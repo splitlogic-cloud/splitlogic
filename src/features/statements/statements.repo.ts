@@ -305,9 +305,16 @@ export async function listStatementLines(
       currency
     `)
     .eq("statement_id", statementId)
-    .order("created_at", { ascending: true });
+    .order("id", { ascending: true });
 
   if (error) {
+    console.error("[statements.repo.listStatementLines] failed", {
+      statementId,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
     throw new Error(`listStatementLines failed: ${error.message}`);
   }
 

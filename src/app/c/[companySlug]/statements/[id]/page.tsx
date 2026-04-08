@@ -158,6 +158,13 @@ export default async function StatementDetailPage({ params }: Params) {
     .maybeSingle();
 
   if (companyError) {
+    console.error("[StatementDetailPage] company lookup failed", {
+      companySlug,
+      message: companyError.message,
+      details: companyError.details,
+      hint: companyError.hint,
+      code: companyError.code,
+    });
     throw new Error(`Failed to load company: ${companyError.message}`);
   }
 
@@ -172,7 +179,19 @@ export default async function StatementDetailPage({ params }: Params) {
   }
 
   const statement = normalizeStatement(statementRaw);
-  const qa = await getStatementQaDetail(company.id, id);
+
+  let qa: Awaited<ReturnType<typeof getStatementQaDetail>> | null = null;
+
+  try {
+    qa = await getStatementQaDetail(company.id, id);
+  } catch (error) {
+    console.error("[StatementDetailPage] getStatementQaDetail failed", {
+      companyId: company.id,
+      statementId: id,
+      error,
+    });
+    qa = null;
+  }
 
   return (
     <div className="space-y-6">
@@ -307,7 +326,12 @@ export default async function StatementDetailPage({ params }: Params) {
             )}
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900">
+          QA detail could not be loaded for this statement yet. The statement itself is still
+          available.
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-xl border bg-white p-4">
