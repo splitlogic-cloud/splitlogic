@@ -1,9 +1,10 @@
-import Link from "next/link";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   getAllocationQASummary,
+  listAllocationQABlockers,
   listAllocationQARows,
 } from "@/features/allocations/allocation-qa.repo";
+import AllocationQATablesClient from "./AllocationQATablesClient";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +28,10 @@ export default async function AllocationQAPage({ params }: PageProps) {
     throw new Error("Company not found");
   }
 
-  const [summary, rows] = await Promise.all([
+  const [summary, rows, blockers] = await Promise.all([
     getAllocationQASummary({ allocationRunId }),
-    listAllocationQARows({ allocationRunId, limit: 500 }),
+    listAllocationQARows({ allocationRunId, limit: null }),
+    listAllocationQABlockers({ allocationRunId }),
   ]);
 
   return (
@@ -74,55 +76,11 @@ export default async function AllocationQAPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-slate-50 text-left text-slate-500">
-            <tr>
-              <th className="px-4 py-3 font-medium">Work</th>
-              <th className="px-4 py-3 font-medium">Party</th>
-              <th className="px-4 py-3 font-medium">Source amount</th>
-              <th className="px-4 py-3 font-medium">Share %</th>
-              <th className="px-4 py-3 font-medium">Allocated</th>
-              <th className="px-4 py-3 font-medium">Currency</th>
-              <th className="px-4 py-3 font-medium">Links</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.allocationRowId} className="border-t border-slate-100">
-                <td className="px-4 py-3">
-                  <div className="font-medium text-slate-900">{row.workTitle}</div>
-                  <div className="text-xs text-slate-500">{row.workId}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="font-medium text-slate-900">{row.partyName}</div>
-                  <div className="text-xs text-slate-500">{row.partyId}</div>
-                </td>
-                <td className="px-4 py-3">{row.sourceAmount.toFixed(6)}</td>
-                <td className="px-4 py-3">{row.sharePercent.toFixed(6)}</td>
-                <td className="px-4 py-3 font-medium">{row.allocatedAmount.toFixed(6)}</td>
-                <td className="px-4 py-3">{row.currency || "—"}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Link
-                      href={`/c/${companySlug}/works/${row.workId}/splits`}
-                      className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                    >
-                      Work splits
-                    </Link>
-                    <Link
-                      href={`/c/${companySlug}/parties/${row.partyId}`}
-                      className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                    >
-                      Party
-                    </Link>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <AllocationQATablesClient
+        companySlug={companySlug}
+        rows={rows}
+        blockers={blockers}
+      />
     </div>
   );
 }

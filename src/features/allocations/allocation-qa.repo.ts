@@ -23,6 +23,17 @@ export type AllocationQASummary = {
   workCount: number;
 };
 
+export type AllocationQABlockerRow = {
+  blockerId: string;
+  importRowId: string | null;
+  rowNumber: number | null;
+  rowStatus: string | null;
+  rawTitle: string | null;
+  blockerCode: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+};
+
 type AllocationRowRaw = {
   id: string;
   import_row_id: string;
@@ -101,10 +112,13 @@ export async function getAllocationQASummary(params: {
 
 export async function listAllocationQARows(params: {
   allocationRunId: string;
-  limit?: number;
+  limit?: number | null;
 }): Promise<AllocationQARow[]> {
   const rows = await loadAllocationRows(params.allocationRunId);
-  const limitedRows = rows.slice(0, params.limit ?? 500);
+  const limitedRows =
+    typeof params.limit === "number" && params.limit >= 0
+      ? rows.slice(0, params.limit)
+      : rows;
 
   if (limitedRows.length === 0) {
     return [];
@@ -154,4 +168,79 @@ export async function listAllocationQARows(params: {
     allocatedAmount: round6(toNumber(row.allocated_amount)),
     currency: row.currency,
   }));
+}
+
+type AllocationRunBlockerRaw = {
+  id: string;
+  import_row_id: string | null;
+  blocker_code: string | null;
+  severity: "info" | "warning" | "error" | null;
+  message: string | null;
+};
+
+type ImportRowLookup = {
+  id: string;
+  row_number: number | null;
+  status: string | null;
+  raw_title: string | null;
+};
+
+export async function listAllocationQABlockers(params: {
+  allocationRunId: string;
+}): Promise<AllocationQABlockerRow[]> {
+  const { data: blockers, error: blockersError } = await supabaseAdmin
+    .from("allocation_run_blockers")
+    .select("id, import_row_id, blocker_code, severity, message")
+    .eq("allocation_run_id", params.allocationRunId);
+
+  if (blockersError) {
+    throw new Error(`listAllocationQABlockers failed: ${blockersError.message}`);
+  }
+
+  const typedBlockers = (blockers ?? []) as AllocationRunBlockerRaw[];
+  if (typedBlockers.length === 0) {
+    return [];
+  }
+
+  const importRowIds = Array.from(
+    new Set(
+      typedBlockers
+        .map((blocker) => blocker.import_row_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const importRowMap = new Map<string, ImportRowLookup>();
+
+  if (importRowIds.length > 0) {
+    const { data: importRows, error: importRowsError } = await supabaseAdmin
+      .from("import_rows")
+      .select("id, row_number, status, raw_title")
+      .in("id", importRowIds);
+
+    if (importRowsError) {
+      throw new Error(`listAllocationQABlockers import rows failed: ${importRowsError.message}`);
+    }
+
+    for (const row of (importRows ?? []) as ImportRowLookup[]) {
+      importRowMap.set(String(row.id), row);
+    }
+  }
+
+  return typedBlockers.map((blocker) => {
+    const row = blocker.import_row_id
+      ? importRowMap.get(blocker.import_row_id) ?? null
+      : null;
+
+    return {
+      blockerId: blocker.id,
+      importRowId: blocker.import_row_id,
+      rowNumber: row?.row_number ?? null,
+      rowStatus: row?.status ?? null,
+      rawTitle: row?.raw_title ?? null,
+      blockerCode: blocker.blocker_code ?? "UNKNOWN_BLOCKER",
+      severity: blocker.severity ?? "error",
+      message: blocker.message ?? "Unknown blocker",
+    };
+  });
 }
