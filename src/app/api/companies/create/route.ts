@@ -8,12 +8,15 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => null)) as { name?: string } | null;
-
-const name = body?.name ?? "";
-
-const company = await createCompanyForUser({ name });
+    const name = body?.name ?? "";
+    const company = await createCompanyForUser({ name });
     return NextResponse.json({ ok: true, company });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[api/companies/create] failed", {
+      message,
+      error,
+    });
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

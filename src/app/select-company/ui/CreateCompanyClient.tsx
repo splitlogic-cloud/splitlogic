@@ -21,8 +21,23 @@ export default function CreateCompanyClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name, orgnr: orgnr.trim() || null }),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.ok) throw new Error(json?.error || `Failed: ${res.status}`);
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        details?: unknown;
+        company?: { slug?: string };
+      };
+      if (!res.ok || !json?.ok) {
+        const detailText =
+          json?.details && typeof json.details === "object"
+            ? JSON.stringify(json.details)
+            : typeof json?.details === "string"
+              ? json.details
+              : null;
+        throw new Error(
+          [json?.error || `Failed: ${res.status}`, detailText].filter(Boolean).join(" — ")
+        );
+      }
 
       // redirect into company
       const slug = json.company?.slug;

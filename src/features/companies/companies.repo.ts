@@ -23,6 +23,24 @@ function slugify(input: string) {
     .replace(/(^-|-$)/g, "");
 }
 
+function randomSlugSuffix(length = 5) {
+  return Math.random().toString(36).slice(2, 2 + length);
+}
+
+function isMissingCreateCompanyRpcError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const code = (error as { code?: unknown }).code;
+  const message = (error as { message?: unknown }).message;
+  const normalized = typeof message === "string" ? message.toLowerCase() : "";
+
+  return (
+    code === "42883" ||
+    (normalized.includes("create_company_for_user") &&
+      (normalized.includes("does not exist") || normalized.includes("not found")))
+  );
+}
+
 async function requireUser() {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
@@ -105,7 +123,14 @@ export async function requireCompanyBySlugForUser(companySlug: string): Promise<
  * NOTE: companies table does not have orgnr in your DB.
  */
 export async function createCompanyForUser(input: { name: string; base_currency?: string | null }) {
-  const { supabase, user } = await requireUser();
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+  if (userError || !user) {
+    throw new Error("You must be signed in to create a company.");
+  }
 
   const name = (input.name ?? "").trim();
   if (!name) throw new Error("Name is required.");
@@ -113,30 +138,70 @@ export async function createCompanyForUser(input: { name: string; base_currency?
   const base_currency = (input.base_currency ?? "SEK")?.toString().trim() || "SEK";
 
   const baseSlug = slugify(name) || "company";
-  const suffix = Math.random().toString(36).slice(2, 7);
-  const slug = `${baseSlug}-${suffix}`;
+  const rpcSlug = `${baseSlug}-${randomSlugSuffix()}`;
 
-  const { data: company, error: companyErr } = await supabase
-    .from("companies")
-    .insert({ name, slug, base_currency })
-    .select("id,name,slug,base_currency,created_at")
-    .single();
-
-  if (companyErr) {
-    console.error("createCompanyForUser insert company error:", companyErr);
-    throw new Error("Could not create company.");
-  }
-
-  const { error: membershipErr } = await supabase.from("company_memberships").insert({
-    company_id: company.id,
-    user_id: user.id,
-    role: "owner",
+  const { error: rpcError } = await supabase.rpc("create_company_for_user", {
+    p_name: name,
+    p_slug: rpcSlug,
   });
 
-  if (membershipErr) {
-    console.error("createCompanyForUser insert membership error:", membershipErr);
-    throw new Error("Company created, but membership failed.");
+  if (!rpcError) {
+    const { data: rpcCompany, error: rpcCompanyLookupError } = await supabase
+      .from("companies")
+      .select("id,name,slug,base_currency,created_at")
+      .eq("slug", rpcSlug)
+      .maybeSingle();
+
+    if (rpcCompanyLookupError) {
+      console.error("createCompanyForUser rpc company lookup error:", rpcCompanyLookupError);
+      throw new Error("Company created, but lookup failed.");
+    }
+    if (!rpcCompany) {
+      throw new Error("Company created, but lookup returned no row.");
+    }
+    return rpcCompany as Company;
   }
 
-  return company as Company;
+  // Some environments do not have the RPC function deployed yet.
+  // Fall back to direct inserts to avoid blocking onboarding.
+  if (!isMissingCreateCompanyRpcError(rpcError)) {
+    console.error("createCompanyForUser rpc error:", rpcError);
+    throw new Error(`Could not create company: ${rpcError.message}`);
+  }
+
+  console.warn("createCompanyForUser rpc missing, falling back to direct inserts");
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const slug = `${baseSlug}-${randomSlugSuffix(5 + attempt)}`;
+
+    const { data: company, error: companyErr } = await supabase
+      .from("companies")
+      .insert({ name, slug, base_currency })
+      .select("id,name,slug,base_currency,created_at")
+      .single();
+
+    if (companyErr) {
+      const maybeCode = (companyErr as { code?: string }).code;
+      if (maybeCode === "23505") {
+        continue;
+      }
+      console.error("createCompanyForUser insert company error:", companyErr);
+      throw new Error(`Could not create company: ${companyErr.message}`);
+    }
+
+    const { error: membershipErr } = await supabase.from("company_memberships").insert({
+      company_id: company.id,
+      user_id: user.id,
+      role: "owner",
+    });
+
+    if (membershipErr) {
+      console.error("createCompanyForUser insert membership error:", membershipErr);
+      throw new Error(`Company created, but membership failed: ${membershipErr.message}`);
+    }
+
+    return company as Company;
+  }
+
+  throw new Error("Could not create company due to repeated slug conflicts.");
 }
