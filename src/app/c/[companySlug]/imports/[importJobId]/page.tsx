@@ -105,6 +105,7 @@ export default async function ImportDetailPage({ params }: Params) {
   let needsReviewCount = 0;
   let unmatchedCount = 0;
   let matchedWorkCount = 0;
+  let allocationReadyCount = 0;
 
   for (const row of rows) {
     totalRows += 1;
@@ -116,6 +117,9 @@ export default async function ImportDetailPage({ params }: Params) {
 
     if (hasMatchedWork) {
       matchedWorkCount += 1;
+    }
+    if (status === "matched" && hasMatchedWork && !isAllocated) {
+      allocationReadyCount += 1;
     }
 
     if (status === "invalid") {
@@ -159,7 +163,7 @@ export default async function ImportDetailPage({ params }: Params) {
     importJobStatus === "allocating";
 
   const canRunMatching = !isBusy && totalRows > 0;
-  const canRunAllocation = !isBusy && matchedWorkCount > 0;
+  const canRunAllocation = !isBusy && allocationReadyCount > 0;
 
   return (
     <div className="space-y-6">
@@ -211,6 +215,7 @@ export default async function ImportDetailPage({ params }: Params) {
         <div className="mt-2 space-y-1">
           <p>Total rows: {totalRows}</p>
           <p>Rows with matched work: {matchedWorkCount}</p>
+          <p>Rows ready for allocation: {allocationReadyCount}</p>
           <p>Rows needing review: {reviewCount}</p>
           <p>Current import job status: {importJobStatus || "-"}</p>
         </div>
@@ -220,9 +225,9 @@ export default async function ImportDetailPage({ params }: Params) {
             This import is currently processing. Wait until the current job finishes before
             running the next step.
           </p>
-        ) : matchedWorkCount === 0 ? (
+        ) : allocationReadyCount === 0 ? (
           <p className="mt-3 text-amber-700">
-            Allocation is disabled because there are no matched rows yet.
+            Allocation is disabled because there are no matched rows left to allocate.
           </p>
         ) : (
           <p className="mt-3 text-emerald-700">
