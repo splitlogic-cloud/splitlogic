@@ -4,17 +4,25 @@ import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { generateStatements } from "@/features/statements/generate-statements";
 
-export async function generateStatementsAction(formData: FormData) {
+export type GenerateStatementsActionState = {
+  ok: boolean;
+  error: string | null;
+};
+
+export async function generateStatementsAction(
+  _prevState: GenerateStatementsActionState,
+  formData: FormData
+): Promise<GenerateStatementsActionState> {
   const companySlug = String(formData.get("companySlug") ?? "").trim();
   const periodStart = String(formData.get("periodStart") ?? "").trim();
   const periodEnd = String(formData.get("periodEnd") ?? "").trim();
 
   if (!companySlug) {
-    throw new Error("Missing companySlug.");
+    return { ok: false, error: "Missing company slug." };
   }
 
   if (!periodStart || !periodEnd) {
-    throw new Error("Missing periodStart or periodEnd.");
+    return { ok: false, error: "Please choose both period start and period end." };
   }
 
   const { data: company, error: companyError } = await supabaseAdmin
@@ -24,19 +32,29 @@ export async function generateStatementsAction(formData: FormData) {
     .maybeSingle();
 
   if (companyError) {
-    throw new Error(`Failed to load company: ${companyError.message}`);
+    return { ok: false, error: `Failed to load company: ${companyError.message}` };
   }
 
   if (!company) {
-    throw new Error("Company not found.");
+    return { ok: false, error: "Company not found." };
   }
 
-  await generateStatements({
-    companyId: company.id,
-    periodStart,
-    periodEnd,
-    createdBy: null,
-  });
+  try {
+    await generateStatements({
+      companyId: company.id,
+      periodStart,
+      periodEnd,
+      createdBy: null,
+    });
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Failed to generate statements.";
+    return { ok: false, error: message };
+  }
 
-  redirect(`/c/${companySlug}/statements`);
+  redirect(
+    `/c/${companySlug}/statements?success=${encodeURIComponent(
+      `Generated statements for ${periodStart} to ${periodEnd}.`
+    )}`
+  );
 }

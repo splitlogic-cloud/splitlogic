@@ -3,7 +3,7 @@ import "server-only";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { generateStatementsAction } from "./actions";
+import GenerateStatementsForm from "./GenerateStatementsForm";
 import {
   getGenerateStatementsPreview,
   getGenerateStatementsQaSummary,
@@ -111,57 +111,11 @@ export default async function GenerateStatementsPage({
       </div>
 
       <div className="rounded-2xl border bg-white p-6">
-        <form action={generateStatementsAction} className="space-y-4">
-          <input type="hidden" name="companySlug" value={companySlug} />
-
-          <div className="grid gap-4 md:grid-cols-3">
-            <div>
-              <label
-                htmlFor="periodStart"
-                className="mb-1 block text-sm font-medium text-neutral-700"
-              >
-                Period start
-              </label>
-              <input
-                id="periodStart"
-                name="periodStart"
-                type="date"
-                defaultValue={selectedPeriodStart}
-                className="w-full rounded-xl border px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="periodEnd"
-                className="mb-1 block text-sm font-medium text-neutral-700"
-              >
-                Period end
-              </label>
-              <input
-                id="periodEnd"
-                name="periodEnd"
-                type="date"
-                defaultValue={selectedPeriodEnd}
-                className="w-full rounded-xl border px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="flex items-end">
-              <button
-                type="submit"
-                className="inline-flex items-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white"
-              >
-                Generate statements
-              </button>
-            </div>
-          </div>
-
-          <p className="text-xs text-neutral-500">
-            Current QA summary is based on allocation-completed rows available
-            for statement generation.
-          </p>
-        </form>
+        <GenerateStatementsForm
+          companySlug={companySlug}
+          selectedPeriodStart={selectedPeriodStart}
+          selectedPeriodEnd={selectedPeriodEnd}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-5">

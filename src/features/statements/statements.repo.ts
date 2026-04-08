@@ -122,18 +122,37 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function isMissingGeneratedFromColumnError(error: unknown): boolean {
+function getMissingColumnFromError(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const maybeMessage = (error as { message?: unknown }).message;
+  if (typeof maybeMessage !== "string") return null;
+
+  const directColumnMatch =
+    maybeMessage.match(/column\s+["']?([a-zA-Z0-9_.]+)["']?/i) ??
+    maybeMessage.match(/could not find the ['"]([a-zA-Z0-9_.]+)['"] column/i);
+
+  if (!directColumnMatch?.[1]) return null;
+  const dotted = directColumnMatch[1];
+  const parts = dotted.split(".");
+  const name = parts[parts.length - 1]?.trim();
+  return name || null;
+}
+
+function isMissingColumnError(error: unknown, columnName: string): boolean {
   if (!error || typeof error !== "object") return false;
   const maybeCode = (error as { code?: unknown }).code;
   const maybeMessage = (error as { message?: unknown }).message;
   const code = typeof maybeCode === "string" ? maybeCode : "";
   const message =
     typeof maybeMessage === "string" ? maybeMessage.toLowerCase() : "";
+  const normalizedColumn = columnName.toLowerCase();
 
   return (
     code === "42703" ||
-    (message.includes("generated_from") &&
-      (message.includes("does not exist") || message.includes("column")))
+    (message.includes(normalizedColumn) &&
+      (message.includes("does not exist") ||
+        message.includes("could not find") ||
+        message.includes("column")))
   );
 }
 
@@ -472,7 +491,7 @@ export async function replaceDraftStatementsForPeriod(params: {
 
   let { data, error } = await query;
 
-  if (error && isMissingGeneratedFromColumnError(error)) {
+  if (error && isMissingColumnError(error, "generated_from")) {
     console.warn(
       "[statements.repo.replaceDraftStatementsForPeriod] missing generated_from column, retrying without source filter"
     );
@@ -527,7 +546,7 @@ export async function replaceDraftStatementsForPeriod(params: {
 }
 
 export async function insertStatement(row: StatementInsertRow): Promise<{ id: string }> {
-  const payload: Record<string, unknown> = {
+  let payload: Record<string, unknown> = {
     company_id: row.company_id,
     party_id: row.party_id,
     period_start: row.period_start,
@@ -539,50 +558,77 @@ export async function insertStatement(row: StatementInsertRow): Promise<{ id: st
     created_by: row.created_by,
   };
 
-  let { data, error } = await supabaseAdmin
-    .from("statements")
-    .insert(payload)
-    .select("id")
-    .single();
+  const omittedColumns = new Set<string>();
 
-  if (error && isMissingGeneratedFromColumnError(error)) {
-    console.warn(
-      "[statements.repo.insertStatement] missing generated_from column, retrying without it"
-    );
-    const { generated_from: _generatedFrom, ...fallbackPayload } = payload;
-    const retried = await supabaseAdmin
+  while (true) {
+    const { data, error } = await supabaseAdmin
       .from("statements")
-      .insert(fallbackPayload)
+      .insert(payload)
       .select("id")
       .single();
-    data = retried.data;
-    error = retried.error;
-  }
 
-  if (error) {
+    if (!error) {
+      return { id: String(data.id) };
+    }
+
+    const missingColumn = getMissingColumnFromError(error);
+    if (
+      missingColumn &&
+      Object.prototype.hasOwnProperty.call(payload, missingColumn) &&
+      !omittedColumns.has(missingColumn)
+    ) {
+      console.warn("[statements.repo.insertStatement] optional column missing, retrying", {
+        missingColumn,
+      });
+      omittedColumns.add(missingColumn);
+      const { [missingColumn]: _removed, ...rest } = payload;
+      payload = rest;
+      continue;
+    }
+
     throw new Error(`insertStatement failed: ${error.message}`);
   }
-
-  return { id: String(data.id) };
 }
 
 export async function insertStatementLines(rows: StatementLineInsertRow[]): Promise<void> {
   if (rows.length === 0) return;
 
-  const { error } = await supabaseAdmin
-    .from("statement_lines")
-    .insert(
-      rows.map((row) => ({
-        statement_id: row.statement_id,
-        line_label: row.line_label,
-        work_title: row.work_title,
-        row_count: row.row_count,
-        amount: roundMoney(row.amount),
-        currency: row.currency,
-      }))
-    );
+  let payload: Array<Record<string, unknown>> = rows.map((row) => ({
+    statement_id: row.statement_id,
+    line_label: row.line_label,
+    work_title: row.work_title,
+    row_count: row.row_count,
+    amount: roundMoney(row.amount),
+    currency: row.currency,
+  }));
+  const omittedColumns = new Set<string>();
 
-  if (error) {
+  while (true) {
+    const { error } = await supabaseAdmin
+      .from("statement_lines")
+      .insert(payload);
+
+    if (!error) {
+      return;
+    }
+
+    const missingColumn = getMissingColumnFromError(error);
+    if (
+      missingColumn &&
+      payload.some((row) => Object.prototype.hasOwnProperty.call(row, missingColumn)) &&
+      !omittedColumns.has(missingColumn)
+    ) {
+      console.warn("[statements.repo.insertStatementLines] optional column missing, retrying", {
+        missingColumn,
+      });
+      omittedColumns.add(missingColumn);
+      payload = payload.map((row) => {
+        const { [missingColumn]: _removed, ...rest } = row;
+        return rest;
+      });
+      continue;
+    }
+
     throw new Error(`insertStatementLines failed: ${error.message}`);
   }
 }
@@ -590,20 +636,45 @@ export async function insertStatementLines(rows: StatementLineInsertRow[]): Prom
 export async function insertStatementLedgerRows(rows: StatementLedgerInsertRow[]): Promise<void> {
   if (rows.length === 0) return;
 
-  const { error } = await supabaseAdmin
-    .from("statement_ledger")
-    .insert(
-      rows.map((row) => ({
-        statement_id: row.statement_id,
-        allocation_row_id: row.allocation_row_id,
-        work_id: row.work_id,
-        earning_date: row.earning_date,
-        amount: roundMoney(row.amount),
-        currency: row.currency,
-      }))
-    );
+  let payload: Array<Record<string, unknown>> = rows.map((row) => ({
+    statement_id: row.statement_id,
+    allocation_row_id: row.allocation_row_id,
+    work_id: row.work_id,
+    earning_date: row.earning_date,
+    amount: roundMoney(row.amount),
+    currency: row.currency,
+  }));
+  const omittedColumns = new Set<string>();
 
-  if (error) {
+  while (true) {
+    const { error } = await supabaseAdmin
+      .from("statement_ledger")
+      .insert(payload);
+
+    if (!error) {
+      return;
+    }
+
+    const missingColumn = getMissingColumnFromError(error);
+    if (
+      missingColumn &&
+      payload.some((row) => Object.prototype.hasOwnProperty.call(row, missingColumn)) &&
+      !omittedColumns.has(missingColumn)
+    ) {
+      console.warn(
+        "[statements.repo.insertStatementLedgerRows] optional column missing, retrying",
+        {
+          missingColumn,
+        }
+      );
+      omittedColumns.add(missingColumn);
+      payload = payload.map((row) => {
+        const { [missingColumn]: _removed, ...rest } = row;
+        return rest;
+      });
+      continue;
+    }
+
     throw new Error(`insertStatementLedgerRows failed: ${error.message}`);
   }
 }
