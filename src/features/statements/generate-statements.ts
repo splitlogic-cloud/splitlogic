@@ -25,6 +25,12 @@ type AllocationLedgerRow = {
   currency: string | null;
 };
 
+type StatementLedgerGroup = {
+  partyId: string;
+  currency: string | null;
+  rows: AllocationLedgerRow[];
+};
+
 function asString(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -41,7 +47,7 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-function normalizeRow(raw: any): AllocationLedgerRow | null {
+function normalizeRow(raw: Record<string, unknown>): AllocationLedgerRow | null {
   const id = asString(raw.id);
   const companyId = asString(raw.company_id);
   const partyId = asString(raw.party_id);
@@ -88,17 +94,24 @@ export async function generateStatements(
     return { statementIds: [], count: 0 };
   }
 
-  const byParty = new Map<string, AllocationLedgerRow[]>();
+  const byPartyCurrency = new Map<string, StatementLedgerGroup>();
 
   for (const row of usable) {
-    const list = byParty.get(row.party_id) ?? [];
-    list.push(row);
-    byParty.set(row.party_id, list);
+    const currency = row.currency ?? null;
+    const key = `${row.party_id}::${currency ?? "__NULL__"}`;
+    const group = byPartyCurrency.get(key) ?? {
+      partyId: row.party_id,
+      currency,
+      rows: [],
+    };
+    group.rows.push(row);
+    byPartyCurrency.set(key, group);
   }
 
   const statementIds: string[] = [];
 
-  for (const [partyId, partyRows] of byParty.entries()) {
+  for (const group of byPartyCurrency.values()) {
+    const partyRows = group.rows;
     const total = round2(
       partyRows.reduce((sum, r) => sum + r.amount, 0)
     );
@@ -107,12 +120,12 @@ export async function generateStatements(
       .from("statements")
       .insert({
         company_id: params.companyId,
-        party_id: partyId,
+        party_id: group.partyId,
         period_start: params.periodStart,
         period_end: params.periodEnd,
         status: "draft",
         total_amount: total,
-        currency: partyRows[0].currency ?? null,
+        currency: group.currency,
         generated_from: "allocation",
         created_by: params.createdBy ?? null,
       })
@@ -125,16 +138,22 @@ export async function generateStatements(
     statementIds.push(statementId);
 
     // Ledger rows
-    await supabaseAdmin.from("statement_ledger").insert(
-      partyRows.map((r) => ({
-        statement_id: statementId,
-        allocation_row_id: r.id,
-        work_id: r.work_id,
-        earning_date: r.earning_date,
-        amount: r.amount,
-        currency: r.currency,
-      }))
-    );
+    const { error: ledgerInsertError } = await supabaseAdmin
+      .from("statement_ledger")
+      .insert(
+        partyRows.map((r) => ({
+          statement_id: statementId,
+          allocation_row_id: r.id,
+          work_id: r.work_id,
+          earning_date: r.earning_date,
+          amount: r.amount,
+          currency: r.currency,
+        }))
+      );
+
+    if (ledgerInsertError) {
+      throw new Error(`Failed to insert statement ledger rows: ${ledgerInsertError.message}`);
+    }
 
     // Line aggregation (per work)
     const byWork = new Map<string, AllocationLedgerRow[]>();
@@ -146,16 +165,22 @@ export async function generateStatements(
       byWork.set(key, list);
     }
 
-    await supabaseAdmin.from("statement_lines").insert(
-      Array.from(byWork.entries()).map(([workId, rows]) => ({
-        statement_id: statementId,
-        line_label: workId === "unknown" ? "Unknown work" : workId,
-        work_title: workId,
-        row_count: rows.length,
-        amount: round2(rows.reduce((s, r) => s + r.amount, 0)),
-        currency: rows[0].currency ?? null,
-      }))
-    );
+    const { error: linesInsertError } = await supabaseAdmin
+      .from("statement_lines")
+      .insert(
+        Array.from(byWork.entries()).map(([workId, rows]) => ({
+          statement_id: statementId,
+          line_label: workId === "unknown" ? "Unknown work" : workId,
+          work_title: workId,
+          row_count: rows.length,
+          amount: round2(rows.reduce((s, r) => s + r.amount, 0)),
+          currency: rows[0].currency ?? null,
+        }))
+      );
+
+    if (linesInsertError) {
+      throw new Error(`Failed to insert statement lines: ${linesInsertError.message}`);
+    }
   }
 
   await createAuditEvent({
