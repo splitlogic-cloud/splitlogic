@@ -44,6 +44,14 @@ export type GenerateStatementsPreviewRow = {
   works_count: number;
 };
 
+type GeneratePreviewImportRowRaw = {
+  matched_work_id: unknown;
+  currency: unknown;
+  net_amount: unknown;
+  gross_amount: unknown;
+  party_id?: unknown;
+};
+
 export type GenerateStatementsQaSummary = {
   level: QaLevel;
   candidateCount: number;
@@ -120,6 +128,21 @@ function pickAmount(row: {
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((v): v is string => Boolean(v)))];
+}
+
+function isMissingColumnError(error: unknown, columnName: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybeCode = (error as { code?: unknown }).code;
+  const maybeMessage = (error as { message?: unknown }).message;
+  const code = typeof maybeCode === "string" ? maybeCode : "";
+  const message =
+    typeof maybeMessage === "string" ? maybeMessage.toLowerCase() : "";
+
+  return (
+    code === "42703" ||
+    (message.includes(columnName.toLowerCase()) &&
+      (message.includes("does not exist") || message.includes("column")))
+  );
 }
 
 function determineQaLevel(params: {
@@ -365,31 +388,77 @@ export async function listStatementQaStatusesByCompany(
 export async function getGenerateStatementsPreview(
   companyId: string
 ): Promise<GenerateStatementsPreviewRow[]> {
-  const { data, error } = await supabaseAdmin
+  const primary = await supabaseAdmin
     .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount, party_id, party_name")
+    .select("matched_work_id, currency, net_amount, gross_amount, party_id")
+    .eq("company_id", companyId)
     .eq("allocation_status", "completed")
     .order("created_at", { ascending: false })
     .limit(5000);
 
-  if (error) {
-    throw new Error(`Failed to load generate-statements preview: ${error.message}`);
+  let rowsData: GeneratePreviewImportRowRaw[] = (primary.data ??
+    []) as GeneratePreviewImportRowRaw[];
+  let queryError = primary.error;
+
+  if (queryError && isMissingColumnError(queryError, "party_id")) {
+    // Legacy schemas can miss party_id in import_rows.
+    const fallback = await supabaseAdmin
+      .from("import_rows")
+      .select("matched_work_id, currency, net_amount, gross_amount")
+      .eq("company_id", companyId)
+      .eq("allocation_status", "completed")
+      .order("created_at", { ascending: false })
+      .limit(5000);
+    rowsData = (fallback.data ?? []) as GeneratePreviewImportRowRaw[];
+    queryError = fallback.error;
   }
 
-  const rows: ImportRowCandidate[] = (data ?? []).map((row) => ({
+  if (queryError) {
+    throw new Error(`Failed to load generate-statements preview: ${queryError.message}`);
+  }
+
+  const rows: ImportRowCandidate[] = rowsData.map((row) => ({
     matched_work_id: asString(row.matched_work_id),
     currency: asString(row.currency),
     net_amount: asNumber(row.net_amount),
     gross_amount: asNumber(row.gross_amount),
-    party_id: asString(row.party_id),
-    party_name: asString(row.party_name),
+    party_id: asString((row as Record<string, unknown>).party_id),
+    party_name: null,
   }));
+
+  const partyIds = uniqueStrings(rows.map((row) => row.party_id));
+  const partyNameById = new Map<string, string>();
+
+  if (partyIds.length > 0) {
+    const { data: parties, error: partiesError } = await supabaseAdmin
+      .from("parties")
+      .select("id, name")
+      .eq("company_id", companyId)
+      .in("id", partyIds);
+
+    if (partiesError) {
+      throw new Error(
+        `Failed to load party names for generate-statements preview: ${partiesError.message}`
+      );
+    }
+
+    for (const row of parties ?? []) {
+      const id = asString(row.id);
+      const name = asString(row.name);
+      if (id) {
+        partyNameById.set(id, name ?? id);
+      }
+    }
+  }
 
   const grouped = new Map<string, GenerateStatementsPreviewRow>();
 
   for (const row of rows) {
     const partyId = row.party_id ?? "unassigned";
-    const partyName = row.party_name ?? null;
+    const partyName =
+      (row.party_id ? partyNameById.get(row.party_id) ?? null : null) ??
+      row.party_name ??
+      null;
     const currency = row.currency ?? null;
     const amount = pickAmount(row);
     const key = `${partyId}__${currency ?? "NO_CCY"}`;
@@ -422,6 +491,7 @@ export async function getGenerateStatementsQaSummary(
   const { data, error } = await supabaseAdmin
     .from("import_rows")
     .select("matched_work_id, currency, net_amount, gross_amount")
+    .eq("company_id", companyId)
     .eq("allocation_status", "completed")
     .order("created_at", { ascending: false })
     .limit(5000);
