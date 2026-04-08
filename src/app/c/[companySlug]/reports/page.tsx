@@ -13,6 +13,7 @@ type PageProps = {
 };
 
 type AllocationLineReportRow = {
+  import_row_id: string | null;
   allocated_amount: number | string | null;
   currency: string | null;
   work_id: string | null;
@@ -36,6 +37,13 @@ type AllocationLineReportRow = {
         raw?: Record<string, unknown> | null;
       }>
     | null;
+};
+
+type ImportRowReportRow = {
+  id: string;
+  canonical: Record<string, unknown> | null;
+  normalized: Record<string, unknown> | null;
+  raw: Record<string, unknown> | null;
 };
 
 type SongStats = {
@@ -153,16 +161,12 @@ export default async function ReportsPage({ params }: PageProps) {
     .from("allocation_lines")
     .select(
       `
+      import_row_id,
       allocated_amount,
       currency,
       work_id,
       works:works (
         title
-      ),
-      import_rows:import_rows (
-        canonical,
-        normalized,
-        raw
       )
     `
     )
@@ -171,6 +175,34 @@ export default async function ReportsPage({ params }: PageProps) {
 
   if (allocationLinesError) {
     throw new Error(`Failed to load report data: ${allocationLinesError.message}`);
+  }
+
+  const importRowIds = Array.from(
+    new Set(
+      ((allocationLines ?? []) as AllocationLineReportRow[])
+        .map((row) => asString(row.import_row_id))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const importRowById = new Map<string, ImportRowReportRow>();
+
+  if (importRowIds.length > 0) {
+    for (let i = 0; i < importRowIds.length; i += 500) {
+      const chunk = importRowIds.slice(i, i + 500);
+      const { data: importRows, error: importRowsError } = await supabaseAdmin
+        .from("import_rows")
+        .select("id, canonical, normalized, raw")
+        .in("id", chunk);
+
+      if (importRowsError) {
+        throw new Error(`Failed to load report import rows: ${importRowsError.message}`);
+      }
+
+      for (const row of (importRows ?? []) as ImportRowReportRow[]) {
+        importRowById.set(String(row.id), row);
+      }
+    }
   }
 
   const songMap = new Map<string, SongStats>();
@@ -200,7 +232,9 @@ export default async function ReportsPage({ params }: PageProps) {
     if (currency) songStats.currencies.add(currency);
     songMap.set(workId, songStats);
 
-    const importRowObj = firstObject(row.import_rows);
+    const importRowObj = row.import_row_id
+      ? importRowById.get(row.import_row_id) ?? null
+      : null;
     const territory = normalizeCountry(extractTerritoryFromImportRow(importRowObj));
     const countryStats = countryMap.get(territory) ?? {
       country: territory,
