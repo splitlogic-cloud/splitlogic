@@ -27,7 +27,7 @@ export default async function MatchReviewTable({
     .from("import_rows")
     .select("id,row_number,status,raw_title,matched_work_id,currency,net_amount,gross_amount")
     .eq("import_job_id", importJobId)
-    .in("status", ["needs_review", "unmatched", "matched"])
+    .in("status", ["needs_review", "unmatched"])
     .order("row_number", { ascending: true })
     .limit(200);
 
@@ -51,7 +51,7 @@ export default async function MatchReviewTable({
       <div className="border-b p-4">
         <div className="text-sm font-medium">Match review</div>
         <p className="mt-1 text-sm text-neutral-600">
-          Review matched / unmatched rows before allocation.
+          Review rows that still need matching before allocation.
         </p>
       </div>
 

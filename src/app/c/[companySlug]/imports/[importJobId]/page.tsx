@@ -82,7 +82,7 @@ export default async function ImportDetailPage({ params }: Params) {
 
   const { data: importJob, error: importJobError } = await supabaseAdmin
     .from("import_jobs")
-    .select("*")
+    .select("id, status, file_name, filename")
     .eq("id", importJobId)
     .eq("company_id", company.id)
     .maybeSingle();
@@ -178,7 +178,7 @@ export default async function ImportDetailPage({ params }: Params) {
         <div>
           <h1 className="text-2xl font-semibold">Import job</h1>
           <p className="text-sm text-neutral-600">
-            {importJob.file_name ?? "Unnamed file"}
+            {importJob.file_name ?? importJob.filename ?? "Unnamed file"}
           </p>
         </div>
       </div>

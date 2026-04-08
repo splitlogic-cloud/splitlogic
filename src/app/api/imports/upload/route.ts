@@ -2,7 +2,6 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { processImportJob } from "@/features/imports/imports.processor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -194,8 +193,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const processing = await processImportJob(job.id);
-
     return NextResponse.json({
       ok: true,
       importJobId: job.id,
@@ -203,7 +200,7 @@ export async function POST(req: Request) {
       source,
       role: membership.role ?? null,
       storage: { bucket, path },
-      processing,
+      status: "uploaded",
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Unknown error";
