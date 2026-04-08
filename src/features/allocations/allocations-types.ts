@@ -30,7 +30,6 @@ export type ImportRowForAllocation = {
   status: string | null;
   allocation_status: string | null;
   matched_work_id: string | null;
-  matched_work_confidence: number | null;
   currency: string | null;
   net_amount: number | null;
   gross_amount: number | null;
