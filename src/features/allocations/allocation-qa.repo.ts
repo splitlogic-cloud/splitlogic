@@ -28,8 +28,8 @@ type AllocationRowRaw = {
   import_row_id: string;
   work_id: string;
   party_id: string;
-  source_amount: string | number | null;
-  share_percent: string | number | null;
+  row_amount: string | number | null;
+  share_bps: string | number | null;
   allocated_amount: string | number | null;
   currency: string | null;
 };
@@ -56,9 +56,9 @@ async function loadAllocationRows(allocationRunId: string): Promise<AllocationRo
     const to = from + batchSize - 1;
 
     const { data, error } = await supabaseAdmin
-      .from("allocation_rows")
+      .from("allocation_lines")
       .select(
-        "id, import_row_id, work_id, party_id, source_amount, share_percent, allocated_amount, currency"
+        "id, import_row_id, work_id, party_id, row_amount, share_bps, allocated_amount, currency"
       )
       .eq("allocation_run_id", allocationRunId)
       .range(from, to);
@@ -106,6 +106,10 @@ export async function listAllocationQARows(params: {
   const rows = await loadAllocationRows(params.allocationRunId);
   const limitedRows = rows.slice(0, params.limit ?? 500);
 
+  if (limitedRows.length === 0) {
+    return [];
+  }
+
   const workIds = Array.from(new Set(limitedRows.map((row) => row.work_id)));
   const partyIds = Array.from(new Set(limitedRows.map((row) => row.party_id)));
 
@@ -145,8 +149,8 @@ export async function listAllocationQARows(params: {
     workTitle: workMap.get(row.work_id) ?? "Untitled work",
     partyId: row.party_id,
     partyName: partyMap.get(row.party_id) ?? "Unnamed party",
-    sourceAmount: round6(toNumber(row.source_amount)),
-    sharePercent: round6(toNumber(row.share_percent)),
+    sourceAmount: round6(toNumber(row.row_amount)),
+    sharePercent: round6(toNumber(row.share_bps) / 100),
     allocatedAmount: round6(toNumber(row.allocated_amount)),
     currency: row.currency,
   }));

@@ -131,6 +131,12 @@ export async function setAllocationRunStatus(params: {
     blocked_rows: number;
     total_net_amount: number;
     total_gross_amount: number;
+    input_row_count: number;
+    allocated_row_count: number;
+    blocker_count: number;
+    allocated_amount: number;
+    unallocated_amount: number;
+    engine_version: string;
   }>;
 }): Promise<void> {
   const now = new Date().toISOString();
@@ -548,6 +554,12 @@ export async function setImportJobStatus(
 export async function getLatestAllocationRunForImport(importJobId: string): Promise<{
   id: string;
   status: string;
+  input_row_count: number | null;
+  allocated_row_count: number | null;
+  blocker_count: number | null;
+  allocated_amount: number | null;
+  unallocated_amount: number | null;
+  engine_version: string | null;
   total_rows: number | null;
   allocated_rows: number | null;
   blocked_rows: number | null;
@@ -559,7 +571,7 @@ export async function getLatestAllocationRunForImport(importJobId: string): Prom
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
     .select(
-      "id, status, total_rows, allocated_rows, blocked_rows, total_net_amount, total_gross_amount, created_at, finished_at"
+      "id, status, input_row_count, allocated_row_count, blocker_count, allocated_amount, unallocated_amount, engine_version, total_rows, allocated_rows, blocked_rows, total_net_amount, total_gross_amount, created_at, finished_at"
     )
     .eq("import_job_id", importJobId)
     .order("created_at", { ascending: false })
@@ -671,12 +683,22 @@ export async function finalizeAllocationRun(params: {
   lineCount?: number | null;
   totalSourceAmount?: number | null;
   totalAllocatedAmount?: number | null;
+  inputRowCount?: number | null;
+  allocatedRowCount?: number | null;
+  blockerCount?: number | null;
+  unallocatedAmount?: number | null;
+  engineVersion?: string | null;
 }) {
   const {
     allocationRunId,
     lineCount = null,
     totalSourceAmount = null,
     totalAllocatedAmount = null,
+    inputRowCount = null,
+    allocatedRowCount = null,
+    blockerCount = null,
+    unallocatedAmount = null,
+    engineVersion = null,
   } = params;
 
   const now = new Date().toISOString();
@@ -698,6 +720,27 @@ export async function finalizeAllocationRun(params: {
 
   if (totalAllocatedAmount !== null) {
     payload.total_allocated_amount = totalAllocatedAmount;
+    payload.allocated_amount = totalAllocatedAmount;
+  }
+
+  if (inputRowCount !== null) {
+    payload.input_row_count = inputRowCount;
+  }
+
+  if (allocatedRowCount !== null) {
+    payload.allocated_row_count = allocatedRowCount;
+  }
+
+  if (blockerCount !== null) {
+    payload.blocker_count = blockerCount;
+  }
+
+  if (unallocatedAmount !== null) {
+    payload.unallocated_amount = unallocatedAmount;
+  }
+
+  if (engineVersion !== null) {
+    payload.engine_version = engineVersion;
   }
 
   console.log("[allocation_runs.finalize] payload =", {
