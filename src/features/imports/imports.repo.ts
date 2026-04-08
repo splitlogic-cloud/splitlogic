@@ -24,6 +24,80 @@ export async function setImportJobStatus(
   }
 }
 
+function sanitizeUnicodeString(value: string): string {
+  let out = "";
+
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+
+    // Drop NULL bytes that can break DB inserts.
+    if (code === 0) {
+      continue;
+    }
+
+    // High surrogate
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (i + 1 < value.length) {
+        const next = value.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          out += value[i] + value[i + 1];
+          i += 1;
+          continue;
+        }
+      }
+
+      // Replace unpaired high surrogate.
+      out += "\uFFFD";
+      continue;
+    }
+
+    // Low surrogate without preceding high surrogate.
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      out += "\uFFFD";
+      continue;
+    }
+
+    out += value[i];
+  }
+
+  return out;
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return sanitizeUnicodeString(value);
+  }
+
+  if (value == null || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeJsonValue(item));
+  }
+
+  if (typeof value === "object") {
+    const input = value as Record<string, unknown>;
+    const next: Record<string, unknown> = {};
+
+    for (const [key, item] of Object.entries(input)) {
+      next[sanitizeUnicodeString(key)] = sanitizeJsonValue(item);
+    }
+
+    return next;
+  }
+
+  return String(value);
+}
+
+function sanitizeRowForInsert<T extends Record<string, unknown>>(row: T): T {
+  return sanitizeJsonValue(row) as T;
+}
+
 export async function resetImportJobData(importJobId: string): Promise<void> {
   const { data: allocationRuns, error: allocationRunsError } = await supabaseAdmin
     .from("allocation_runs")
@@ -144,7 +218,7 @@ export async function replaceImportRowsForJob(
     error_codes: row.errorCodes,
     created_at: now,
     updated_at: now,
-  }));
+  })).map((row) => sanitizeRowForInsert(row));
 
   const chunkSize = 500;
 
@@ -168,10 +242,11 @@ export async function insertImportRows(
     return;
   }
 
+  const sanitizedRows = rows.map((row) => sanitizeRowForInsert(row));
   const chunkSize = 500;
 
-  for (let i = 0; i < rows.length; i += chunkSize) {
-    const chunk = rows.slice(i, i + chunkSize);
+  for (let i = 0; i < sanitizedRows.length; i += chunkSize) {
+    const chunk = sanitizedRows.slice(i, i + chunkSize);
 
     const { error } = await supabaseAdmin
       .from("import_rows")
