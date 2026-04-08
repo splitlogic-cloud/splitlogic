@@ -46,6 +46,26 @@ function serializeError(error: unknown): string {
   return String(error);
 }
 
+function isMissingColumnError(error: unknown, columnName: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybeMessage = (error as { message?: unknown }).message;
+  if (typeof maybeMessage !== "string") return false;
+  return (
+    maybeMessage.includes("schema cache") &&
+    maybeMessage.includes(`'${columnName}'`) &&
+    maybeMessage.includes("column")
+  );
+}
+
+function omitKey(
+  payload: Record<string, unknown>,
+  key: string
+): Record<string, unknown> {
+  const next = { ...payload };
+  delete next[key];
+  return next;
+}
+
 function assertAllocationRunStatus(
   status: string
 ): asserts status is AllocationRunStatus {
@@ -746,10 +766,42 @@ export async function finalizeAllocationRun(params: {
     allocationRunId,
     payload,
   });
+  let effectivePayload = payload;
+
+  // Backward-compatible updates for environments where some v2 metrics
+  // columns are not yet present in allocation_runs.
+  for (const optionalColumn of ["total_allocated_amount", "total_source_amount"]) {
+    const { data, error } = await supabaseAdmin
+      .from("allocation_runs")
+      .update(effectivePayload)
+      .eq("id", allocationRunId)
+      .select("*")
+      .maybeSingle();
+
+    if (!error) {
+      return data;
+    }
+
+    if (isMissingColumnError(error, optionalColumn)) {
+      effectivePayload = omitKey(effectivePayload, optionalColumn);
+      console.warn("[allocation_runs.finalize] optional column missing, retrying", {
+        allocationRunId,
+        omitted: optionalColumn,
+      });
+      continue;
+    }
+
+    console.error("[allocation_runs.finalize] failed", {
+      allocationRunId,
+      payload: effectivePayload,
+      error,
+    });
+    throw new Error(`finalizeAllocationRun failed: ${error.message}`);
+  }
 
   const { data, error } = await supabaseAdmin
     .from("allocation_runs")
-    .update(payload)
+    .update(effectivePayload)
     .eq("id", allocationRunId)
     .select("*")
     .maybeSingle();
@@ -757,10 +809,9 @@ export async function finalizeAllocationRun(params: {
   if (error) {
     console.error("[allocation_runs.finalize] failed", {
       allocationRunId,
-      payload,
+      payload: effectivePayload,
       error,
     });
-
     throw new Error(`finalizeAllocationRun failed: ${error.message}`);
   }
 
