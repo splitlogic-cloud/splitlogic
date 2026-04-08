@@ -53,7 +53,9 @@ export default function RunAllocationButton({
       });
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || "Allocation failed");
+        throw new Error(
+          data.error || "Allocation failed. Open Latest allocation run for details."
+        );
       }
 
       router.refresh();

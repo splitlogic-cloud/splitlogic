@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runAllocationForImportJob } from "@/features/allocations/allocations.service";
+import { refreshImportJobStatsByImportJobId } from "@/features/imports/refresh-import-job-stats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +64,8 @@ export async function POST(req: Request) {
       importJobId,
       createdBy: null,
     });
+
+    await refreshImportJobStatsByImportJobId(importJobId);
 
     revalidatePath(`/c/${companySlug}/imports/${importJobId}`);
     revalidatePath(`/c/${companySlug}/allocations`);

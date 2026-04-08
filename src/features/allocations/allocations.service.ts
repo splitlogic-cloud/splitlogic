@@ -100,7 +100,7 @@ function validateRowBase(
         importJobId: row.import_job_id,
         importRowId: row.id,
         blockerCode: "ROW_CURRENCY_MISSING",
-        severity: "error",
+        severity: "warning",
         message: `Import row ${row.row_number ?? "?"} saknar currency.`,
         details: {
           row_number: row.row_number,
