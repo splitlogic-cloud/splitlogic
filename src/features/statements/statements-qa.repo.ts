@@ -388,43 +388,22 @@ export async function listStatementQaStatusesByCompany(
 export async function getGenerateStatementsPreview(
   companyId: string
 ): Promise<GenerateStatementsPreviewRow[]> {
-  const primary = await supabaseAdmin
-    .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount, party_id")
+  const { data, error } = await supabaseAdmin
+    .from("allocation_lines")
+    .select("party_id, currency, allocated_amount, work_id")
     .eq("company_id", companyId)
-    .eq("allocation_status", "completed")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+    .limit(20000);
 
-  let rowsData: GeneratePreviewImportRowRaw[] = (primary.data ??
-    []) as GeneratePreviewImportRowRaw[];
-  let queryError = primary.error;
-
-  if (queryError && isMissingColumnError(queryError, "party_id")) {
-    // Legacy schemas can miss party_id in import_rows.
-    const fallback = await supabaseAdmin
-      .from("import_rows")
-      .select("matched_work_id, currency, net_amount, gross_amount")
-      .eq("company_id", companyId)
-      .eq("allocation_status", "completed")
-      .order("created_at", { ascending: false })
-      .limit(5000);
-    rowsData = (fallback.data ?? []) as GeneratePreviewImportRowRaw[];
-    queryError = fallback.error;
+  if (error) {
+    throw new Error(`Failed to load generate-statements preview: ${error.message}`);
   }
 
-  if (queryError) {
-    throw new Error(`Failed to load generate-statements preview: ${queryError.message}`);
-  }
-
-  const rows: ImportRowCandidate[] = rowsData.map((row) => ({
-    matched_work_id: asString(row.matched_work_id),
-    currency: asString(row.currency),
-    net_amount: asNumber(row.net_amount),
-    gross_amount: asNumber(row.gross_amount),
-    party_id: asString((row as Record<string, unknown>).party_id),
-    party_name: null,
-  }));
+  const rows = (data ?? []) as Array<{
+    party_id: string | null;
+    currency: string | null;
+    allocated_amount: number | string | null;
+    work_id: string | null;
+  }>;
 
   const partyIds = uniqueStrings(rows.map((row) => row.party_id));
   const partyNameById = new Map<string, string>();
@@ -451,16 +430,16 @@ export async function getGenerateStatementsPreview(
     }
   }
 
-  const grouped = new Map<string, GenerateStatementsPreviewRow>();
+  const grouped = new Map<
+    string,
+    GenerateStatementsPreviewRow & { workIds: Set<string> }
+  >();
 
   for (const row of rows) {
     const partyId = row.party_id ?? "unassigned";
-    const partyName =
-      (row.party_id ? partyNameById.get(row.party_id) ?? null : null) ??
-      row.party_name ??
-      null;
+    const partyName = row.party_id ? partyNameById.get(row.party_id) ?? null : null;
     const currency = row.currency ?? null;
-    const amount = pickAmount(row);
+    const amount = asNumber(row.allocated_amount) ?? 0;
     const key = `${partyId}__${currency ?? "NO_CCY"}`;
 
     const current = grouped.get(key) ?? {
@@ -470,54 +449,64 @@ export async function getGenerateStatementsPreview(
       row_count: 0,
       total_amount: 0,
       works_count: 0,
+      workIds: new Set<string>(),
     };
 
     current.row_count += 1;
     current.total_amount = round2(current.total_amount + amount) ?? 0;
 
-    if (row.matched_work_id) {
-      current.works_count += 1;
+    if (row.work_id) {
+      current.workIds.add(row.work_id);
     }
 
     grouped.set(key, current);
   }
 
-  return [...grouped.values()].sort((a, b) => b.total_amount - a.total_amount);
+  return [...grouped.values()]
+    .map((group) => ({
+      party_id: group.party_id,
+      party_name: group.party_name,
+      currency: group.currency,
+      row_count: group.row_count,
+      total_amount: group.total_amount,
+      works_count: group.workIds.size,
+    }))
+    .sort((a, b) => b.total_amount - a.total_amount);
 }
 
 export async function getGenerateStatementsQaSummary(
   companyId: string
 ): Promise<GenerateStatementsQaSummary> {
   const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount")
+    .from("allocation_lines")
+    .select("party_id, work_id, currency, allocated_amount")
     .eq("company_id", companyId)
-    .eq("allocation_status", "completed")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+    .limit(20000);
 
   if (error) {
     throw new Error(`Failed to load generate-statements QA summary: ${error.message}`);
   }
 
-  const rows: ImportRowCandidate[] = (data ?? []).map((row) => ({
-    matched_work_id: asString(row.matched_work_id),
+  const rows = (data ?? []).map((row) => ({
+    party_id: asString(row.party_id),
+    work_id: asString(row.work_id),
     currency: asString(row.currency),
-    net_amount: asNumber(row.net_amount),
-    gross_amount: asNumber(row.gross_amount),
-    party_id: null,
-    party_name: null,
+    allocated_amount: asNumber(row.allocated_amount),
   }));
 
   const currencies = uniqueStrings(rows.map((row) => row.currency));
-  const totalAmount = round2(rows.reduce((sum, row) => sum + pickAmount(row), 0)) ?? 0;
-  const rowsMissingWork = rows.filter((row) => row.matched_work_id == null).length;
-  const unmatchedRows = rowsMissingWork;
+  const totalAmount =
+    round2(rows.reduce((sum, row) => sum + (row.allocated_amount ?? 0), 0)) ?? 0;
+  const rowsMissingWork = rows.filter((row) => row.work_id == null).length;
+  const unmatchedRows = 0;
+  const candidateCount = new Set(
+    rows.map((row) => `${row.party_id ?? "unassigned"}::${row.currency ?? "NO_CCY"}`)
+  ).size;
 
   const issues: string[] = [];
 
   if (rows.length === 0) {
-    issues.push("No allocation-completed import rows found for statement generation.");
+    issues.push("No allocation lines found for statement generation.");
   }
 
   if (rowsMissingWork > 0) {
@@ -537,7 +526,7 @@ export async function getGenerateStatementsQaSummary(
 
   return {
     level,
-    candidateCount: rows.length,
+    candidateCount,
     currencies,
     totalAmount,
     rowsMissingWork,
