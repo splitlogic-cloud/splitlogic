@@ -94,7 +94,7 @@ async function listAllImportRowAggregates(
     const { data, error } = await supabaseAdmin
       .from("import_rows")
       .select("status, allocation_status, work_id, matched_work_id")
-      .eq("import_job_id", importJobId)
+      .or(`import_job_id.eq.${importJobId},import_id.eq.${importJobId}`)
       .range(from, to);
 
     if (error) {
@@ -167,7 +167,7 @@ async function refreshImportJobAggregates(importJobId: string): Promise<void> {
 
   if (totalRowCount === 0) {
     nextStatus = "uploaded";
-  } else if (allocatedRowCount > 0) {
+  } else if (allocatedRowCount === totalRowCount) {
     nextStatus = "completed";
   } else if (matchedRowCount > 0) {
     nextStatus = "matched";

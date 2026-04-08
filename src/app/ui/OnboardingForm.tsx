@@ -17,7 +17,6 @@ function slugify(input: string) {
 
 export default function OnboardingForm() {
   const router = useRouter();
-  const supabase = createClient();
 
   const [name, setName] = useState("");
   const autoSlug = useMemo(() => slugify(name || "demo"), [name]);
@@ -32,6 +31,7 @@ export default function OnboardingForm() {
 
     const finalSlug = (slug.trim() || autoSlug).slice(0, 40);
 
+    const supabase = createClient();
     const { data, error } = await supabase.rpc("create_company_for_user", {
       p_name: name.trim(),
       p_slug: finalSlug,

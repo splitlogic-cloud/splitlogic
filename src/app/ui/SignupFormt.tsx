@@ -6,7 +6,6 @@ import { createClient } from "@/lib/supabase/client";
 
 export default function SignupForm() {
   const router = useRouter();
-  const supabase = createClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -18,6 +17,7 @@ export default function SignupForm() {
     setErr(null);
     setLoading(true);
 
+    const supabase = createClient();
     const { error } = await supabase.auth.signUp({ email, password });
 
     setLoading(false);
