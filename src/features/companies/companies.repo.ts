@@ -46,6 +46,15 @@ function isUniqueViolation(message: string): boolean {
   return normalized.includes("duplicate key") || normalized.includes("unique");
 }
 
+function isRoleConstraintError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('null value in column "role"') ||
+    (normalized.includes("check constraint") && normalized.includes("role")) ||
+    (normalized.includes("invalid input value for enum") && normalized.includes("role"))
+  );
+}
+
 function mapCompanyRow(row: Record<string, unknown>): Company {
   return {
     id: String(row.id),
@@ -213,52 +222,66 @@ export async function createCompanyForUser(input: { name: string; base_currency?
   }
 
   const membershipAttempts = [
-    {
-      table: "company_memberships",
-      payload: { company_id: company.id, user_id: user.id, role: "owner" },
-    },
-    {
-      table: "company_memberships",
-      payload: { company_id: company.id, user_id: user.id },
-    },
-    {
-      table: "company_memberships",
-      payload: { company_id: company.id, profile_id: user.id, role: "owner" },
-    },
-    {
-      table: "company_memberships",
-      payload: { company_id: company.id, profile_id: user.id },
-    },
-    {
-      table: "memberships",
-      payload: { company_id: company.id, user_id: user.id, role: "owner" },
-    },
-    {
-      table: "memberships",
-      payload: { company_id: company.id, user_id: user.id },
-    },
+    { table: "company_memberships", userColumn: "user_id" as const },
+    { table: "company_memberships", userColumn: "profile_id" as const },
+    { table: "memberships", userColumn: "user_id" as const },
+    { table: "memberships", userColumn: "profile_id" as const },
+  ] as const;
+  const roleCandidates = [
+    "owner",
+    "admin",
+    "member",
+    "OWNER",
+    "ADMIN",
+    "MEMBER",
+    null,
   ] as const;
 
   let membershipCreated = false;
   let lastMembershipErrorMessage = "unknown";
 
-  for (const attempt of membershipAttempts) {
-    const { error: membershipErr } = await writeClient
-      .from(attempt.table)
-      .insert(attempt.payload as never);
+  outerMembership: for (const attempt of membershipAttempts) {
+    for (const roleCandidate of roleCandidates) {
+      const payload: Record<string, string> = {
+        company_id: company.id,
+        [attempt.userColumn]: user.id,
+      };
 
-    if (!membershipErr) {
-      membershipCreated = true;
-      break;
+      if (roleCandidate !== null) {
+        payload.role = roleCandidate;
+      }
+
+      const { error: membershipErr } = await writeClient
+        .from(attempt.table)
+        .insert(payload as never);
+
+      if (!membershipErr) {
+        membershipCreated = true;
+        break outerMembership;
+      }
+
+      lastMembershipErrorMessage = membershipErr.message;
+
+      if (isUniqueViolation(membershipErr.message)) {
+        membershipCreated = true;
+        break outerMembership;
+      }
+
+      if (isRoleConstraintError(membershipErr.message)) {
+        continue;
+      }
+
+      if (isSchemaCompatibilityError(membershipErr.message)) {
+        const normalized = membershipErr.message.toLowerCase();
+        if (normalized.includes(attempt.userColumn)) {
+          break;
+        }
+        continue;
+      }
+
+      console.error("createCompanyForUser insert membership error:", membershipErr);
+      throw new Error(`Company created, but membership failed: ${membershipErr.message}`);
     }
-
-    lastMembershipErrorMessage = membershipErr.message;
-    if (isSchemaCompatibilityError(membershipErr.message)) {
-      continue;
-    }
-
-    console.error("createCompanyForUser insert membership error:", membershipErr);
-    throw new Error(`Company created, but membership failed: ${membershipErr.message}`);
   }
 
   if (!membershipCreated) {
