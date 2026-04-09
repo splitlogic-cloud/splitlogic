@@ -292,7 +292,6 @@ export async function listImportRowsForAllocation(
         status,
         allocation_status,
         matched_work_id,
-        matched_work_confidence,
         currency,
         net_amount,
         gross_amount
