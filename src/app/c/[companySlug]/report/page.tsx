@@ -126,6 +126,24 @@ function parsePositiveInt(value: string | null): number {
   return Math.floor(n);
 }
 
+function buildReportQuery(params: {
+  periodStart: string;
+  periodEnd: string;
+  countryFilter: string;
+  titleFilter: string;
+  artistFilter: string;
+  page?: number;
+}): string {
+  const qp = new URLSearchParams();
+  if (params.periodStart) qp.set("periodStart", params.periodStart);
+  if (params.periodEnd) qp.set("periodEnd", params.periodEnd);
+  if (params.countryFilter) qp.set("country", params.countryFilter);
+  if (params.titleFilter) qp.set("title", params.titleFilter);
+  if (params.artistFilter) qp.set("artist", params.artistFilter);
+  if (typeof params.page === "number") qp.set("page", String(params.page));
+  return qp.toString();
+}
+
 function groupTop(rows: ReportRow[], key: "title" | "artist" | "country"): GroupItem[] {
   const map = new Map<string, GroupItem>();
   for (const row of rows) {
@@ -353,16 +371,23 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
   const offset = (currentPage - 1) * pageSize;
   const pageRows = filteredRows.slice(offset, offset + pageSize);
 
-  const queryForPage = (nextPage: number) => {
-    const qp = new URLSearchParams();
-    if (periodStart) qp.set("periodStart", periodStart);
-    if (periodEnd) qp.set("periodEnd", periodEnd);
-    if (countryFilter) qp.set("country", countryFilter);
-    if (titleFilter) qp.set("title", titleFilter);
-    if (artistFilter) qp.set("artist", artistFilter);
-    qp.set("page", String(nextPage));
-    return qp.toString();
-  };
+  const queryForPage = (nextPage: number) =>
+    buildReportQuery({
+      periodStart,
+      periodEnd,
+      countryFilter,
+      titleFilter,
+      artistFilter,
+      page: nextPage,
+    });
+
+  const pdfHref = `/c/${companySlug}/report/pdf?${buildReportQuery({
+    periodStart,
+    periodEnd,
+    countryFilter,
+    titleFilter,
+    artistFilter,
+  })}`;
 
   return (
     <div className="space-y-6">
@@ -446,6 +471,12 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
             >
               Apply filters
             </button>
+            <Link
+              href={pdfHref}
+              className="inline-flex rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+            >
+              Export PDF
+            </Link>
             <Link
               href={`/c/${companySlug}/report`}
               className="inline-flex rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
