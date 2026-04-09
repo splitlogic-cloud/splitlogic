@@ -2,6 +2,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 
+function isMissingColumnError(message: string) {
+  return (
+    message.includes("Could not find the") ||
+    message.includes("column") ||
+    message.includes("schema cache") ||
+    message.includes("does not exist")
+  );
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const companySlug = searchParams.get("companySlug") || "";
@@ -26,15 +35,23 @@ export async function GET(req: Request) {
 
   if (!job) return NextResponse.json({ ok: false, error: "import not found" }, { status: 404 });
 
-  const q = supabase
-    .from("import_rows")
-    .select("id, row_number, status, error, raw")
-    .eq("import_id", importId)
-    .order("row_number", { ascending: true })
-    .limit(limit);
+  const fetchRows = async (column: "import_job_id" | "import_id") => {
+    const q = supabase
+      .from("import_rows")
+      .select("id, row_number, status, error, raw")
+      .eq(column, importId)
+      .order("row_number", { ascending: true })
+      .limit(limit);
 
-  const { data, error } = after > 0 ? await q.gt("row_number", after) : await q;
+    return after > 0 ? q.gt("row_number", after) : q;
+  };
 
+  let result = await fetchRows("import_job_id");
+  if (result.error && isMissingColumnError(result.error.message)) {
+    result = await fetchRows("import_id");
+  }
+
+  const { data, error } = result;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const nextAfter = data?.length ? data[data.length - 1].row_number : null;

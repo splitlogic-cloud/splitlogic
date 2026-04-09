@@ -2,6 +2,14 @@ import "server-only";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getMembershipCompanyRows, resolveMembershipUserIdFields } from "@/lib/company-membership";
+
+type CompanyRow = {
+  id: string;
+  slug: string | null;
+  name: string | null;
+  base_currency?: string | null;
+};
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,29 +33,11 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim();
 
-  // Your canonical membership table is `memberships` (not company_memberships)
-  // memberships: company_id, user_id
-  // companies: id, slug, (maybe name)
-  let query = supabase
-    .from("memberships")
-    .select("company_id, companies:companies(id,slug,name)")
-    .eq("user_id", auth.user.id);
-
-  // Optional search if name/slug exists in companies
-  if (q) {
-    // ilike on related table fields doesn't work directly in PostgREST select;
-    // simplest: fetch and filter client-side in this endpoint.
-  }
-
-  const { data, error } = await query;
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
-
-  const companiesRaw = (data ?? [])
-    .map((r: any) => r.companies)
-    .filter(Boolean);
+  const userField = await resolveMembershipUserIdFields(supabase, auth.user.id);
+  const companiesRaw = await getMembershipCompanyRows(supabase, auth.user.id, userField);
 
   const companies = q
-    ? companiesRaw.filter((c: any) => {
+    ? companiesRaw.filter((c: CompanyRow) => {
         const slug = String(c.slug ?? "").toLowerCase();
         const name = String(c.name ?? "").toLowerCase();
         const qq = q.toLowerCase();
@@ -74,13 +64,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let body: any = {};
+  let body: unknown = {};
   try {
     body = await req.json();
   } catch {}
-
-  const slug = String(body?.slug ?? "").trim();
-  const name = String(body?.name ?? "").trim() || slug;
+  const payload = (body ?? {}) as { slug?: unknown; name?: unknown };
+  const slug = String(payload.slug ?? "").trim();
+  const name = String(payload.name ?? "").trim() || slug;
 
   if (!slug) {
     return NextResponse.json({ ok: false, error: "Missing slug" }, { status: 400 });
@@ -89,16 +79,24 @@ export async function POST(req: NextRequest) {
   // 1) create company
   const { data: c, error: cErr } = await supabase
     .from("companies")
-    .insert({ slug, name } as any)
+    .insert({ slug, name })
     .select("id,slug,name")
     .single();
 
   if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 400 });
 
-  // 2) create membership
-  const { error: mErr } = await supabase
-    .from("memberships")
-    .insert({ company_id: c.id, user_id: auth.user.id } as any);
+  // 2) create membership (supports company_memberships + legacy memberships)
+  const userField = await resolveMembershipUserIdFields(supabase, auth.user.id);
+  const membershipPayload = { company_id: c.id, [userField]: auth.user.id } as Record<string, unknown>;
+
+  let mErr: { message: string } | null = null;
+  const m1 = await supabase.from("company_memberships").insert(membershipPayload as never);
+  if (m1.error) {
+    const m2 = await supabase.from("memberships").insert(membershipPayload as never);
+    if (m2.error) {
+      mErr = { message: m2.error.message };
+    }
+  }
 
   if (mErr) {
     return NextResponse.json(

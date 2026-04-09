@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { getCompanyMembershipForUserByCompanyId } from "@/lib/company-membership";
 
 type MembershipContext = {
   supabase: Awaited<ReturnType<typeof createClient>>;
@@ -35,12 +36,10 @@ async function requireCompanyMembershipBySlug(
   if (!company) throw new Error("Company not found");
 
   // Membership enforce (RLS-safe)
-  const { data: membership, error: memErr } = await supabase
-    .from("memberships")
-    .select("id, role")
-    .eq("company_id", company.id)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const { membership, error: memErr } = await getCompanyMembershipForUserByCompanyId({
+    companyId: company.id,
+    userId: user.id,
+  });
 
   if (memErr) throw new Error(memErr.message);
   if (!membership) throw new Error("Not a member of this company");

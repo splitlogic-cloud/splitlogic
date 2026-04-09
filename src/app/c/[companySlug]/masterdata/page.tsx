@@ -2,6 +2,7 @@ import Link from "next/link";
 import MasterdataActions from "@/features/masterdata/MasterdataActions";
 import { createClient } from "@/lib/supabase/server";
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
+import { requireCompanyMembership } from "@/lib/company-membership";
 
 export default async function MasterdataPage({
   params,
@@ -38,19 +39,16 @@ export default async function MasterdataPage({
 
   const company = await requireCompanyBySlugForUser(companySlug);
 
-  const { data: membership, error: memErr } = await supabase
-    .from("memberships")
-    .select("id, role")
-    .eq("company_id", company.id)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (memErr) {
+  let membership: { role: string | null } | null = null;
+  try {
+    membership = await requireCompanyMembership(company.id, user.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown membership error";
     return (
       <div className="p-6">
         <h1 className="text-2xl font-semibold">Masterdata</h1>
         <div className="mt-4 rounded-md border p-3 text-sm">
-          Membership error: {memErr.message}
+          Membership error: {message}
         </div>
       </div>
     );

@@ -48,19 +48,39 @@ async function getPartyForCompany(partyId: string, companyId: string) {
 }
 
 async function getSplitForWork(splitId: string, workId: string, companyId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("splits")
-    .select("id, company_id, work_id, party_id, role, share_percent")
-    .eq("id", splitId)
-    .eq("company_id", companyId)
-    .eq("work_id", workId)
-    .maybeSingle();
+  const attempts: Array<{ table: "work_splits" | "splits"; select: string }> = [
+    {
+      table: "work_splits",
+      select: "id, company_id, work_id, party_id, role, share_percent",
+    },
+    { table: "splits", select: "id, company_id, work_id, party_id, role, share_percent" },
+  ];
 
-  if (error || !data) {
-    throw new Error("Split not found for work");
+  for (const attempt of attempts) {
+    const { data, error } = await supabaseAdmin
+      .from(attempt.table)
+      .select(attempt.select)
+      .eq("id", splitId)
+      .eq("company_id", companyId)
+      .eq("work_id", workId)
+      .maybeSingle();
+
+    if (!error && data) {
+      const row = data as unknown as Record<string, unknown>;
+      return {
+        id: String(row.id),
+        company_id: String(row.company_id),
+        work_id: String(row.work_id),
+        party_id: String(row.party_id),
+        role: typeof row.role === "string" ? row.role : null,
+        share_percent:
+          typeof row.share_percent === "number" ? row.share_percent : Number(row.share_percent ?? 0),
+        __table: attempt.table,
+      };
+    }
   }
 
-  return data;
+  throw new Error("Split not found for work");
 }
 
 function parseSharePercent(raw: FormDataEntryValue | null) {
@@ -96,33 +116,60 @@ export async function createSplitAction(formData: FormData) {
 
   const normalizedRole = role || null;
 
-  const { data: existingSplit, error: existingSplitError } = await supabaseAdmin
-    .from("splits")
-    .select("id")
-    .eq("company_id", company.id)
-    .eq("work_id", workId)
-    .eq("party_id", partyId)
-    .eq("role", normalizedRole)
-    .maybeSingle();
+  let existingSplit: { id: string } | null = null;
+  for (const table of ["work_splits", "splits"] as const) {
+    const { data, error } = await supabaseAdmin
+      .from(table)
+      .select("id")
+      .eq("company_id", company.id)
+      .eq("work_id", workId)
+      .eq("party_id", partyId)
+      .eq("role", normalizedRole)
+      .maybeSingle();
 
-  if (existingSplitError) {
-    throw new Error(`Failed to check existing split: ${existingSplitError.message}`);
+    if (!error && data) {
+      existingSplit = data as { id: string };
+      break;
+    }
   }
 
   if (existingSplit) {
     throw new Error("A split already exists for this party and role on this work");
   }
 
-  const { error } = await supabaseAdmin.from("splits").insert({
-    company_id: company.id,
-    work_id: workId,
-    party_id: partyId,
-    role: normalizedRole,
-    share_percent: sharePercent,
-  });
+  let createError: string | null = null;
+  for (const payload of [
+    {
+      table: "work_splits" as const,
+      value: {
+        company_id: company.id,
+        work_id: workId,
+        party_id: partyId,
+        role: normalizedRole,
+        share_percent: sharePercent,
+      },
+    },
+    {
+      table: "splits" as const,
+      value: {
+        company_id: company.id,
+        work_id: workId,
+        party_id: partyId,
+        role: normalizedRole,
+        share_percent: sharePercent,
+      },
+    },
+  ]) {
+    const { error } = await supabaseAdmin.from(payload.table).insert(payload.value);
+    if (!error) {
+      createError = null;
+      break;
+    }
+    createError = error.message;
+  }
 
-  if (error) {
-    throw new Error(`Failed to create split: ${error.message}`);
+  if (createError) {
+    throw new Error(`Failed to create split: ${createError}`);
   }
 
   revalidateSplitPaths(companySlug, workId);
@@ -141,10 +188,10 @@ export async function updateSplitAction(formData: FormData) {
 
   const company = await getCompanyBySlug(companySlug);
   await getWorkForCompany(workId, company.id);
-  await getSplitForWork(splitId, workId, company.id);
+  const split = await getSplitForWork(splitId, workId, company.id);
 
   const { error } = await supabaseAdmin
-    .from("splits")
+    .from(split.__table)
     .update({
       role: role || null,
       share_percent: sharePercent,
@@ -171,10 +218,10 @@ export async function deleteSplitAction(formData: FormData) {
 
   const company = await getCompanyBySlug(companySlug);
   await getWorkForCompany(workId, company.id);
-  await getSplitForWork(splitId, workId, company.id);
+  const split = await getSplitForWork(splitId, workId, company.id);
 
   const { error } = await supabaseAdmin
-    .from("splits")
+    .from(split.__table)
     .delete()
     .eq("id", splitId)
     .eq("company_id", company.id)

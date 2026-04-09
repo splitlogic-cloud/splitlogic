@@ -1,5 +1,15 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServer } from "@/features/supabase/server";
+import { listMembershipsForUser } from "@/lib/company-membership";
+
+type DashboardMembershipRow = {
+  role: string | null;
+  company: {
+    id: string;
+    name: string | null;
+    base_currency: string | null;
+  };
+};
 
 export default async function DashboardPage() {
   const supabase = await createSupabaseServer();
@@ -7,10 +17,7 @@ export default async function DashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: memberships, error } = await supabase
-    .from("memberships")
-    .select("role, company:companies(id, name, base_currency)")
-    .eq("user_id", user.id);
+  const { memberships, error } = await listMembershipsForUser(user.id);
 
   return (
     <main style={{ padding: 40 }}>
@@ -22,7 +29,7 @@ export default async function DashboardPage() {
       {error && <p>Fel: {error.message}</p>}
 
       <ul>
-        {(memberships ?? []).map((m: any) => (
+        {(memberships ?? []).map((m: DashboardMembershipRow) => (
           <li key={m.company.id}>
             {m.company.name} ({m.company.base_currency}) – {m.role}
           </li>
