@@ -30,8 +30,21 @@ export async function deleteLatestImportAction(companySlug: string) {
   if (!job) return { ok: true };
 
   // Delete rows first
-  const { error: rErr } = await supabase.from("import_rows").delete().eq("import_id", job.id);
-  if (rErr) throw new Error(`delete import_rows failed: ${rErr.message}`);
+  const deleteByImportJobId = await supabase
+    .from("import_rows")
+    .delete()
+    .eq("import_job_id", job.id);
+
+  if (deleteByImportJobId.error) {
+    const deleteByImportId = await supabase
+      .from("import_rows")
+      .delete()
+      .eq("import_id", job.id);
+
+    if (deleteByImportId.error) {
+      throw new Error(`delete import_rows failed: ${deleteByImportId.error.message}`);
+    }
+  }
 
   // Delete job
   const { error: dErr } = await supabase.from("import_jobs").delete().eq("id", job.id);

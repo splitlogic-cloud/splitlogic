@@ -292,7 +292,6 @@ export async function listImportRowsForAllocation(
         status,
         allocation_status,
         matched_work_id,
-        matched_work_confidence,
         currency,
         net_amount,
         gross_amount
@@ -714,12 +713,7 @@ export async function finalizeAllocationRun(params: {
     payload.line_count = lineCount;
   }
 
-  if (totalSourceAmount !== null) {
-    payload.total_source_amount = totalSourceAmount;
-  }
-
   if (totalAllocatedAmount !== null) {
-    payload.total_allocated_amount = totalAllocatedAmount;
     payload.allocated_amount = totalAllocatedAmount;
   }
 

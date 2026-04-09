@@ -9,6 +9,58 @@ function isUuid(value: string) {
   return /^[0-9a-f-]{36}$/i.test(value);
 }
 
+async function loadImportRowCount(supabase: Awaited<ReturnType<typeof createClient>>, importId: string) {
+  const byImportJobId = await supabase
+    .from("import_rows")
+    .select("*", { count: "exact", head: true })
+    .eq("import_job_id", importId);
+
+  if (!byImportJobId.error) {
+    return byImportJobId.count ?? 0;
+  }
+
+  const byImportId = await supabase
+    .from("import_rows")
+    .select("*", { count: "exact", head: true })
+    .eq("import_id", importId);
+
+  if (byImportId.error) {
+    return 0;
+  }
+
+  return byImportId.count ?? 0;
+}
+
+async function loadImportRowsPreview(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  importId: string,
+  reviewLimit: number
+) {
+  const byImportJobId = await supabase
+    .from("import_rows")
+    .select("id,row_number,raw")
+    .eq("import_job_id", importId)
+    .order("row_number")
+    .limit(reviewLimit);
+
+  if (!byImportJobId.error) {
+    return byImportJobId.data ?? [];
+  }
+
+  const byImportId = await supabase
+    .from("import_rows")
+    .select("id,row_number,raw")
+    .eq("import_id", importId)
+    .order("row_number")
+    .limit(reviewLimit);
+
+  if (byImportId.error) {
+    return [];
+  }
+
+  return byImportId.data ?? [];
+}
+
 export default async function WorkImportPage({
   params,
 }: {
@@ -42,19 +94,11 @@ export default async function WorkImportPage({
     notFound();
   }
 
-  const { count } = await supabase
-    .from("import_rows")
-    .select("*", { count: "exact", head: true })
-    .eq("import_id", importId);
+  const count = await loadImportRowCount(supabase, importId);
 
   const reviewLimit = 200;
 
-  const { data: rows } = await supabase
-    .from("import_rows")
-    .select("id,row_number,raw")
-    .eq("import_id", importId)
-    .order("row_number")
-    .limit(reviewLimit);
+  const rows = await loadImportRowsPreview(supabase, importId, reviewLimit);
 
   const parsedRows =
     rows?.map((row) => ({

@@ -26,7 +26,7 @@ export default function UploadMasterdataClient({ companySlug }: Props) {
       const fd = new FormData();
       fd.append("file", file);
 
-      const res = await fetch(`/c/${companySlug}/masterdata/upload`, {
+      const res = await fetch(`/api/masterdata/upload/${companySlug}`, {
         method: "POST",
         body: fd,
       });

@@ -9,6 +9,7 @@ import RunAllocationButton from "./RunAllocationButton";
 import MatchReviewTable from "./MatchReviewTable";
 import AllocationRunSummary from "./AllocationRunSummary";
 import { runMatchingAction } from "./actions";
+import { summarizeAllocationReadinessForImportJob } from "@/features/allocations/allocations.service";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -96,6 +97,10 @@ export default async function ImportDetailPage({ params }: Params) {
   }
 
   const rows = await listAllImportRowStatuses(importJobId);
+  const readiness = await summarizeAllocationReadinessForImportJob({
+    companyId: company.id,
+    importJobId,
+  });
 
   let totalRows = 0;
   let parsedCount = 0;
@@ -217,6 +222,9 @@ export default async function ImportDetailPage({ params }: Params) {
           <p>Total rows: {totalRows}</p>
           <p>Rows with matched work: {matchedWorkCount}</p>
           <p>Rows with status &quot;matched&quot;: {strictMatchedCount}</p>
+          <p>Rows considered for allocation: {readiness.candidateRowCount}</p>
+          <p>Rows ready for allocation: {readiness.rowsReadyForAllocation}</p>
+          <p>Rows blocked by allocation rules: {readiness.blockedRowCount}</p>
           <p>Rows needing review: {reviewCount}</p>
           <p>Current import job status: {importJobStatus || "-"}</p>
         </div>
@@ -230,12 +238,50 @@ export default async function ImportDetailPage({ params }: Params) {
           <p className="mt-3 text-amber-700">
             Allocation is disabled because there are no rows with status matched yet.
           </p>
+        ) : readiness.rowsReadyForAllocation === 0 ? (
+          <p className="mt-3 text-amber-700">
+            Allocation is disabled because no matched rows currently pass allocation validation
+            (for example missing currency or missing split configuration on the matched work).
+          </p>
         ) : (
           <p className="mt-3 text-emerald-700">
-            Allocation can run. Unmatched or review rows will simply remain blocked and will
-            not stop allocation for already matched rows.
+            Allocation can run for {readiness.rowsReadyForAllocation} row
+            {readiness.rowsReadyForAllocation === 1 ? "" : "s"}. Rows that still have blockers
+            will remain unallocated.
           </p>
         )}
+
+        {readiness.blockedRowCount > 0 ? (
+          <div className="mt-3 text-xs text-neutral-600">
+            <div className="font-medium">Top allocation blockers (row count)</div>
+            <ul className="mt-1 list-disc pl-5">
+              {readiness.blockerCounts.ROW_CURRENCY_MISSING > 0 ? (
+                <li>Missing currency: {readiness.blockerCounts.ROW_CURRENCY_MISSING}</li>
+              ) : null}
+              {readiness.blockerCounts.NO_ACTIVE_SPLITS_FOR_WORK > 0 ? (
+                <li>
+                  No active split configuration on matched work:{" "}
+                  {readiness.blockerCounts.NO_ACTIVE_SPLITS_FOR_WORK}
+                </li>
+              ) : null}
+              {readiness.blockerCounts.SPLITS_NOT_100_PERCENT > 0 ? (
+                <li>Split total is not 100%: {readiness.blockerCounts.SPLITS_NOT_100_PERCENT}</li>
+              ) : null}
+              {readiness.blockerCounts.DUPLICATE_SPLIT_CONFIGURATION > 0 ? (
+                <li>
+                  Duplicate split configuration:{" "}
+                  {readiness.blockerCounts.DUPLICATE_SPLIT_CONFIGURATION}
+                </li>
+              ) : null}
+              {readiness.blockerCounts.ROW_AMOUNT_MISSING > 0 ? (
+                <li>Missing amount: {readiness.blockerCounts.ROW_AMOUNT_MISSING}</li>
+              ) : null}
+              {readiness.blockerCounts.ROW_NOT_MATCHED_TO_WORK > 0 ? (
+                <li>Missing matched work: {readiness.blockerCounts.ROW_NOT_MATCHED_TO_WORK}</li>
+              ) : null}
+            </ul>
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-3">

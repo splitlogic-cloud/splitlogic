@@ -23,6 +23,11 @@ export async function POST(
   await supabase
     .from("import_rows")
     .delete()
+    .eq("import_job_id", importJobId);
+
+  await supabase
+    .from("import_rows")
+    .delete()
     .eq("import_id", importJobId);
 
   await supabase

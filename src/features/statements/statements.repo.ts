@@ -107,6 +107,18 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function isMissingSchemaColumnError(message: string, column: string): boolean {
+  const normalized = message.toLowerCase();
+  if (
+    !normalized.includes("does not exist") &&
+    !normalized.includes("could not find the") &&
+    !normalized.includes("schema cache")
+  ) {
+    return false;
+  }
+  return normalized.includes(column.toLowerCase());
+}
+
 function normalizeDate(value: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -213,9 +225,7 @@ function normalizeStatementLineRow(row: Record<string, unknown>): StatementLineR
 export async function listStatementsByCompany(
   companyId: string
 ): Promise<StatementListRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select(`
+  const withNoteAndCreatedBySelect = `
       id,
       company_id,
       party_id,
@@ -224,37 +234,119 @@ export async function listStatementsByCompany(
       status,
       currency,
       total_amount,
-      generated_from,
       note,
       created_at,
       created_by,
       parties (
         name
       )
-    `)
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(500);
+    `;
+  const withNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      note,
+      created_at,
+      parties (
+        name
+      )
+    `;
+  const withoutNoteWithCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      created_at,
+      created_by,
+      parties (
+        name
+      )
+    `;
+  const withoutNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      created_at,
+      parties (
+        name
+      )
+    `;
+  const variants = [
+    {
+      includeNote: true,
+      includeCreatedBy: true,
+      select: withNoteAndCreatedBySelect,
+    },
+    {
+      includeNote: true,
+      includeCreatedBy: false,
+      select: withNoteWithoutCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: true,
+      select: withoutNoteWithCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: false,
+      select: withoutNoteWithoutCreatedBySelect,
+    },
+  ] as const;
 
-  if (error) {
+  for (const variant of variants) {
+    const { data, error } = await supabaseAdmin
+      .from("statements")
+      .select(variant.select)
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (!error) {
+      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      return rows.map((row) =>
+        normalizeStatementListRow({
+          ...row,
+          generated_from: null,
+          note: variant.includeNote ? row.note : null,
+          created_by: variant.includeCreatedBy ? row.created_by : null,
+          party_name: asString(asObject(row.parties)?.name) ?? null,
+        })
+      );
+    }
+
+    if (
+      (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) ||
+      (variant.includeCreatedBy && isMissingSchemaColumnError(error.message, "created_by"))
+    ) {
+      continue;
+    }
+
     throw new Error(`listStatementsByCompany failed: ${error.message}`);
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) =>
-    normalizeStatementListRow({
-      ...row,
-      party_name: asString(asObject(row.parties)?.name) ?? null,
-    })
-  );
+  return [];
 }
 
 export async function getStatementHeader(
   companyId: string,
   statementId: string
 ): Promise<StatementHeaderRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select(`
+  const withNoteAndCreatedBySelect = `
       id,
       company_id,
       party_id,
@@ -263,32 +355,116 @@ export async function getStatementHeader(
       status,
       currency,
       total_amount,
-      generated_from,
       note,
       created_at,
       created_by,
       parties (
         name
       )
-    `)
-    .eq("company_id", companyId)
-    .eq("id", statementId)
-    .maybeSingle();
+    `;
+  const withNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      note,
+      created_at,
+      parties (
+        name
+      )
+    `;
+  const withoutNoteWithCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      created_at,
+      created_by,
+      parties (
+        name
+      )
+    `;
+  const withoutNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      created_at,
+      parties (
+        name
+      )
+    `;
+  const variants = [
+    {
+      includeNote: true,
+      includeCreatedBy: true,
+      select: withNoteAndCreatedBySelect,
+    },
+    {
+      includeNote: true,
+      includeCreatedBy: false,
+      select: withNoteWithoutCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: true,
+      select: withoutNoteWithCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: false,
+      select: withoutNoteWithoutCreatedBySelect,
+    },
+  ] as const;
 
-  if (error) {
+  for (const variant of variants) {
+    const { data, error } = await supabaseAdmin
+      .from("statements")
+      .select(variant.select)
+      .eq("company_id", companyId)
+      .eq("id", statementId)
+      .maybeSingle();
+
+    if (!error) {
+      if (!data) {
+        return null;
+      }
+      const row = data as unknown as Record<string, unknown>;
+
+      return {
+        ...normalizeStatementListRow({
+          ...row,
+          generated_from: null,
+          note: variant.includeNote ? row.note : null,
+          created_by: variant.includeCreatedBy ? row.created_by : null,
+          party_name: asString(asObject(row.parties)?.name) ?? null,
+        }),
+      };
+    }
+
+    if (
+      (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) ||
+      (variant.includeCreatedBy && isMissingSchemaColumnError(error.message, "created_by"))
+    ) {
+      continue;
+    }
+
     throw new Error(`getStatementHeader failed: ${error.message}`);
   }
 
-  if (!data) {
-    return null;
-  }
-
-  return {
-    ...normalizeStatementListRow({
-      ...data,
-      party_name: asString(asObject(data.parties)?.name) ?? null,
-    }),
-  };
+  return null;
 }
 
 export async function listStatementLines(

@@ -51,6 +51,23 @@ type WorkSplitJoinRow = {
     | null;
 };
 
+type WorkLegacySplitJoinRow = {
+  work_id: string | null;
+  share_percent: number | null;
+  works:
+    | {
+        id: string;
+        title: string | null;
+        company_id?: string | null;
+      }
+    | Array<{
+        id: string;
+        title: string | null;
+        company_id?: string | null;
+      }>
+    | null;
+};
+
 function normalizeJoinedWork(
   works: WorkSplitJoinRow["works"]
 ): { id: string; title: string | null } | null {
@@ -75,7 +92,10 @@ function normalizeJoinedWork(
 }
 
 async function loadCoverageRows(companyId: string): Promise<WorkSplitCoverageRow[]> {
-  const { data, error } = await supabaseAdmin
+  let data: WorkSplitJoinRow[] | WorkLegacySplitJoinRow[] = [];
+  let errorMessage: string | null = null;
+
+  const preferred = await supabaseAdmin
     .from("work_splits")
     .select(
       `
@@ -90,19 +110,48 @@ async function loadCoverageRows(companyId: string): Promise<WorkSplitCoverageRow
     )
     .eq("company_id", companyId);
 
-  if (error) {
-    throw new Error(`loadCoverageRows failed: ${error.message}`);
+  if (!preferred.error) {
+    data = (preferred.data ?? []) as WorkSplitJoinRow[];
+  } else {
+    errorMessage = preferred.error.message;
+
+    const legacy = await supabaseAdmin
+      .from("splits")
+      .select(
+        `
+        work_id,
+        share_percent,
+        works!inner (
+          id,
+          title,
+          company_id
+        )
+        `
+      )
+      .eq("company_id", companyId);
+
+    if (legacy.error) {
+      throw new Error(
+        `loadCoverageRows failed: ${legacy.error.message} (fallback after: ${errorMessage})`
+      );
+    }
+
+    data = (legacy.data ?? []) as WorkLegacySplitJoinRow[];
   }
 
   const grouped = new Map<string, WorkSplitCoverageRow>();
 
-  for (const rawRow of (data ?? []) as WorkSplitJoinRow[]) {
-    const work = normalizeJoinedWork(rawRow.works);
-    const workId = work?.id ?? rawRow.work_id ?? null;
+  for (const rawRow of data) {
+    const row = rawRow as WorkSplitJoinRow & WorkLegacySplitJoinRow;
+    const work = normalizeJoinedWork(row.works);
+    const workId = work?.id ?? row.work_id ?? null;
 
     if (!workId) continue;
 
-    const shareBps = Number(rawRow.share_bps ?? 0);
+    const shareBps =
+      row.share_bps != null
+        ? Number(row.share_bps)
+        : Math.round(Number(row.share_percent ?? 0) * 100);
 
     const current = grouped.get(workId) ?? {
       work_id: workId,

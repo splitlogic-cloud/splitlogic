@@ -4,6 +4,14 @@ import { createAuditEvent } from "@/features/audit/audit.repo";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function isMissingColumnError(message: string, column: string) {
+  const lower = message.toLowerCase();
+  return (
+    (lower.includes("column") || lower.includes("schema cache") || lower.includes("does not exist")) &&
+    lower.includes(column.toLowerCase())
+  );
+}
+
 type Ctx = {
   params: Promise<{
     companySlug: string;
@@ -24,14 +32,39 @@ export async function POST(req: Request, context: Ctx): Promise<Response> {
     return new Response("Company not found", { status: 404 });
   }
 
-  const { data: statement, error: statementError } = await supabaseAdmin
+  let statement: { id: string; company_id: string; status: string | null; party_id: string | null } | null = null;
+
+  const withNote = await supabaseAdmin
     .from("statements")
     .select("id, company_id, status, party_id, note")
     .eq("id", id)
     .eq("company_id", company.id)
     .maybeSingle();
 
-  if (statementError || !statement) {
+  if (!withNote.error) {
+    statement = withNote.data as
+      | { id: string; company_id: string; status: string | null; party_id: string | null }
+      | null;
+  } else if (isMissingColumnError(withNote.error.message, "note")) {
+    const withoutNote = await supabaseAdmin
+      .from("statements")
+      .select("id, company_id, status, party_id")
+      .eq("id", id)
+      .eq("company_id", company.id)
+      .maybeSingle();
+
+    if (withoutNote.error) {
+      return new Response(`Failed to load statement: ${withoutNote.error.message}`, { status: 500 });
+    }
+
+    statement = withoutNote.data as
+      | { id: string; company_id: string; status: string | null; party_id: string | null }
+      | null;
+  } else {
+    return new Response(`Failed to load statement: ${withNote.error.message}`, { status: 500 });
+  }
+
+  if (!statement) {
     return new Response("Statement not found", { status: 404 });
   }
 

@@ -1,25 +1,49 @@
 import { NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createCalcRunSnapshot } from "@/features/calcs/calcRuns.repo";
 import { getActiveRulesetForDate } from "@/features/contracts/rulesets.repo";
+import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 
-async function handle(body: any) {
-  if (!body?.companyId || !body?.periodStart || !body?.periodEnd) {
+async function resolveCompanyIdFromBody(
+  body: Record<string, unknown>
+): Promise<string> {
+  const rawCompanyId = String(body.companyId ?? "").trim();
+  if (rawCompanyId) {
+    return rawCompanyId;
+  }
+
+  const companySlug = String(body.companySlug ?? "").trim();
+  if (!companySlug) {
+    throw new Error("Missing companyId or companySlug");
+  }
+
+  const company = await requireCompanyBySlugForUser(companySlug);
+  return company.id;
+}
+
+async function handle(body: Record<string, unknown>) {
+  const periodStart = String(body.periodStart ?? "").trim();
+  const periodEnd = String(body.periodEnd ?? "").trim();
+
+  if (!periodStart || !periodEnd) {
     return NextResponse.json(
-      { error: "Missing companyId, periodStart, periodEnd" },
+      { error: "Missing periodStart or periodEnd" },
       { status: 400 }
     );
   }
 
+  const companyId = await resolveCompanyIdFromBody(body);
+
   const ruleset = await getActiveRulesetForDate({
-    companyId: body.companyId,
-    date: body.periodEnd,
+    companyId,
+    date: periodEnd,
   });
 
   const snapshot = await createCalcRunSnapshot({
-    companyId: body.companyId,
+    companyId,
     rulesetId: ruleset.id,
-    periodStart: body.periodStart,
-    periodEnd: body.periodEnd,
+    periodStart,
+    periodEnd,
     engineVersion: "engine@0.1.0",
     roundingPolicyVersion: "round@1",
   });
@@ -28,16 +52,36 @@ async function handle(body: any) {
 }
 
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => null);
+  const supabase = await createSupabaseServerClient();
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+
+  if (authErr || !auth?.user) {
+    return NextResponse.json(
+      { ok: false, error: "Not authenticated" },
+      { status: 401 }
+    );
+  }
+
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   return handle(body);
 }
 
 // Allow quick testing in browser:
-// /api/calc-runs/create?companyId=...&periodStart=2023-05-01&periodEnd=2023-05-31
+// /api/calc-runs/create?companySlug=...&periodStart=2023-05-01&periodEnd=2023-05-31
 export async function GET(req: Request) {
+  const supabase = await createSupabaseServerClient();
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+
+  if (authErr || !auth?.user) {
+    return NextResponse.json(
+      { ok: false, error: "Not authenticated" },
+      { status: 401 }
+    );
+  }
+
   const url = new URL(req.url);
-  const body = {
-    companyId: url.searchParams.get("companyId"),
+  const body: Record<string, unknown> = {
+    companySlug: url.searchParams.get("companySlug"),
     periodStart: url.searchParams.get("periodStart"),
     periodEnd: url.searchParams.get("periodEnd"),
   };

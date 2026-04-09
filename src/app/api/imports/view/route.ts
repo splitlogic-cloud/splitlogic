@@ -2,9 +2,14 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { resolveMemberCompanyId } from "@/lib/company-membership";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
 
 export async function POST(req: Request) {
   try {
@@ -14,38 +19,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
     }
 
-    const body = await req.json().catch(() => ({} as any));
-    const companyId = String(body.companyId ?? "").trim();
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const requestedCompanyId = String(body.companyId ?? "").trim();
+    const companySlug = String(body.companySlug ?? "").trim();
     const importJobId = String(body.importJobId ?? "").trim();
 
-    if (!companyId || !importJobId) {
-      return NextResponse.json({ ok: false, error: "missing companyId/importJobId" }, { status: 400 });
+    if (!importJobId || (!requestedCompanyId && !companySlug)) {
+      return NextResponse.json(
+        { ok: false, error: "missing importJobId and company scope" },
+        { status: 400 }
+      );
     }
 
-    // membership check (company_memberships har ingen id, vi selectar role)
-    const m1 = await supabaseAdmin
-      .from("company_memberships")
-      .select("role")
-      .eq("company_id", companyId)
-      .eq("user_id", auth.user.id)
-      .maybeSingle();
+    const companyId = requestedCompanyId
+      ? await resolveMemberCompanyId(auth.user.id, { companyId: requestedCompanyId })
+      : await resolveMemberCompanyId(auth.user.id, { companySlug });
 
-    let membership = !m1.error ? m1.data : null;
-
-    if (!membership) {
-      const m2 = await supabaseAdmin
-        .from("company_memberships")
-        .select("role")
-        .eq("company_id", companyId)
-        .eq("profile_id", auth.user.id)
-        .maybeSingle();
-
-      if (m2.error) throw new Error(m2.error.message);
-      membership = m2.data;
-    }
-
-    if (!membership) {
-      return NextResponse.json({ ok: false, error: "Not a member of this company" }, { status: 403 });
+    if (!companyId) {
+      return NextResponse.json(
+        { ok: false, error: "Not a member of this company" },
+        { status: 403 }
+      );
     }
 
     // load job
@@ -60,20 +54,33 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: jobErr.message }, { status: 500 });
     }
 
-    // load rows (schema-tolerant)
-    const { data: rows, error: rowsErr } = await supabaseAdmin
+    let rows: unknown[] = [];
+    const byImportJobId = await supabaseAdmin
       .from("import_rows")
       .select("id,row_number,status,error,raw")
-      .eq("import_id", importJobId)
+      .eq("import_job_id", importJobId)
       .order("row_number", { ascending: true })
       .limit(2000);
 
-    if (rowsErr) {
-      return NextResponse.json({ ok: false, error: rowsErr.message }, { status: 500 });
+    if (!byImportJobId.error) {
+      rows = byImportJobId.data ?? [];
+    } else {
+      const byImportId = await supabaseAdmin
+        .from("import_rows")
+        .select("id,row_number,status,error,raw")
+        .eq("import_id", importJobId)
+        .order("row_number", { ascending: true })
+        .limit(2000);
+
+      if (byImportId.error) {
+        return NextResponse.json({ ok: false, error: byImportId.error.message }, { status: 500 });
+      }
+
+      rows = byImportId.data ?? [];
     }
 
     return NextResponse.json({ ok: true, job, rows: rows ?? [] });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  } catch (error) {
+    return NextResponse.json({ ok: false, error: safeErrorMessage(error) }, { status: 500 });
   }
 }

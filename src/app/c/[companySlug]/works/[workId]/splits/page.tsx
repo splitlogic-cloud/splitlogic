@@ -65,14 +65,54 @@ export default async function SplitsPage({ params }: PageProps) {
     throw new Error("Work not found");
   }
 
-  const { data: splitsData, error: splitsError } = await supabaseAdmin
-    .from("splits")
-    .select("id, party_id, role, share_percent, parties(id, name, type)")
-    .eq("company_id", company.id)
-    .eq("work_id", work.id);
+  const splitCandidates = [
+    {
+      table: "work_splits",
+      select: "id, party_id, role, share_percent, parties(id, name, type)",
+    },
+    {
+      table: "work_splits",
+      select: "id, party_id, role, share_bps, parties(id, name, type)",
+    },
+    {
+      table: "splits",
+      select: "id, party_id, role, share_percent, parties(id, name, type)",
+    },
+  ] as const;
 
-  if (splitsError) {
-    throw new Error(`Failed to load splits: ${splitsError.message}`);
+  let splitsData: unknown[] | null = null;
+  let splitsError: Error | null = null;
+
+  for (const candidate of splitCandidates) {
+    const { data, error } = await supabaseAdmin
+      .from(candidate.table)
+      .select(candidate.select)
+      .eq("company_id", company.id)
+      .eq("work_id", work.id);
+
+    if (!error) {
+      const mapped = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.id),
+        party_id: String(row.party_id),
+        role: typeof row.role === "string" ? row.role : null,
+        share_percent:
+          typeof row.share_percent === "number"
+            ? row.share_percent
+            : typeof row.share_bps === "number"
+              ? Number(row.share_bps) / 100
+              : null,
+        parties: (row.parties as Split["parties"]) ?? null,
+      }));
+      splitsData = mapped;
+      splitsError = null;
+      break;
+    }
+
+    splitsError = new Error(error.message);
+  }
+
+  if (!splitsData) {
+    throw new Error(`Failed to load splits: ${splitsError?.message ?? "unknown error"}`);
   }
 
   const { data: partiesData, error: partiesError } = await supabaseAdmin

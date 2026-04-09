@@ -1,17 +1,6 @@
 // src/app/c/[companySlug]/parties/new/page.tsx
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
-
-const ALLOWED_PARTY_TYPES = [
-  "artist",
-  "producer",
-  "writer",
-  "label",
-  "publisher",
-  "manager",
-  "other",
-] as const;
+import { createPartyAction } from "../actions";
 
 export default async function NewPartyPage({
   params,
@@ -19,51 +8,6 @@ export default async function NewPartyPage({
   params: Promise<{ companySlug: string }>;
 }) {
   const { companySlug } = await params;
-
-  async function createParty(formData: FormData) {
-    "use server";
-
-    const supabase = await createClient();
-
-    const name = String(formData.get("name") || "").trim();
-    const email = String(formData.get("email") || "").trim();
-    const type = String(formData.get("type") || "").trim().toLowerCase();
-
-    if (!name) {
-      throw new Error("Name is required");
-    }
-
-    if (!ALLOWED_PARTY_TYPES.includes(type as (typeof ALLOWED_PARTY_TYPES)[number])) {
-      throw new Error(`Invalid party type: ${type}`);
-    }
-
-    const { data: company, error: companyError } = await supabase
-      .from("companies")
-      .select("id, slug")
-      .eq("slug", companySlug)
-      .maybeSingle();
-
-    if (companyError) {
-      throw new Error(`Failed to load company: ${companyError.message}`);
-    }
-
-    if (!company) {
-      throw new Error("Company not found");
-    }
-
-    const { error } = await supabase.from("parties").insert({
-      company_id: company.id,
-      name,
-      email: email || null,
-      type,
-    });
-
-    if (error) {
-      throw new Error(`Failed to create party: ${error.message}`);
-    }
-
-    redirect(`/c/${companySlug}/parties`);
-  }
 
   return (
     <div className="max-w-xl space-y-6">
@@ -75,7 +19,7 @@ export default async function NewPartyPage({
       </div>
 
       <form
-        action={createParty}
+        action={createPartyAction.bind(null, companySlug)}
         className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
       >
         <div className="space-y-1">

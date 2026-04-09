@@ -21,6 +21,18 @@ export type AllocationQASummary = {
   currency: string | null;
   partyCount: number;
   workCount: number;
+  blockerCount: number;
+};
+
+export type AllocationQABlockerRow = {
+  blockerId: string;
+  importRowId: string | null;
+  severity: "info" | "warning" | "error";
+  blockerCode: string;
+  message: string;
+  rowNumber: number | null;
+  rowStatus: string | null;
+  rawTitle: string | null;
 };
 
 type AllocationRowRaw = {
@@ -32,6 +44,14 @@ type AllocationRowRaw = {
   share_bps: string | number | null;
   allocated_amount: string | number | null;
   currency: string | null;
+};
+
+type AllocationRunBlockerRaw = {
+  id: string;
+  import_row_id: string | null;
+  severity: "info" | "warning" | "error" | null;
+  blocker_code: string | null;
+  message: string | null;
 };
 
 function toNumber(value: unknown): number {
@@ -77,10 +97,43 @@ async function loadAllocationRows(allocationRunId: string): Promise<AllocationRo
   return allRows;
 }
 
+async function loadAllocationRunBlockers(
+  allocationRunId: string
+): Promise<AllocationRunBlockerRaw[]> {
+  const allRows: AllocationRunBlockerRaw[] = [];
+  let from = 0;
+  const batchSize = 1000;
+
+  while (true) {
+    const to = from + batchSize - 1;
+
+    const { data, error } = await supabaseAdmin
+      .from("allocation_run_blockers")
+      .select("id, import_row_id, severity, blocker_code, message")
+      .eq("allocation_run_id", allocationRunId)
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`loadAllocationRunBlockers failed: ${error.message}`);
+    }
+
+    const batch = (data ?? []) as AllocationRunBlockerRaw[];
+    allRows.push(...batch);
+
+    if (batch.length < batchSize) break;
+    from += batchSize;
+  }
+
+  return allRows;
+}
+
 export async function getAllocationQASummary(params: {
   allocationRunId: string;
 }): Promise<AllocationQASummary> {
-  const rows = await loadAllocationRows(params.allocationRunId);
+  const [rows, blockers] = await Promise.all([
+    loadAllocationRows(params.allocationRunId),
+    loadAllocationRunBlockers(params.allocationRunId),
+  ]);
 
   const totalAllocated = round6(
     rows.reduce((sum, row) => sum + toNumber(row.allocated_amount), 0)
@@ -96,6 +149,7 @@ export async function getAllocationQASummary(params: {
     currency: currencies.length === 1 ? currencies[0] : null,
     partyCount: new Set(rows.map((row) => row.party_id)).size,
     workCount: new Set(rows.map((row) => row.work_id)).size,
+    blockerCount: blockers.length,
   };
 }
 
@@ -154,4 +208,68 @@ export async function listAllocationQARows(params: {
     allocatedAmount: round6(toNumber(row.allocated_amount)),
     currency: row.currency,
   }));
+}
+
+export async function listAllocationQABlockers(params: {
+  allocationRunId: string;
+  limit?: number;
+}): Promise<AllocationQABlockerRow[]> {
+  const blockers = await loadAllocationRunBlockers(params.allocationRunId);
+  const limitedBlockers = blockers.slice(0, params.limit ?? 1000);
+
+  if (limitedBlockers.length === 0) {
+    return [];
+  }
+
+  const importRowIds = Array.from(
+    new Set(
+      limitedBlockers
+        .map((blocker) => blocker.import_row_id)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const importRowsById = new Map<
+    string,
+    { row_number: number | null; status: string | null; raw_title: string | null }
+  >();
+
+  if (importRowIds.length > 0) {
+    const { data, error } = await supabaseAdmin
+      .from("import_rows")
+      .select("id, row_number, status, raw_title")
+      .in("id", importRowIds);
+
+    if (error) {
+      throw new Error(`listAllocationQABlockers import rows failed: ${error.message}`);
+    }
+
+    for (const row of data ?? []) {
+      importRowsById.set(String(row.id), {
+        row_number:
+          typeof row.row_number === "number" && Number.isFinite(row.row_number)
+            ? row.row_number
+            : null,
+        status: typeof row.status === "string" ? row.status : null,
+        raw_title: typeof row.raw_title === "string" ? row.raw_title : null,
+      });
+    }
+  }
+
+  return limitedBlockers.map((blocker) => {
+    const importRow = blocker.import_row_id
+      ? importRowsById.get(blocker.import_row_id) ?? null
+      : null;
+
+    return {
+      blockerId: blocker.id,
+      importRowId: blocker.import_row_id,
+      severity: blocker.severity ?? "error",
+      blockerCode: blocker.blocker_code ?? "UNKNOWN",
+      message: blocker.message ?? "Unknown blocker",
+      rowNumber: importRow?.row_number ?? null,
+      rowStatus: importRow?.status ?? null,
+      rawTitle: importRow?.raw_title ?? null,
+    };
+  });
 }

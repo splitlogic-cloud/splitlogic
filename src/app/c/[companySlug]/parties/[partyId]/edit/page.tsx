@@ -6,6 +6,135 @@ import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+function isMissingColumnError(message: string): boolean {
+  return (
+    message.includes("column") &&
+    (message.includes("does not exist") || message.includes("schema cache"))
+  );
+}
+
+function asNullableString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (value == null) return null;
+  return String(value);
+}
+
+async function loadPartyForEdit(params: {
+  companyId: string;
+  partyId: string;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+}): Promise<{
+  id: string;
+  name: string | null;
+  email: string | null;
+  type: string | null;
+  external_id: string | null;
+}> {
+  const attempts: Array<{ select: string }> = [
+    { select: "id,name,email,type,external_id" },
+    { select: "id,name,email,type" },
+    { select: "id,name,email,external_id" },
+    { select: "id,name,email" },
+    { select: "id,name,type,external_id" },
+    { select: "id,name,type" },
+    { select: "id,name,external_id" },
+    { select: "id,name" },
+  ];
+
+  for (const attempt of attempts) {
+    const { data, error } = await params.supabase
+      .from("parties")
+      .select(attempt.select)
+      .eq("company_id", params.companyId)
+      .eq("id", params.partyId)
+      .maybeSingle();
+
+    if (!error) {
+      if (!data) {
+        throw new Error(`Party not found for id: ${params.partyId}`);
+      }
+
+      const record = data as unknown as Record<string, unknown>;
+      return {
+        id: String(record.id),
+        name: asNullableString(record.name),
+        email: asNullableString(record.email),
+        type: asNullableString(record.type),
+        external_id: asNullableString(record.external_id),
+      };
+    }
+
+    if (!isMissingColumnError(error.message)) {
+      throw new Error(`load party failed: ${error.message}`);
+    }
+  }
+
+  throw new Error("load party failed: no compatible parties columns found");
+}
+
+async function updatePartyRecord(params: {
+  companyId: string;
+  partyId: string;
+  name: string;
+  email: string | null;
+  type: string | null;
+  externalId: string | null;
+  supabase: Awaited<ReturnType<typeof createClient>>;
+}): Promise<void> {
+  const payloadAttempts: Array<Record<string, unknown>> = [
+    {
+      name: params.name,
+      email: params.email,
+      type: params.type,
+      external_id: params.externalId,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      name: params.name,
+      email: params.email,
+      type: params.type,
+      external_id: params.externalId,
+    },
+    {
+      name: params.name,
+      email: params.email,
+      type: params.type,
+    },
+    {
+      name: params.name,
+      email: params.email,
+    },
+    {
+      name: params.name,
+      type: params.type,
+    },
+    {
+      name: params.name,
+    },
+  ];
+
+  for (const payload of payloadAttempts) {
+    const { error } = await params.supabase
+      .from("parties")
+      .update(payload)
+      .eq("company_id", params.companyId)
+      .eq("id", params.partyId);
+
+    if (!error) {
+      return;
+    }
+
+    if (!isMissingColumnError(error.message)) {
+      throw new Error(`update party failed: ${error.message}`);
+    }
+  }
+
+  throw new Error("update party failed: no compatible parties columns found");
+}
+
 export default async function EditPartyPage({
   params,
 }: {
@@ -28,20 +157,11 @@ export default async function EditPartyPage({
     throw new Error(`Company not found for slug: ${companySlug}`);
   }
 
-  const { data: party, error: partyError } = await supabase
-    .from("parties")
-    .select("id,name,email,type,external_id")
-    .eq("company_id", company.id)
-    .eq("id", partyId)
-    .maybeSingle();
-
-  if (partyError) {
-    throw new Error(`load party failed: ${partyError.message}`);
-  }
-
-  if (!party) {
-    throw new Error(`Party not found for id: ${partyId}`);
-  }
+  const party = await loadPartyForEdit({
+    companyId: company.id,
+    partyId,
+    supabase,
+  });
 
   async function updateParty(formData: FormData) {
     "use server";
@@ -67,21 +187,15 @@ export default async function EditPartyPage({
       throw new Error("Company not found");
     }
 
-    const { error } = await supabase
-      .from("parties")
-      .update({
-        name,
-        email: emailRaw || null,
-        type: typeRaw || null,
-        external_id: externalIdRaw || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("company_id", company.id)
-      .eq("id", partyId);
-
-    if (error) {
-      throw new Error(`update party failed: ${error.message}`);
-    }
+    await updatePartyRecord({
+      companyId: company.id,
+      partyId,
+      name,
+      email: emailRaw || null,
+      type: typeRaw || null,
+      externalId: externalIdRaw || null,
+      supabase,
+    });
 
     revalidatePath(`/c/${companySlug}/parties`);
     revalidatePath(`/c/${companySlug}/parties/${partyId}/edit`);

@@ -1,6 +1,7 @@
 import "server-only";
 import { notFound } from "next/navigation";
 import { createClient } from "@/features/supabase/server";
+import { getCompanyMembership } from "@/lib/company-membership";
 
 export type CompanyContext = {
   companyId: string;
@@ -16,26 +17,22 @@ export async function requireActiveCompany(companyId: string): Promise<CompanyCo
     notFound();
   }
 
-  const { data: membership, error: memErr } = await supabase
-    .from("memberships")
-    .select("role")
-    .eq("company_id", companyId)
-    .eq("user_id", userRes.user.id)
-    .maybeSingle();
+  const membership = await getCompanyMembership({
+    companyId,
+    userId: userRes.user.id,
+  });
 
-  // Om memberships-tabellen är skyddad av RLS kan memErr bli "permission denied"
-  // Det ska också bli 404 ur användarens perspektiv.
-  if (memErr) {
-    notFound();
-  }
-
-  // Inte medlem → 404 (maskar existence)
   if (!membership) {
     notFound();
   }
 
   return {
     companyId,
-    role: membership.role,
+    role:
+      membership.role === "admin" ||
+      membership.role === "accountant" ||
+      membership.role === "artist"
+        ? membership.role
+        : "artist",
   };
 }

@@ -122,6 +122,19 @@ function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((v): v is string => Boolean(v)))];
 }
 
+function isMissingSchemaEntity(message: string, entities: string[]): boolean {
+  const normalized = message.toLowerCase();
+  if (
+    !normalized.includes("does not exist") &&
+    !normalized.includes("could not find") &&
+    !normalized.includes("not found in the schema cache")
+  ) {
+    return false;
+  }
+
+  return entities.some((entity) => normalized.includes(entity.toLowerCase()));
+}
+
 function determineQaLevel(params: {
   diffVsLedger?: number | null;
   diffVsLines?: number | null;
@@ -162,6 +175,30 @@ async function getStatementHeader(
     .maybeSingle();
 
   if (error) {
+    if (isMissingSchemaEntity(error.message, ["currency", "total_amount"])) {
+      const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+        .from("statements")
+        .select("id, company_id")
+        .eq("company_id", companyId)
+        .eq("id", statementId)
+        .maybeSingle();
+
+      if (fallbackError) {
+        throw new Error(`Failed to load statement header: ${fallbackError.message}`);
+      }
+
+      if (!fallbackData) {
+        return null;
+      }
+
+      return {
+        id: String(fallbackData.id),
+        company_id: String(fallbackData.company_id),
+        currency: null,
+        total_amount: null,
+      };
+    }
+
     throw new Error(`Failed to load statement header: ${error.message}`);
   }
 
@@ -184,6 +221,16 @@ async function getStatementLines(statementId: string): Promise<StatementLineRow[
     .eq("statement_id", statementId);
 
   if (error) {
+    if (
+      isMissingSchemaEntity(error.message, [
+        "statement_lines",
+        "amount",
+        "currency",
+        "statement_id",
+      ])
+    ) {
+      return [];
+    }
     throw new Error(`Failed to load statement lines for QA: ${error.message}`);
   }
 
@@ -200,6 +247,19 @@ async function getStatementLedger(statementId: string): Promise<StatementLedgerR
     .eq("statement_id", statementId);
 
   if (error) {
+    if (
+      isMissingSchemaEntity(error.message, [
+        "statement_ledger",
+        "amount",
+        "currency",
+        "allocation_row_id",
+        "work_id",
+        "earning_date",
+        "statement_id",
+      ])
+    ) {
+      return [];
+    }
     throw new Error(`Failed to load statement ledger for QA: ${error.message}`);
   }
 
@@ -327,15 +387,35 @@ export async function listStatementQaStatusesByCompany(
     .order("created_at", { ascending: false })
     .limit(200);
 
-  if (error) {
-    throw new Error(`Failed to load statements for QA statuses: ${error.message}`);
-  }
+  let statements = data ?? [];
 
-  const statements = data ?? [];
+  if (error) {
+    if (isMissingSchemaEntity(error.message, ["created_at"])) {
+      const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+        .from("statements")
+        .select("id, total_amount")
+        .eq("company_id", companyId)
+        .limit(200);
+
+      if (fallbackError) {
+        throw new Error(`Failed to load statements for QA statuses: ${fallbackError.message}`);
+      }
+
+      statements = fallbackData ?? [];
+    } else {
+      throw new Error(`Failed to load statements for QA statuses: ${error.message}`);
+    }
+  }
 
   const results = await Promise.all(
     statements.map(async (statement) => {
-      const detail = await getStatementQaDetail(companyId, String(statement.id));
+      let detail: StatementQaDetail | null = null;
+
+      try {
+        detail = await getStatementQaDetail(companyId, String(statement.id));
+      } catch {
+        detail = null;
+      }
 
       if (!detail) {
         return {

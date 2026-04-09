@@ -2,6 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { requireCompanyMembershipBySlug } from "@/lib/company-membership";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ function parseCsv(text: string) {
 
   return lines.slice(1).map((line, idx) => {
     const values = line.split(",");
-    const raw: Record<string, any> = {};
+    const raw: Record<string, string | null> = {};
     headers.forEach((h, i) => (raw[h] = (values[i] ?? "").trim() || null));
 
     return {
@@ -33,6 +34,50 @@ function parseCsv(text: string) {
   });
 }
 
+async function upsertImportRows(
+  rows: Array<{
+    import_id: string;
+    import_job_id: string;
+    row_number: number;
+    raw: Record<string, string | null>;
+    status: string;
+    error: string | null;
+  }>,
+  importId: string
+): Promise<{ error: { message: string } | null }> {
+  const importJobPayload = rows.map((row) => ({
+    import_job_id: row.import_job_id,
+    row_number: row.row_number,
+    raw: row.raw,
+    status: row.status,
+    error: row.error,
+  }));
+  const importPayload = rows.map((row) => ({
+    import_id: row.import_id,
+    row_number: row.row_number,
+    raw: row.raw,
+    status: row.status,
+    error: row.error,
+  }));
+
+  const byImportJobId = await supabaseAdmin
+    .from("import_rows")
+    .upsert(importJobPayload, { onConflict: "import_job_id,row_number" });
+  if (!byImportJobId.error) {
+    return { error: null };
+  }
+
+  const byImportId = await supabaseAdmin
+    .from("import_rows")
+    .upsert(importPayload, { onConflict: "import_id,row_number" });
+  if (!byImportId.error) {
+    return { error: null };
+  }
+
+  await supabaseAdmin.from("import_jobs").update({ status: "failed" }).eq("id", importId);
+  return { error: { message: byImportId.error.message } };
+}
+
 export async function POST(req: Request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -41,29 +86,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
     }
 
-    const body = await req.json().catch(() => ({} as any));
+    const body: Record<string, unknown> = await req
+      .json()
+      .catch(() => ({} as Record<string, unknown>));
     const companySlug = String(body.companySlug ?? "").trim();
     const importId = String(body.importJobId ?? body.importId ?? "").trim();
     if (!companySlug || !importId) {
       return NextResponse.json({ ok: false, error: "missing companySlug/importId" }, { status: 400 });
     }
 
-    // company
-    const { data: company, error: cErr } = await supabaseAdmin
-      .from("companies")
-      .select("id")
-      .eq("slug", companySlug)
-      .single();
-    if (cErr || !company?.id) {
-      return NextResponse.json({ ok: false, error: cErr?.message ?? "Company not found" }, { status: 404 });
-    }
+    const membership = await requireCompanyMembershipBySlug({
+      supabase,
+      companySlug,
+      userId: auth.user.id,
+    });
+    const companyId = membership.company.id;
 
     // job
     const { data: job, error: jErr } = await supabaseAdmin
       .from("import_jobs")
       .select("id, company_id, storage_bucket, storage_path")
       .eq("id", importId)
-      .eq("company_id", company.id)
+      .eq("company_id", companyId)
       .single();
 
     if (jErr || !job) {
@@ -88,6 +132,7 @@ export async function POST(req: Request) {
     // UPSERT i batchar (ingen DELETE => inga timeouts)
     const payload = parsed.map((r) => ({
       import_id: importId,
+      import_job_id: importId,
       row_number: r.row_number,
       raw: r.raw,
       status: r.status,
@@ -95,9 +140,7 @@ export async function POST(req: Request) {
     }));
 
     for (const batch of chunk(payload, 300)) {
-      const { error: upErr } = await supabaseAdmin
-        .from("import_rows")
-        .upsert(batch, { onConflict: "import_id,row_number" });
+      const { error: upErr } = await upsertImportRows(batch, importId);
 
       if (upErr) {
         await supabaseAdmin.from("import_jobs").update({ status: "failed" }).eq("id", importId);
@@ -108,7 +151,8 @@ export async function POST(req: Request) {
     await supabaseAdmin.from("import_jobs").update({ status: "parsed" }).eq("id", importId);
 
     return NextResponse.json({ ok: true, rows: payload.length });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  } catch (e: unknown) {
+    const errorMessage = e instanceof Error ? e.message : "Unknown error";
+    return NextResponse.json({ ok: false, error: errorMessage }, { status: 500 });
   }
 }
