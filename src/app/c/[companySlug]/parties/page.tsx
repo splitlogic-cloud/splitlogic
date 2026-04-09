@@ -29,11 +29,104 @@ type PartyRow = {
   updated_at: string | null;
 };
 
+function asNullableString(value: unknown): string | null {
+  if (value == null) return null;
+  const stringValue = String(value).trim();
+  return stringValue.length > 0 ? stringValue : null;
+}
+
 function formatDate(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("sv-SE");
+}
+
+async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
+  const attempts: Array<{
+    select: string;
+    orderBy?: string;
+    mapRow: (row: Record<string, unknown>) => PartyRow;
+  }> = [
+    {
+      select: "id, name, email, type, external_id, created_at, updated_at",
+      orderBy: "created_at",
+      mapRow: (row) => ({
+        id: String(row.id),
+        name: asNullableString(row.name),
+        email: asNullableString(row.email),
+        type: asNullableString(row.type),
+        external_id: asNullableString(row.external_id),
+        created_at: asNullableString(row.created_at),
+        updated_at: asNullableString(row.updated_at),
+      }),
+    },
+    {
+      select: "id, name, email, type, created_at",
+      orderBy: "created_at",
+      mapRow: (row) => ({
+        id: String(row.id),
+        name: asNullableString(row.name),
+        email: asNullableString(row.email),
+        type: asNullableString(row.type),
+        external_id: null,
+        created_at: asNullableString(row.created_at),
+        updated_at: null,
+      }),
+    },
+    {
+      select: "id, name, created_at",
+      orderBy: "created_at",
+      mapRow: (row) => ({
+        id: String(row.id),
+        name: asNullableString(row.name),
+        email: null,
+        type: null,
+        external_id: null,
+        created_at: asNullableString(row.created_at),
+        updated_at: null,
+      }),
+    },
+    {
+      select: "id, name",
+      mapRow: (row) => ({
+        id: String(row.id),
+        name: asNullableString(row.name),
+        email: null,
+        type: null,
+        external_id: null,
+        created_at: null,
+        updated_at: null,
+      }),
+    },
+  ];
+
+  const errors: string[] = [];
+
+  for (const attempt of attempts) {
+    let query = supabaseAdmin
+      .from("parties")
+      .select(attempt.select)
+      .eq("company_id", companyId)
+      .limit(500);
+
+    if (attempt.orderBy) {
+      query = query.order(attempt.orderBy, { ascending: false });
+    }
+
+    const { data, error } = await query;
+
+    if (!error) {
+      const rows = ((data ?? []) as unknown[]).map((row) =>
+        attempt.mapRow((row ?? {}) as Record<string, unknown>)
+      );
+      return rows;
+    }
+
+    errors.push(error.message);
+  }
+
+  throw new Error(`load parties failed: ${errors.join(" | ")}`);
 }
 
 export default async function PartiesPage({ params }: PageProps) {
@@ -53,18 +146,7 @@ export default async function PartiesPage({ params }: PageProps) {
     notFound();
   }
 
-  const { data: parties, error: partiesError } = await supabaseAdmin
-    .from("parties")
-    .select("id, name, email, type, external_id, created_at, updated_at")
-    .eq("company_id", company.id)
-    .order("created_at", { ascending: false })
-    .limit(500);
-
-  if (partiesError) {
-    throw new Error(`load parties failed: ${partiesError.message}`);
-  }
-
-  const rows = (parties ?? []) as PartyRow[];
+  const rows = await listPartiesForCompany(company.id);
 
   return (
     <div className="space-y-6">
