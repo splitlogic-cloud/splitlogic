@@ -2,6 +2,7 @@
 import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
 
 export type Company = {
@@ -138,6 +139,14 @@ export async function requireCompanyBySlugForUser(companySlug: string): Promise<
  */
 export async function createCompanyForUser(input: { name: string; base_currency?: string | null }) {
   const { supabase, user } = await requireUser();
+  let writeClient: ReturnType<typeof getSupabaseAdmin> | typeof supabase = supabase;
+  try {
+    writeClient = getSupabaseAdmin();
+  } catch (error) {
+    // Fallback to user-scoped client if service role env is unavailable.
+    // This may still be blocked by RLS, but keeps compatibility in minimal envs.
+    console.warn("createCompanyForUser: service role unavailable, using session client", error);
+  }
 
   const name = (input.name ?? "").trim();
   if (!name) throw new Error("Name is required.");
@@ -175,7 +184,7 @@ export async function createCompanyForUser(input: { name: string; base_currency?
 
   outer: for (const slug of slugCandidates) {
     for (const variant of insertVariants) {
-      const { data, error } = await supabase
+      const { data, error } = await writeClient
         .from("companies")
         .insert(variant.payload(slug))
         .select(variant.select)
@@ -234,7 +243,7 @@ export async function createCompanyForUser(input: { name: string; base_currency?
   let lastMembershipErrorMessage = "unknown";
 
   for (const attempt of membershipAttempts) {
-    const { error: membershipErr } = await supabase
+    const { error: membershipErr } = await writeClient
       .from(attempt.table)
       .insert(attempt.payload as never);
 
