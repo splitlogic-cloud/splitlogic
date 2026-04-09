@@ -129,7 +129,15 @@ export async function addStatementNoteAction(formData: FormData) {
     .eq("company_id", company.id);
 
   if (error) {
-    throw new Error(`addStatementNoteAction failed: ${error.message}`);
+    const message = error.message.toLowerCase();
+    const missingNoteColumn =
+      (message.includes("column") && message.includes("note")) ||
+      (message.includes("could not find") && message.includes("note")) ||
+      (message.includes("schema cache") && message.includes("note"));
+
+    if (!missingNoteColumn) {
+      throw new Error(`addStatementNoteAction failed: ${error.message}`);
+    }
   }
 
   await createAuditEvent({
