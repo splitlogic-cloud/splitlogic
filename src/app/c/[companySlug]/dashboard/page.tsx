@@ -101,6 +101,17 @@ function formatAmount(amount: number) {
   return new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 }).format(amount);
 }
 
+function serviceAccentClass(service: string): string {
+  const normalized = service.trim().toUpperCase();
+  if (normalized.includes("SPOTIFY")) return "bg-emerald-500";
+  if (normalized.includes("APPLE")) return "bg-zinc-500";
+  if (normalized.includes("YOUTUBE")) return "bg-red-500";
+  if (normalized.includes("TIKTOK")) return "bg-fuchsia-500";
+  if (normalized.includes("AMAZON")) return "bg-amber-500";
+  if (normalized.includes("DEEZER")) return "bg-indigo-500";
+  return "bg-cyan-500";
+}
+
 function buildDashboardHighlights(
   rows: AggregationRow[],
   source: DashboardHighlights["source"],
@@ -171,7 +182,7 @@ async function loadRowsFromRevenueTable(
 ): Promise<{ rows: AggregationRow[]; warnings: string[]; used: boolean }> {
   const { data, error } = await supabase
     .from("revenue_rows")
-    .select("work_ref,external_track_id,territory,currency,amount_net")
+    .select("work_ref,external_track_id,territory,currency,amount_net,source_system")
     .eq("company_id", companyId)
     .limit(5000);
 
@@ -197,8 +208,9 @@ async function loadRowsFromRevenueTable(
         "Unknown track";
       const territory = (toNullableString(row.territory) ?? "Unknown").toUpperCase();
       const currency = toNullableString(row.currency)?.toUpperCase() ?? null;
+      const service = toNullableString(row.source_system)?.toUpperCase() ?? "UNKNOWN";
 
-      return { title, territory, amount, currency };
+      return { title, territory, service, amount, currency };
     })
     .filter((row): row is AggregationRow => Boolean(row));
 
@@ -528,7 +540,7 @@ export default async function CompanyDashboardPage({
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
+      <section className="grid gap-4 xl:grid-cols-4">
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold tracking-tight text-slate-950">Inspelad summa</h2>
           <div className="mt-4 text-3xl font-semibold tracking-tight text-slate-950">
@@ -577,6 +589,34 @@ export default async function CompanyDashboardPage({
                     {index + 1}. {country.name}
                   </span>
                   <span className="font-medium text-slate-900">{formatAmount(country.amount)}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-semibold tracking-tight text-slate-950">Top 5 service</h2>
+          {highlights.topServices.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-500">Ingen data ännu.</p>
+          ) : (
+            <ol className="mt-4 space-y-2 text-sm">
+              {highlights.topServices.map((service, index) => (
+                <li
+                  key={`${service.name}-${index}`}
+                  className="flex items-start justify-between gap-3"
+                >
+                  <span className="flex items-center gap-2 text-slate-700">
+                    <span
+                      className={`mt-0.5 inline-flex h-2.5 w-2.5 rounded-full ${serviceAccentClass(
+                        service.name
+                      )}`}
+                    />
+                    <span>
+                      {index + 1}. {service.name}
+                    </span>
+                  </span>
+                  <span className="font-medium text-slate-900">{formatAmount(service.amount)}</span>
                 </li>
               ))}
             </ol>

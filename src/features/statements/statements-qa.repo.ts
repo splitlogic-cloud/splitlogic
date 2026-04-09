@@ -135,6 +135,16 @@ function isMissingSchemaEntity(message: string, entities: string[]): boolean {
   return entities.some((entity) => normalized.includes(entity.toLowerCase()));
 }
 
+function isMissingColumnOrTable(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("does not exist") ||
+    normalized.includes("could not find") ||
+    normalized.includes("schema cache") ||
+    normalized.includes("relation")
+  );
+}
+
 function determineQaLevel(params: {
   diffVsLedger?: number | null;
   diffVsLines?: number | null;
@@ -442,21 +452,50 @@ export async function listStatementQaStatusesByCompany(
   return results;
 }
 
-export async function getGenerateStatementsPreview(
-  companyId: string
-): Promise<GenerateStatementsPreviewRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount, party_id, party_name")
-    .eq("allocation_status", "completed")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+export async function getGenerateStatementsPreview(): Promise<GenerateStatementsPreviewRow[]> {
+  const selectAttempts = [
+    "matched_work_id, currency, net_amount, gross_amount, party_id, party_name",
+    "matched_work_id, currency, net_amount, gross_amount, party_id",
+    "matched_work_id, currency, net_amount, gross_amount",
+  ] as const;
+  const statusAttempts = ["allocation_status", "status"] as const;
+  const orderAttempts = ["created_at", "row_number", "id"] as const;
 
-  if (error) {
-    throw new Error(`Failed to load generate-statements preview: ${error.message}`);
+  let data: unknown[] | null = null;
+  let lastErrorMessage = "unknown";
+
+  outer: for (const selectColumns of selectAttempts) {
+    for (const statusColumn of statusAttempts) {
+      for (const orderColumn of orderAttempts) {
+        const query = await supabaseAdmin
+          .from("import_rows")
+          .select(selectColumns)
+          .eq(statusColumn, "completed")
+          .order(orderColumn, { ascending: false })
+          .limit(5000);
+
+        if (!query.error) {
+          data = (query.data ?? []) as unknown[];
+          break outer;
+        }
+
+        lastErrorMessage = query.error.message;
+        if (!isMissingColumnOrTable(query.error.message)) {
+          throw new Error(
+            `Failed to load generate-statements preview: ${query.error.message}`
+          );
+        }
+      }
+    }
   }
 
-  const rows: ImportRowCandidate[] = (data ?? []).map((row) => ({
+  if (data == null) {
+    throw new Error(
+      `Failed to load generate-statements preview: ${lastErrorMessage}`
+    );
+  }
+
+  const rows: ImportRowCandidate[] = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     matched_work_id: asString(row.matched_work_id),
     currency: asString(row.currency),
     net_amount: asNumber(row.net_amount),
@@ -496,21 +535,44 @@ export async function getGenerateStatementsPreview(
   return [...grouped.values()].sort((a, b) => b.total_amount - a.total_amount);
 }
 
-export async function getGenerateStatementsQaSummary(
-  companyId: string
-): Promise<GenerateStatementsQaSummary> {
-  const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount")
-    .eq("allocation_status", "completed")
-    .order("created_at", { ascending: false })
-    .limit(5000);
+export async function getGenerateStatementsQaSummary(): Promise<GenerateStatementsQaSummary> {
+  const selectColumns = "matched_work_id, currency, net_amount, gross_amount";
+  const statusAttempts = ["allocation_status", "status"] as const;
+  const orderAttempts = ["created_at", "row_number", "id"] as const;
 
-  if (error) {
-    throw new Error(`Failed to load generate-statements QA summary: ${error.message}`);
+  let data: unknown[] | null = null;
+  let lastErrorMessage = "unknown";
+
+  outer: for (const statusColumn of statusAttempts) {
+    for (const orderColumn of orderAttempts) {
+      const query = await supabaseAdmin
+        .from("import_rows")
+        .select(selectColumns)
+        .eq(statusColumn, "completed")
+        .order(orderColumn, { ascending: false })
+        .limit(5000);
+
+      if (!query.error) {
+        data = (query.data ?? []) as unknown[];
+        break outer;
+      }
+
+      lastErrorMessage = query.error.message;
+      if (!isMissingColumnOrTable(query.error.message)) {
+        throw new Error(
+          `Failed to load generate-statements QA summary: ${query.error.message}`
+        );
+      }
+    }
   }
 
-  const rows: ImportRowCandidate[] = (data ?? []).map((row) => ({
+  if (data == null) {
+    throw new Error(
+      `Failed to load generate-statements QA summary: ${lastErrorMessage}`
+    );
+  }
+
+  const rows: ImportRowCandidate[] = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     matched_work_id: asString(row.matched_work_id),
     currency: asString(row.currency),
     net_amount: asNumber(row.net_amount),

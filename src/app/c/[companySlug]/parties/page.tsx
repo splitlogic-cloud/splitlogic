@@ -7,6 +7,15 @@ import { createPartyAction, deletePartyAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
+function isSchemaCompatibilityError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("does not exist") ||
+    lower.includes("could not find the") ||
+    lower.includes("schema cache")
+  );
+}
+
 type PageProps = {
   params: Promise<{
     companySlug: string;
@@ -124,6 +133,29 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
     }
 
     errors.push(error.message);
+  }
+
+  // Legacy schema fallback: some environments only expose minimal fields.
+  const { data: legacyRows, error: legacyError } = await supabaseAdmin
+    .from("parties")
+    .select("*")
+    .eq("company_id", companyId)
+    .limit(500);
+
+  if (!legacyError) {
+    return ((legacyRows ?? []) as Array<Record<string, unknown>>).map((row) => ({
+      id: String(row.id),
+      name: asNullableString(row.name),
+      email: asNullableString(row.email),
+      type: asNullableString(row.type),
+      external_id: asNullableString(row.external_id),
+      created_at: asNullableString(row.created_at),
+      updated_at: asNullableString(row.updated_at),
+    }));
+  }
+
+  if (isSchemaCompatibilityError(legacyError.message)) {
+    return [];
   }
 
   throw new Error(`load parties failed: ${errors.join(" | ")}`);
