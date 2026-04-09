@@ -54,3 +54,55 @@ export async function createPartyAction(
 
   revalidatePath(`/c/${companySlug}/parties`);
 }
+
+export async function deletePartyAction(
+  companySlug: string,
+  formData: FormData
+): Promise<void> {
+  const partyId = String(formData.get("partyId") ?? "").trim();
+
+  if (!partyId) {
+    throw new Error("Missing partyId.");
+  }
+
+  const { data: company, error: companyError } = await supabaseAdmin
+    .from("companies")
+    .select("id, slug")
+    .eq("slug", companySlug)
+    .maybeSingle<CompanyRecord>();
+
+  if (companyError) {
+    throw new Error(`Failed to load company: ${companyError.message}`);
+  }
+
+  if (!company) {
+    throw new Error(`Company not found for slug: ${companySlug}`);
+  }
+
+  const { data: party, error: partyError } = await supabaseAdmin
+    .from("parties")
+    .select("id")
+    .eq("company_id", company.id)
+    .eq("id", partyId)
+    .maybeSingle();
+
+  if (partyError) {
+    throw new Error(`Failed to load party: ${partyError.message}`);
+  }
+
+  if (!party) {
+    throw new Error("Party not found.");
+  }
+
+  const { error: deleteError } = await supabaseAdmin
+    .from("parties")
+    .delete()
+    .eq("company_id", company.id)
+    .eq("id", partyId);
+
+  if (deleteError) {
+    throw new Error(`delete party failed: ${deleteError.message}`);
+  }
+
+  revalidatePath(`/c/${companySlug}/parties`);
+}

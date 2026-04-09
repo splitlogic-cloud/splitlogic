@@ -3,7 +3,7 @@ import "server-only";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { createPartyAction } from "./actions";
+import { createPartyAction, deletePartyAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -189,6 +189,7 @@ export default async function PartiesPage({ params }: PageProps) {
                 External ID
               </th>
               <th className="px-4 py-3 font-semibold text-zinc-700">Created</th>
+              <th className="px-4 py-3 font-semibold text-zinc-700">Actions</th>
             </tr>
           </thead>
 
@@ -196,7 +197,7 @@ export default async function PartiesPage({ params }: PageProps) {
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={6}
                   className="px-4 py-8 text-center text-sm text-zinc-500"
                 >
                   No parties found for this company.
@@ -219,6 +220,29 @@ export default async function PartiesPage({ params }: PageProps) {
                   </td>
                   <td className="px-4 py-4 text-zinc-700">
                     {formatDate(party.created_at)}
+                  </td>
+                  <td className="px-4 py-4 text-zinc-700">
+                    <div className="flex items-center gap-3">
+                      <Link
+                        href={`/c/${companySlug}/parties/${party.id}/edit`}
+                        className="text-sm text-blue-700 underline"
+                      >
+                        Edit
+                      </Link>
+                      <form action={deletePartyAction.bind(null, companySlug, party.id)}>
+                        <button
+                          type="submit"
+                          className="text-sm text-red-700 underline"
+                          onClick={(event) => {
+                            if (!confirm("Delete this party? This cannot be undone.")) {
+                              event.preventDefault();
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </form>
+                    </div>
                   </td>
                 </tr>
               ))

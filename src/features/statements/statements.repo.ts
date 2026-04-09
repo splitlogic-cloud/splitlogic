@@ -213,9 +213,7 @@ function normalizeStatementLineRow(row: Record<string, unknown>): StatementLineR
 export async function listStatementsByCompany(
   companyId: string
 ): Promise<StatementListRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select(`
+  const baseSelect = `
       id,
       company_id,
       party_id,
@@ -224,37 +222,79 @@ export async function listStatementsByCompany(
       status,
       currency,
       total_amount,
-      generated_from,
       note,
       created_at,
       created_by,
       parties (
         name
       )
-    `)
+    `;
+
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select(baseSelect)
     .eq("company_id", companyId)
     .order("created_at", { ascending: false })
     .limit(500);
 
-  if (error) {
-    throw new Error(`listStatementsByCompany failed: ${error.message}`);
+  if (!error) {
+    return (data ?? []).map((row: Record<string, unknown>) =>
+      normalizeStatementListRow({
+        ...row,
+        generated_from: null,
+        party_name: asString(asObject(row.parties)?.name) ?? null,
+      })
+    );
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) =>
-    normalizeStatementListRow({
-      ...row,
-      party_name: asString(asObject(row.parties)?.name) ?? null,
-    })
-  );
+  if (error.message.includes("generated_from")) {
+    const legacySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      note,
+      created_at,
+      created_by,
+      parties (
+        name
+      )
+    `;
+
+    const { data: legacyData, error: legacyError } = await supabaseAdmin
+      .from("statements")
+      .select(legacySelect)
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (legacyError) {
+      throw new Error(`listStatementsByCompany failed: ${legacyError.message}`);
+    }
+
+    return (legacyData ?? []).map((row: Record<string, unknown>) =>
+      normalizeStatementListRow({
+        ...row,
+        generated_from: null,
+        party_name: asString(asObject(row.parties)?.name) ?? null,
+      })
+    );
+  }
+
+  {
+    throw new Error(`listStatementsByCompany failed: ${error.message}`);
+  }
 }
 
 export async function getStatementHeader(
   companyId: string,
   statementId: string
 ): Promise<StatementHeaderRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select(`
+  const baseSelect = `
       id,
       company_id,
       party_id,
@@ -263,32 +303,80 @@ export async function getStatementHeader(
       status,
       currency,
       total_amount,
-      generated_from,
       note,
       created_at,
       created_by,
       parties (
         name
       )
-    `)
+    `;
+
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select(baseSelect)
     .eq("company_id", companyId)
     .eq("id", statementId)
     .maybeSingle();
 
-  if (error) {
+  if (!error) {
+    if (!data) {
+      return null;
+    }
+
+    return {
+      ...normalizeStatementListRow({
+        ...data,
+        generated_from: null,
+        party_name: asString(asObject(data.parties)?.name) ?? null,
+      }),
+    };
+  }
+
+  if (error.message.includes("generated_from")) {
+    const legacySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      note,
+      created_at,
+      created_by,
+      parties (
+        name
+      )
+    `;
+
+    const { data: legacyData, error: legacyError } = await supabaseAdmin
+      .from("statements")
+      .select(legacySelect)
+      .eq("company_id", companyId)
+      .eq("id", statementId)
+      .maybeSingle();
+
+    if (legacyError) {
+      throw new Error(`getStatementHeader failed: ${legacyError.message}`);
+    }
+
+    if (!legacyData) {
+      return null;
+    }
+
+    return {
+      ...normalizeStatementListRow({
+        ...legacyData,
+        generated_from: null,
+        party_name: asString(asObject(legacyData.parties)?.name) ?? null,
+      }),
+    };
+  }
+
+  {
     throw new Error(`getStatementHeader failed: ${error.message}`);
   }
-
-  if (!data) {
-    return null;
-  }
-
-  return {
-    ...normalizeStatementListRow({
-      ...data,
-      party_name: asString(asObject(data.parties)?.name) ?? null,
-    }),
-  };
 }
 
 export async function listStatementLines(
