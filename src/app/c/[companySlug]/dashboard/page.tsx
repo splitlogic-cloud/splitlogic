@@ -114,17 +114,6 @@ function formatAmount(amount: number) {
   return new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 }).format(amount);
 }
 
-function serviceAccentClass(service: string): string {
-  const normalized = service.trim().toUpperCase();
-  if (normalized.includes("SPOTIFY")) return "bg-emerald-500";
-  if (normalized.includes("APPLE")) return "bg-zinc-500";
-  if (normalized.includes("YOUTUBE")) return "bg-red-500";
-  if (normalized.includes("TIKTOK")) return "bg-fuchsia-500";
-  if (normalized.includes("AMAZON")) return "bg-amber-500";
-  if (normalized.includes("DEEZER")) return "bg-indigo-500";
-  return "bg-cyan-500";
-}
-
 function buildDashboardHighlights(
   rows: AggregationRow[],
   source: DashboardHighlights["source"],
@@ -632,15 +621,8 @@ export default async function CompanyDashboardPage({
                   key={`${service.name}-${index}`}
                   className="flex items-start justify-between gap-3"
                 >
-                  <span className="flex items-center gap-2 text-slate-700">
-                    <span
-                      className={`mt-0.5 inline-flex h-2.5 w-2.5 rounded-full ${serviceAccentClass(
-                        service.name
-                      )}`}
-                    />
-                    <span>
-                      {index + 1}. {service.name}
-                    </span>
+                  <span className="text-slate-700">
+                    {index + 1}. {service.name}
                   </span>
                   <span className="font-medium text-slate-900">{formatAmount(service.amount)}</span>
                 </li>
