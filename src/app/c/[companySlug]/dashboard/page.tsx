@@ -12,6 +12,7 @@ type DashboardGroup = {
 type AggregationRow = {
   title: string;
   territory: string;
+  service: string;
   amount: number;
   currency: string | null;
 };
@@ -22,6 +23,7 @@ type DashboardHighlights = {
   currencyLabel: string;
   topSongs: DashboardGroup[];
   topCountries: DashboardGroup[];
+  topServices: DashboardGroup[];
   warnings: string[];
 };
 
@@ -115,6 +117,7 @@ function buildDashboardHighlights(
 
   const songsMap = new Map<string, DashboardGroup>();
   const countriesMap = new Map<string, DashboardGroup>();
+  const servicesMap = new Map<string, DashboardGroup>();
 
   for (const row of rows) {
     const songKey = row.title || "Unknown track";
@@ -133,6 +136,16 @@ function buildDashboardHighlights(
     countryCurrent.amount += row.amount;
     countryCurrent.rows += 1;
     countriesMap.set(countryKey, countryCurrent);
+
+    const serviceKey = row.service || "Unknown service";
+    const serviceCurrent = servicesMap.get(serviceKey) ?? {
+      name: serviceKey,
+      amount: 0,
+      rows: 0,
+    };
+    serviceCurrent.amount += row.amount;
+    serviceCurrent.rows += 1;
+    servicesMap.set(serviceKey, serviceCurrent);
   }
 
   const sortGroups = (items: DashboardGroup[]) =>
@@ -147,6 +160,7 @@ function buildDashboardHighlights(
     currencyLabel,
     topSongs: sortGroups(Array.from(songsMap.values())).slice(0, 5),
     topCountries: sortGroups(Array.from(countriesMap.values())).slice(0, 5),
+    topServices: sortGroups(Array.from(servicesMap.values())).slice(0, 5),
     warnings,
   };
 }
@@ -285,7 +299,23 @@ function mapImportRowToAggregationRow(row: Record<string, unknown>): Aggregation
     pickStringFromRecords(records, ["currency", "currency_code", "Currency", "Currency Code"])?.toUpperCase() ??
     null;
 
-  return { title, territory, amount, currency };
+  const service =
+    pickStringFromRecords(records, [
+      "source",
+      "source_system",
+      "source_name",
+      "service",
+      "platform",
+      "store",
+      "dsp",
+      "Source",
+      "Service",
+      "Platform",
+      "Store",
+      "DSP",
+    ]) ?? "Unknown";
+
+  return { title, territory, service: service.toUpperCase(), amount, currency };
 }
 
 async function loadRowsFromImportRows(
