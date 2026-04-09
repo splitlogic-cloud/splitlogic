@@ -24,6 +24,7 @@ export type ReportPdfFilters = {
   country: string | null;
   title: string | null;
   artist: string | null;
+  service: string | null;
 };
 
 export type BuildReportPdfParams = {
@@ -178,6 +179,7 @@ export async function buildReportPdf(params: BuildReportPdfParams): Promise<Uint
     params.filters.country ? `country ${params.filters.country}` : null,
     params.filters.title ? `title "${params.filters.title}"` : null,
     params.filters.artist ? `artist "${params.filters.artist}"` : null,
+    params.filters.service ? `service ${params.filters.service}` : null,
   ].filter(Boolean);
 
   drawText(
