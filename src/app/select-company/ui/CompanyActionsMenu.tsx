@@ -5,18 +5,20 @@ import { useRouter } from "next/navigation";
 
 type Props = {
   companyId: string;
-  companySlug: string;
-  companyName: string;
+  currentSlug: string;
+  currentName: string;
+  canManage: boolean;
 };
 
 export default function CompanyActionsMenu({
   companyId,
-  companySlug,
-  companyName,
+  currentSlug,
+  currentName,
+  canManage,
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [newName, setNewName] = useState(companyName);
+  const [newName, setNewName] = useState(currentName);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +46,7 @@ export default function CompanyActionsMenu({
   }
 
   async function onDelete() {
-    if (!confirm(`Delete company "${companyName}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete company "${currentName}"? This cannot be undone.`)) return;
     setDeleting(true);
     setError(null);
     try {
@@ -56,7 +58,7 @@ export default function CompanyActionsMenu({
         throw new Error(json?.error || `Failed: ${res.status}`);
       }
       setOpen(false);
-      if (window.location.pathname.includes(`/c/${companySlug}/`)) {
+      if (window.location.pathname.includes(`/c/${currentSlug}/`)) {
         router.push("/select-company");
       }
       router.refresh();
@@ -76,7 +78,13 @@ export default function CompanyActionsMenu({
           e.stopPropagation();
           setOpen(true);
         }}
-        className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+        disabled={!canManage}
+        title={
+          canManage
+            ? "Edit or delete company"
+            : "You need owner/admin role to manage this company"
+        }
+        className="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
         Edit / Delete
       </button>
@@ -87,7 +95,7 @@ export default function CompanyActionsMenu({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-sm font-semibold">Edit company</div>
-                <div className="text-xs text-slate-500">Slug: {companySlug}</div>
+                  <div className="text-xs text-slate-500">Slug: {currentSlug}</div>
               </div>
               <button
                 onClick={() => setOpen(false)}
