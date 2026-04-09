@@ -713,12 +713,7 @@ export async function finalizeAllocationRun(params: {
     payload.line_count = lineCount;
   }
 
-  if (totalSourceAmount !== null) {
-    payload.total_source_amount = totalSourceAmount;
-  }
-
   if (totalAllocatedAmount !== null) {
-    payload.total_allocated_amount = totalAllocatedAmount;
     payload.allocated_amount = totalAllocatedAmount;
   }
 
