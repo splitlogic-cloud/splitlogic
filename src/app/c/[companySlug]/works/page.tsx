@@ -36,6 +36,13 @@ type SplitRow = {
   share_percent: number | string | null;
 };
 
+type SplitSourceRow = {
+  id: unknown;
+  work_id: unknown;
+  share_percent?: unknown;
+  share_bps?: unknown;
+};
+
 function formatDate(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -71,6 +78,123 @@ function getSplitStatus(splitCount: number, splitTotal: number) {
   };
 }
 
+function asNullableString(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function toFiniteNumber(value: unknown): number {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function isSchemaError(message: string | undefined): boolean {
+  const normalized = (message ?? "").toLowerCase();
+  return (
+    normalized.includes("does not exist") ||
+    normalized.includes("could not find the") ||
+    normalized.includes("schema cache")
+  );
+}
+
+async function listWorksForCompany(companyId: string): Promise<WorkRow[]> {
+  const selectAttempts = [
+    "id, title, artist, isrc, normalized_title, normalized_artist, normalized_isrc, created_at",
+    "id, title, isrc, created_at",
+    "id, title, created_at",
+  ];
+
+  let lastErrorMessage = "Unknown works select error";
+
+  for (const selectColumns of selectAttempts) {
+    const { data, error } = await supabaseAdmin
+      .from("works")
+      .select(selectColumns)
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (!error) {
+      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      return rows.map((row) => ({
+        id: String(row.id),
+        title: asNullableString(row.title),
+        artist: asNullableString(row.artist),
+        isrc: asNullableString(row.isrc),
+        normalized_title: asNullableString(row.normalized_title),
+        normalized_artist: asNullableString(row.normalized_artist),
+        normalized_isrc: asNullableString(row.normalized_isrc),
+        created_at: asNullableString(row.created_at),
+      }));
+    }
+
+    lastErrorMessage = error.message;
+
+    if (!isSchemaError(error.message)) {
+      throw new Error(`Failed to load works: ${error.message}`);
+    }
+  }
+
+  throw new Error(`Failed to load works: ${lastErrorMessage}`);
+}
+
+async function listSplitRowsForCompany(companyId: string): Promise<SplitRow[]> {
+  const attempts: Array<{
+    table: "splits" | "work_splits";
+    selectColumns: string;
+    mapSharePercent: (row: SplitSourceRow) => number;
+  }> = [
+    {
+      table: "splits",
+      selectColumns: "id, work_id, share_percent",
+      mapSharePercent: (row) => toFiniteNumber(row.share_percent),
+    },
+    {
+      table: "work_splits",
+      selectColumns: "id, work_id, share_percent",
+      mapSharePercent: (row) => toFiniteNumber(row.share_percent),
+    },
+    {
+      table: "work_splits",
+      selectColumns: "id, work_id, share_bps",
+      mapSharePercent: (row) => toFiniteNumber(row.share_bps) / 100,
+    },
+  ];
+
+  let lastSchemaError: string | null = null;
+
+  for (const attempt of attempts) {
+    const { data, error } = await supabaseAdmin
+      .from(attempt.table)
+      .select(attempt.selectColumns)
+      .eq("company_id", companyId);
+
+    if (!error) {
+      return ((data ?? []) as unknown as SplitSourceRow[]).map((row) => ({
+        id: String(row.id),
+        work_id: String(row.work_id),
+        share_percent: attempt.mapSharePercent(row),
+      }));
+    }
+
+    if (!isSchemaError(error.message)) {
+      throw new Error(`Failed to load splits: ${error.message}`);
+    }
+
+    lastSchemaError = error.message;
+  }
+
+  if (lastSchemaError) {
+    console.warn("[works.page] split tables unavailable in schema", {
+      companyId,
+      lastSchemaError,
+    });
+  }
+
+  return [];
+}
+
 export default async function WorksPage({ params }: PageProps) {
   const { companySlug } = await params;
 
@@ -88,44 +212,10 @@ export default async function WorksPage({ params }: PageProps) {
     notFound();
   }
 
-  const [
-    { data: works, error: worksError },
-    { data: splits, error: splitsError },
-  ] = await Promise.all([
-    supabaseAdmin
-      .from("works")
-      .select(
-        `
-          id,
-          title,
-          artist,
-          isrc,
-          normalized_title,
-          normalized_artist,
-          normalized_isrc,
-          created_at
-        `
-      )
-      .eq("company_id", company.id)
-      .order("created_at", { ascending: false })
-      .limit(500),
-
-    supabaseAdmin
-      .from("splits")
-      .select("id, work_id, share_percent")
-      .eq("company_id", company.id),
+  const [workRows, splitRows] = await Promise.all([
+    listWorksForCompany(company.id),
+    listSplitRowsForCompany(company.id),
   ]);
-
-  if (worksError) {
-    throw new Error(`Failed to load works: ${worksError.message}`);
-  }
-
-  if (splitsError) {
-    throw new Error(`Failed to load splits: ${splitsError.message}`);
-  }
-
-  const workRows = (works ?? []) as WorkRow[];
-  const splitRows = (splits ?? []) as SplitRow[];
 
   const splitSummaryByWorkId = new Map<
     string,
