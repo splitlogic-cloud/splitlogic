@@ -90,6 +90,12 @@ function chunkArray<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+function normalizeFilterInput(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function isSchemaCompatibilityError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
@@ -294,8 +300,15 @@ export async function GET(request: Request, context: RouteContext) {
   const periodStart = asString(searchParams.get("periodStart")) ?? "";
   const periodEnd = asString(searchParams.get("periodEnd")) ?? "";
   const countryFilter = (asString(searchParams.get("country")) ?? "").toUpperCase();
-  const titleFilterRaw = asString(searchParams.get("title")) ?? "";
-  const artistFilterRaw = asString(searchParams.get("artist")) ?? "";
+  const serviceFilter = (asString(searchParams.get("service")) ?? "").toUpperCase();
+  const titleFilterRaw =
+    normalizeFilterInput(asString(searchParams.get("title"))) ??
+    normalizeFilterInput(asString(searchParams.get("titleQuery"))) ??
+    "";
+  const artistFilterRaw =
+    normalizeFilterInput(asString(searchParams.get("artist"))) ??
+    normalizeFilterInput(asString(searchParams.get("artistQuery"))) ??
+    "";
   const titleFilter = titleFilterRaw.toLowerCase();
   const artistFilter = artistFilterRaw.toLowerCase();
 
@@ -320,6 +333,7 @@ export async function GET(request: Request, context: RouteContext) {
     if (countryFilter && row.country !== countryFilter) return false;
     if (titleFilter && !row.title.toLowerCase().includes(titleFilter)) return false;
     if (artistFilter && !row.artist.toLowerCase().includes(artistFilter)) return false;
+    if (serviceFilter && row.service !== serviceFilter) return false;
     return true;
   });
 
@@ -349,6 +363,7 @@ export async function GET(request: Request, context: RouteContext) {
       country: countryFilter || null,
       title: titleFilterRaw || null,
       artist: artistFilterRaw || null,
+      service: serviceFilter || null,
     },
     totalRows: filteredRows.length,
     totalAmount,

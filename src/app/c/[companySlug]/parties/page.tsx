@@ -113,17 +113,30 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
   const errors: string[] = [];
 
   for (const attempt of attempts) {
-    let query = supabaseAdmin
+    const runQuery = async (withoutCompanyFilter: boolean) => {
+      let query = supabaseAdmin
       .from("parties")
       .select(attempt.select)
-      .eq("company_id", companyId)
       .limit(500);
 
-    if (attempt.orderBy) {
-      query = query.order(attempt.orderBy, { ascending: false });
-    }
+      if (!withoutCompanyFilter) {
+        query = query.eq("company_id", companyId);
+      }
 
-    const { data, error } = await query;
+      if (attempt.orderBy) {
+        query = query.order(attempt.orderBy, { ascending: false });
+      }
+
+      return query;
+    };
+
+    let { data, error } = await runQuery(false);
+
+    if (error && isSchemaCompatibilityError(error.message)) {
+      const fallback = await runQuery(true);
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (!error) {
       const rows = ((data ?? []) as unknown[]).map((row) =>
@@ -139,7 +152,6 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
   const { data: legacyRows, error: legacyError } = await supabaseAdmin
     .from("parties")
     .select("*")
-    .eq("company_id", companyId)
     .limit(500);
 
   if (!legacyError) {

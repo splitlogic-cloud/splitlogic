@@ -14,6 +14,7 @@ type PageProps = {
     country?: string;
     title?: string;
     artist?: string;
+    service?: string;
   }>;
 };
 
@@ -132,6 +133,7 @@ function buildReportQuery(params: {
   countryFilter: string;
   titleFilter: string;
   artistFilter: string;
+  serviceFilter: string;
   page?: number;
 }): string {
   const qp = new URLSearchParams();
@@ -140,6 +142,7 @@ function buildReportQuery(params: {
   if (params.countryFilter) qp.set("country", params.countryFilter);
   if (params.titleFilter) qp.set("title", params.titleFilter);
   if (params.artistFilter) qp.set("artist", params.artistFilter);
+  if (params.serviceFilter) qp.set("service", params.serviceFilter);
   if (typeof params.page === "number") qp.set("page", String(params.page));
   return qp.toString();
 }
@@ -331,8 +334,11 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
   const periodStart = asString(resolvedSearchParams.periodStart) ?? "";
   const periodEnd = asString(resolvedSearchParams.periodEnd) ?? "";
   const countryFilter = (asString(resolvedSearchParams.country) ?? "").toUpperCase();
-  const titleFilter = (asString(resolvedSearchParams.title) ?? "").toLowerCase();
-  const artistFilter = (asString(resolvedSearchParams.artist) ?? "").toLowerCase();
+  const titleFilterRaw = asString(resolvedSearchParams.title) ?? "";
+  const artistFilterRaw = asString(resolvedSearchParams.artist) ?? "";
+  const serviceFilter = (asString(resolvedSearchParams.service) ?? "").toUpperCase();
+  const titleFilter = titleFilterRaw.toLowerCase();
+  const artistFilter = artistFilterRaw.toLowerCase();
   const page = parsePositiveInt(asString((resolvedSearchParams as Record<string, string>).page ?? null));
   const pageSize = 50;
 
@@ -357,8 +363,22 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
     if (countryFilter && row.country !== countryFilter) return false;
     if (titleFilter && !row.title.toLowerCase().includes(titleFilter)) return false;
     if (artistFilter && !row.artist.toLowerCase().includes(artistFilter)) return false;
+    if (serviceFilter && row.service !== serviceFilter) return false;
     return true;
   });
+
+  const titleOptions = [...new Set(allRows.map((row) => row.title).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "sv"))
+    .slice(0, 400);
+  const artistOptions = [...new Set(allRows.map((row) => row.artist).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "sv"))
+    .slice(0, 400);
+  const countryOptions = [...new Set(allRows.map((row) => row.country).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "sv"))
+    .slice(0, 300);
+  const serviceOptions = [...new Set(allRows.map((row) => row.service).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "sv"))
+    .slice(0, 300);
 
   const totalAmount = filteredRows.reduce((sum, row) => sum + row.amount, 0);
   const currencies = [...new Set(filteredRows.map((row) => row.currency).filter((v): v is string => Boolean(v)))];
@@ -376,8 +396,9 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
       periodStart,
       periodEnd,
       countryFilter,
-      titleFilter,
-      artistFilter,
+      titleFilter: titleFilterRaw,
+      artistFilter: artistFilterRaw,
+      serviceFilter,
       page: nextPage,
     });
 
@@ -385,8 +406,9 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
     periodStart,
     periodEnd,
     countryFilter,
-    titleFilter,
-    artistFilter,
+    titleFilter: titleFilterRaw,
+    artistFilter: artistFilterRaw,
+    serviceFilter,
   })}`;
 
   return (
@@ -400,7 +422,7 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <form className="grid gap-4 md:grid-cols-5">
+        <form className="grid gap-4 md:grid-cols-6">
           <div>
             <label htmlFor="periodStart" className="mb-1 block text-sm font-medium text-slate-700">
               Period start
@@ -429,42 +451,75 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
             <label htmlFor="country" className="mb-1 block text-sm font-medium text-slate-700">
               Land
             </label>
-            <input
+            <select
               id="country"
               name="country"
-              type="text"
-              placeholder="SE"
               defaultValue={countryFilter}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            />
+            >
+              <option value="">All</option>
+              {countryOptions.map((country) => (
+                <option key={country} value={country}>
+                  {country}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label htmlFor="title" className="mb-1 block text-sm font-medium text-slate-700">
               Låt
             </label>
-            <input
+            <select
               id="title"
               name="title"
-              type="text"
-              placeholder="Song title"
-              defaultValue={asString(resolvedSearchParams.title) ?? ""}
+              defaultValue={titleFilterRaw}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            />
+            >
+              <option value="">All</option>
+              {titleOptions.map((title) => (
+                <option key={title} value={title}>
+                  {title}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label htmlFor="artist" className="mb-1 block text-sm font-medium text-slate-700">
               Artist
             </label>
-            <input
+            <select
               id="artist"
               name="artist"
-              type="text"
-              placeholder="Artist name"
-              defaultValue={asString(resolvedSearchParams.artist) ?? ""}
+              defaultValue={artistFilterRaw}
               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-            />
+            >
+              <option value="">All</option>
+              {artistOptions.map((artist) => (
+                <option key={artist} value={artist}>
+                  {artist}
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="md:col-span-5 flex items-center gap-3">
+          <div>
+            <label htmlFor="service" className="mb-1 block text-sm font-medium text-slate-700">
+              Service
+            </label>
+            <select
+              id="service"
+              name="service"
+              defaultValue={serviceFilter}
+              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">All</option>
+              {serviceOptions.map((service) => (
+                <option key={service} value={service}>
+                  {service}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="md:col-span-6 flex items-center gap-3">
             <button
               type="submit"
               className="inline-flex rounded-xl bg-black px-4 py-2 text-sm font-medium text-white"
