@@ -1,4 +1,5 @@
 import "server-only";
+import Link from "next/link";
 import CompanySidebarNav from "@/components/company-sidebar-nav";
 
 export default async function CompanyLayout({
@@ -48,13 +49,13 @@ export default async function CompanyLayout({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
+                  <Link
+                    href="/select-company"
                     className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/15"
                   >
                     <span className="text-xs">▶</span>
                     Switch
-                  </button>
+                  </Link>
                 </div>
               </div>
             </div>
