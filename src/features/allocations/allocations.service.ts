@@ -20,6 +20,63 @@ import type {
   WorkSplitRecord,
 } from "./allocations-types";
 
+type ReadinessBlockerCode =
+  | "ROW_AMOUNT_MISSING"
+  | "ROW_CURRENCY_MISSING"
+  | "ROW_NOT_MATCHED_TO_WORK"
+  | "NO_ACTIVE_SPLITS_FOR_WORK"
+  | "SPLITS_NOT_100_PERCENT"
+  | "DUPLICATE_SPLIT_CONFIGURATION";
+
+const READINESS_BLOCKER_CODES: ReadinessBlockerCode[] = [
+  "ROW_AMOUNT_MISSING",
+  "ROW_CURRENCY_MISSING",
+  "ROW_NOT_MATCHED_TO_WORK",
+  "NO_ACTIVE_SPLITS_FOR_WORK",
+  "SPLITS_NOT_100_PERCENT",
+  "DUPLICATE_SPLIT_CONFIGURATION",
+];
+
+const READINESS_BLOCKER_CODE_SET = new Set<string>(READINESS_BLOCKER_CODES);
+
+export type AllocationReadinessSummary = {
+  candidateRowCount: number;
+  rowsReadyForAllocation: number;
+  blockedRowCount: number;
+  blockerCounts: Record<ReadinessBlockerCode, number>;
+};
+
+function createEmptyReadinessBlockerCounts(): Record<ReadinessBlockerCode, number> {
+  return {
+    ROW_AMOUNT_MISSING: 0,
+    ROW_CURRENCY_MISSING: 0,
+    ROW_NOT_MATCHED_TO_WORK: 0,
+    NO_ACTIVE_SPLITS_FOR_WORK: 0,
+    SPLITS_NOT_100_PERCENT: 0,
+    DUPLICATE_SPLIT_CONFIGURATION: 0,
+  };
+}
+
+function collectReadinessErrorCodes(
+  blockers: AllocationCandidateBlocker[]
+): ReadinessBlockerCode[] {
+  const codes: ReadinessBlockerCode[] = [];
+
+  for (const blocker of blockers) {
+    if (blocker.severity !== "error") {
+      continue;
+    }
+
+    if (!READINESS_BLOCKER_CODE_SET.has(blocker.blocker_code)) {
+      continue;
+    }
+
+    codes.push(blocker.blocker_code as ReadinessBlockerCode);
+  }
+
+  return codes;
+}
+
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -273,6 +330,72 @@ function buildAllocationLines(
   }
 
   return rawLines;
+}
+
+export async function summarizeAllocationReadinessForImportJob(params: {
+  companyId: string;
+  importJobId: string;
+}): Promise<AllocationReadinessSummary> {
+  const rows = await listImportRowsForAllocation(params.companyId, params.importJobId);
+  const blockerCounts = createEmptyReadinessBlockerCounts();
+
+  if (rows.length === 0) {
+    return {
+      candidateRowCount: 0,
+      rowsReadyForAllocation: 0,
+      blockedRowCount: 0,
+      blockerCounts,
+    };
+  }
+
+  const workIds = [
+    ...new Set(
+      rows
+        .map((row) => row.matched_work_id)
+        .filter((value): value is string => Boolean(value))
+    ),
+  ];
+  const allSplits = await listWorkSplitsForWorkIds(params.companyId, workIds);
+  const splitsByWorkId = groupSplitsByWorkId(allSplits);
+
+  let rowsReadyForAllocation = 0;
+  let blockedRowCount = 0;
+
+  for (const row of rows) {
+    const rowErrorCodes = new Set<ReadinessBlockerCode>();
+
+    const baseValidation = validateRowBase("readiness-preview", row);
+    for (const code of collectReadinessErrorCodes(baseValidation.blockers)) {
+      rowErrorCodes.add(code);
+    }
+
+    if (baseValidation.canAllocate) {
+      const workSplits = splitsByWorkId.get(String(row.matched_work_id)) ?? [];
+      const splitValidation = validateWorkSplits("readiness-preview", row, workSplits);
+
+      for (const code of collectReadinessErrorCodes(splitValidation.blockers)) {
+        rowErrorCodes.add(code);
+      }
+    }
+
+    if (rowErrorCodes.size === 0) {
+      rowsReadyForAllocation += 1;
+      continue;
+    }
+
+    blockedRowCount += 1;
+
+    for (const code of rowErrorCodes) {
+      blockerCounts[code] += 1;
+    }
+  }
+
+  return {
+    candidateRowCount: rows.length,
+    rowsReadyForAllocation,
+    blockedRowCount,
+    blockerCounts,
+  };
 }
 
 export async function runAllocationForImportJob(params: {
