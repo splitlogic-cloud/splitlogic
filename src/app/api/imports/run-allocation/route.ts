@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { runAllocationForImportJob } from "@/features/allocations/allocations.service";
 
@@ -13,6 +14,17 @@ type RequestBody = {
 
 export async function POST(req: Request) {
   try {
+    const supabase = await createSupabaseServerClient();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    const user = authData?.user ?? null;
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { ok: false, error: "Not authenticated" },
+        { status: 401 }
+      );
+    }
+
     const body = (await req.json()) as RequestBody;
 
     const companySlug = String(body.companySlug ?? "");
@@ -35,6 +47,40 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { ok: false, error: "Company not found" },
         { status: 404 }
+      );
+    }
+
+    const membershipByUserId = await supabaseAdmin
+      .from("company_memberships")
+      .select("role")
+      .eq("company_id", company.id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    let hasMembership = Boolean(membershipByUserId.data);
+
+    if (!hasMembership) {
+      const membershipByProfileId = await supabaseAdmin
+        .from("company_memberships")
+        .select("role")
+        .eq("company_id", company.id)
+        .eq("profile_id", user.id)
+        .maybeSingle();
+
+      if (membershipByProfileId.error) {
+        return NextResponse.json(
+          { ok: false, error: membershipByProfileId.error.message },
+          { status: 500 }
+        );
+      }
+
+      hasMembership = Boolean(membershipByProfileId.data);
+    }
+
+    if (!hasMembership) {
+      return NextResponse.json(
+        { ok: false, error: "Not a member of this company" },
+        { status: 403 }
       );
     }
 
