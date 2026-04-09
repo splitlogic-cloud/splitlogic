@@ -225,7 +225,7 @@ function normalizeStatementLineRow(row: Record<string, unknown>): StatementLineR
 export async function listStatementsByCompany(
   companyId: string
 ): Promise<StatementListRow[]> {
-  const withNoteSelect = `
+  const withNoteAndCreatedBySelect = `
       id,
       company_id,
       party_id,
@@ -241,7 +241,22 @@ export async function listStatementsByCompany(
         name
       )
     `;
-  const withoutNoteSelect = `
+  const withNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      note,
+      created_at,
+      parties (
+        name
+      )
+    `;
+  const withoutNoteWithCreatedBySelect = `
       id,
       company_id,
       party_id,
@@ -256,9 +271,41 @@ export async function listStatementsByCompany(
         name
       )
     `;
+  const withoutNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      created_at,
+      parties (
+        name
+      )
+    `;
   const variants = [
-    { includeNote: true, select: withNoteSelect },
-    { includeNote: false, select: withoutNoteSelect },
+    {
+      includeNote: true,
+      includeCreatedBy: true,
+      select: withNoteAndCreatedBySelect,
+    },
+    {
+      includeNote: true,
+      includeCreatedBy: false,
+      select: withNoteWithoutCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: true,
+      select: withoutNoteWithCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: false,
+      select: withoutNoteWithoutCreatedBySelect,
+    },
   ] as const;
 
   for (const variant of variants) {
@@ -276,12 +323,16 @@ export async function listStatementsByCompany(
           ...row,
           generated_from: null,
           note: variant.includeNote ? row.note : null,
+          created_by: variant.includeCreatedBy ? row.created_by : null,
           party_name: asString(asObject(row.parties)?.name) ?? null,
         })
       );
     }
 
-    if (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) {
+    if (
+      (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) ||
+      (variant.includeCreatedBy && isMissingSchemaColumnError(error.message, "created_by"))
+    ) {
       continue;
     }
 
@@ -295,7 +346,7 @@ export async function getStatementHeader(
   companyId: string,
   statementId: string
 ): Promise<StatementHeaderRow | null> {
-  const withNoteSelect = `
+  const withNoteAndCreatedBySelect = `
       id,
       company_id,
       party_id,
@@ -311,7 +362,22 @@ export async function getStatementHeader(
         name
       )
     `;
-  const withoutNoteSelect = `
+  const withNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      note,
+      created_at,
+      parties (
+        name
+      )
+    `;
+  const withoutNoteWithCreatedBySelect = `
       id,
       company_id,
       party_id,
@@ -326,9 +392,41 @@ export async function getStatementHeader(
         name
       )
     `;
+  const withoutNoteWithoutCreatedBySelect = `
+      id,
+      company_id,
+      party_id,
+      period_start,
+      period_end,
+      status,
+      currency,
+      total_amount,
+      created_at,
+      parties (
+        name
+      )
+    `;
   const variants = [
-    { includeNote: true, select: withNoteSelect },
-    { includeNote: false, select: withoutNoteSelect },
+    {
+      includeNote: true,
+      includeCreatedBy: true,
+      select: withNoteAndCreatedBySelect,
+    },
+    {
+      includeNote: true,
+      includeCreatedBy: false,
+      select: withNoteWithoutCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: true,
+      select: withoutNoteWithCreatedBySelect,
+    },
+    {
+      includeNote: false,
+      includeCreatedBy: false,
+      select: withoutNoteWithoutCreatedBySelect,
+    },
   ] as const;
 
   for (const variant of variants) {
@@ -350,12 +448,16 @@ export async function getStatementHeader(
           ...row,
           generated_from: null,
           note: variant.includeNote ? row.note : null,
+          created_by: variant.includeCreatedBy ? row.created_by : null,
           party_name: asString(asObject(row.parties)?.name) ?? null,
         }),
       };
     }
 
-    if (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) {
+    if (
+      (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) ||
+      (variant.includeCreatedBy && isMissingSchemaColumnError(error.message, "created_by"))
+    ) {
       continue;
     }
 
