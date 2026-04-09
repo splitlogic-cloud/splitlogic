@@ -452,7 +452,9 @@ export async function listStatementQaStatusesByCompany(
   return results;
 }
 
-export async function getGenerateStatementsPreview(): Promise<GenerateStatementsPreviewRow[]> {
+export async function getGenerateStatementsPreview(
+  _companyId: string
+): Promise<GenerateStatementsPreviewRow[]> {
   const selectAttempts = [
     "matched_work_id, currency, net_amount, gross_amount, party_id, party_name",
     "matched_work_id, currency, net_amount, gross_amount, party_id",
@@ -535,7 +537,9 @@ export async function getGenerateStatementsPreview(): Promise<GenerateStatements
   return [...grouped.values()].sort((a, b) => b.total_amount - a.total_amount);
 }
 
-export async function getGenerateStatementsQaSummary(): Promise<GenerateStatementsQaSummary> {
+export async function getGenerateStatementsQaSummary(
+  _companyId: string
+): Promise<GenerateStatementsQaSummary> {
   const selectColumns = "matched_work_id, currency, net_amount, gross_amount";
   const statusAttempts = ["allocation_status", "status"] as const;
   const orderAttempts = ["created_at", "row_number", "id"] as const;
