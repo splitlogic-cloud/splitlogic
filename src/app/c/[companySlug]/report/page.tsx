@@ -286,7 +286,9 @@ async function loadReportRows(companyId: string): Promise<ReportRow[]> {
           throw new Error(`Failed to load import rows: ${error.message}`);
         }
 
-        for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+        for (const row of ((data ?? []) as unknown[]).map(
+          (item) => item as Record<string, unknown>
+        )) {
           const key = asString(row.id) ?? JSON.stringify(row);
           if (!allRows.has(key)) allRows.set(key, row);
         }
