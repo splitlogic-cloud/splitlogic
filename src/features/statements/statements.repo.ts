@@ -119,6 +119,16 @@ function isMissingSchemaColumnError(message: string, column: string): boolean {
   return normalized.includes(column.toLowerCase());
 }
 
+function isMissingSchemaEntityError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("does not exist") ||
+    normalized.includes("could not find the") ||
+    normalized.includes("schema cache") ||
+    normalized.includes("relation")
+  );
+}
+
 function normalizeDate(value: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -627,29 +637,44 @@ export async function replaceDraftStatementsForPeriod(params: {
   periodEnd: string;
   generatedFrom: string | null;
 }): Promise<void> {
-  let query = supabaseAdmin
-    .from("statements")
-    .select("id")
-    .eq("company_id", params.companyId)
-    .eq("status", "draft")
-    .eq("period_start", params.periodStart)
-    .eq("period_end", params.periodEnd);
+  async function loadDraftIds(filterByGeneratedFrom: boolean): Promise<string[]> {
+    let query = supabaseAdmin
+      .from("statements")
+      .select("id")
+      .eq("company_id", params.companyId)
+      .eq("status", "draft")
+      .eq("period_start", params.periodStart)
+      .eq("period_end", params.periodEnd);
 
-  if (params.generatedFrom == null) {
-    query = query.is("generated_from", null);
-  } else {
-    query = query.eq("generated_from", params.generatedFrom);
+    if (filterByGeneratedFrom) {
+      if (params.generatedFrom == null) {
+        query = query.is("generated_from", null);
+      } else {
+        query = query.eq("generated_from", params.generatedFrom);
+      }
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    return (data ?? [])
+      .map((row) => asString((row as Record<string, unknown>).id))
+      .filter((value): value is string => Boolean(value));
   }
 
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`replaceDraftStatementsForPeriod failed: ${error.message}`);
+  let ids: string[] = [];
+  try {
+    ids = await loadDraftIds(true);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isMissingSchemaColumnError(message, "generated_from")) {
+      ids = await loadDraftIds(false);
+    } else {
+      throw new Error(`replaceDraftStatementsForPeriod failed: ${message}`);
+    }
   }
-
-  const ids = (data ?? [])
-    .map((row) => asString((row as Record<string, unknown>).id))
-    .filter((value): value is string => Boolean(value));
 
   if (ids.length === 0) return;
 
@@ -683,9 +708,17 @@ export async function replaceDraftStatementsForPeriod(params: {
 }
 
 export async function insertStatement(row: StatementInsertRow): Promise<{ id: string }> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .insert({
+  const attempts = [
+    { includeGeneratedFrom: true, includeCreatedBy: true },
+    { includeGeneratedFrom: true, includeCreatedBy: false },
+    { includeGeneratedFrom: false, includeCreatedBy: true },
+    { includeGeneratedFrom: false, includeCreatedBy: false },
+  ] as const;
+
+  let lastErrorMessage = "unknown";
+
+  for (const attempt of attempts) {
+    const payload: Record<string, unknown> = {
       company_id: row.company_id,
       party_id: row.party_id,
       period_start: row.period_start,
@@ -693,17 +726,49 @@ export async function insertStatement(row: StatementInsertRow): Promise<{ id: st
       status: row.status,
       currency: row.currency,
       total_amount: roundMoney(row.total_amount),
-      generated_from: row.generated_from,
-      created_by: row.created_by,
-    })
-    .select("id")
-    .single();
+    };
 
-  if (error) {
+    if (attempt.includeGeneratedFrom) {
+      payload.generated_from = row.generated_from;
+    }
+
+    if (attempt.includeCreatedBy) {
+      payload.created_by = row.created_by;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("statements")
+      .insert(payload)
+      .select("id")
+      .single();
+
+    if (!error) {
+      return { id: String(data.id) };
+    }
+
+    lastErrorMessage = error.message;
+
+    const missingGeneratedFrom = isMissingSchemaColumnError(
+      error.message,
+      "generated_from"
+    );
+    const missingCreatedBy = isMissingSchemaColumnError(error.message, "created_by");
+
+    if (
+      (attempt.includeGeneratedFrom && missingGeneratedFrom) ||
+      (attempt.includeCreatedBy && missingCreatedBy)
+    ) {
+      continue;
+    }
+
+    if (isMissingSchemaEntityError(error.message)) {
+      continue;
+    }
+
     throw new Error(`insertStatement failed: ${error.message}`);
   }
 
-  return { id: String(data.id) };
+  throw new Error(`insertStatement failed: ${lastErrorMessage}`);
 }
 
 export async function insertStatementLines(rows: StatementLineInsertRow[]): Promise<void> {

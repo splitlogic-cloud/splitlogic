@@ -8,6 +8,17 @@ type CompanyRecord = {
   slug: string | null;
 };
 
+function isMissingColumnError(message: string, column?: string): boolean {
+  const normalized = message.toLowerCase();
+  const isSchemaError =
+    normalized.includes("does not exist") ||
+    normalized.includes("could not find") ||
+    normalized.includes("schema cache");
+  if (!isSchemaError) return false;
+  if (!column) return true;
+  return normalized.includes(column.toLowerCase());
+}
+
 async function insertPartyWithFallback(payload: {
   company_id: string;
   name: string;
@@ -16,6 +27,14 @@ async function insertPartyWithFallback(payload: {
 }) {
   const attempts = [
     { select: "company_id, name, type, email", map: () => payload },
+    {
+      select: "name, type, email",
+      map: () => ({
+        name: payload.name,
+        type: payload.type,
+        email: payload.email,
+      }),
+    },
     {
       select: "company_id, name, type",
       map: () => ({
@@ -36,6 +55,26 @@ async function insertPartyWithFallback(payload: {
       select: "company_id, name",
       map: () => ({
         company_id: payload.company_id,
+        name: payload.name,
+      }),
+    },
+    {
+      select: "name, type",
+      map: () => ({
+        name: payload.name,
+        type: payload.type,
+      }),
+    },
+    {
+      select: "name, email",
+      map: () => ({
+        name: payload.name,
+        email: payload.email,
+      }),
+    },
+    {
+      select: "name",
+      map: () => ({
         name: payload.name,
       }),
     },
@@ -124,15 +163,34 @@ async function updatePartyWithFallback(params: {
   let lastErrorMessage = "unknown";
 
   for (const attempt of attempts) {
+    const payload = attempt.map();
     const { error } = await supabaseAdmin
       .from("parties")
-      .update(attempt.map())
+      .update(payload)
       .eq("company_id", params.companyId)
       .eq("id", params.partyId);
 
     if (!error) {
       return;
     }
+
+    if (isMissingColumnError(error.message, "company_id")) {
+      const { error: fallbackError } = await supabaseAdmin
+        .from("parties")
+        .update(payload)
+        .eq("id", params.partyId);
+
+      if (!fallbackError) {
+        return;
+      }
+
+      lastErrorMessage = fallbackError.message;
+      if (!isMissingColumnError(fallbackError.message)) {
+        throw new Error(`update party failed: ${fallbackError.message}`);
+      }
+      continue;
+    }
+
     lastErrorMessage = error.message;
 
     const missingColumn = attempt.select
@@ -215,12 +273,24 @@ export async function deletePartyAction(
     throw new Error(`Company not found for slug: ${companySlug}`);
   }
 
-  const { data: party, error: partyError } = await supabaseAdmin
+  let partyQuery = supabaseAdmin
     .from("parties")
     .select("id")
     .eq("company_id", company.id)
     .eq("id", partyId)
     .maybeSingle();
+
+  let { data: party, error: partyError } = await partyQuery;
+
+  if (partyError && isMissingColumnError(partyError.message, "company_id")) {
+    const fallback = await supabaseAdmin
+      .from("parties")
+      .select("id")
+      .eq("id", partyId)
+      .maybeSingle();
+    party = fallback.data;
+    partyError = fallback.error;
+  }
 
   if (partyError) {
     throw new Error(`Failed to load party: ${partyError.message}`);
@@ -230,11 +300,19 @@ export async function deletePartyAction(
     throw new Error("Party not found.");
   }
 
-  const { error: deleteError } = await supabaseAdmin
+  let { error: deleteError } = await supabaseAdmin
     .from("parties")
     .delete()
     .eq("company_id", company.id)
     .eq("id", partyId);
+
+  if (deleteError && isMissingColumnError(deleteError.message, "company_id")) {
+    const fallback = await supabaseAdmin
+      .from("parties")
+      .delete()
+      .eq("id", partyId);
+    deleteError = fallback.error;
+  }
 
   if (deleteError) {
     throw new Error(`delete party failed: ${deleteError.message}`);
@@ -275,12 +353,22 @@ export async function updatePartyAction(
     throw new Error(`Company not found for slug: ${companySlug}`);
   }
 
-  const { data: party, error: partyError } = await supabaseAdmin
+  let { data: party, error: partyError } = await supabaseAdmin
     .from("parties")
     .select("id")
     .eq("company_id", company.id)
     .eq("id", partyId)
     .maybeSingle();
+
+  if (partyError && isMissingColumnError(partyError.message, "company_id")) {
+    const fallback = await supabaseAdmin
+      .from("parties")
+      .select("id")
+      .eq("id", partyId)
+      .maybeSingle();
+    party = fallback.data;
+    partyError = fallback.error;
+  }
 
   if (partyError) {
     throw new Error(`Failed to load party: ${partyError.message}`);

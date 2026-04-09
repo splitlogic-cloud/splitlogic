@@ -492,6 +492,9 @@ export async function getGenerateStatementsPreview(
   }
 
   if (data == null) {
+    if (isMissingColumnOrTable(lastErrorMessage)) {
+      return [];
+    }
     throw new Error(
       `Failed to load generate-statements preview: ${lastErrorMessage}`
     );
@@ -571,6 +574,19 @@ export async function getGenerateStatementsQaSummary(
   }
 
   if (data == null) {
+    if (isMissingColumnOrTable(lastErrorMessage)) {
+      return {
+        level: "warning",
+        candidateCount: 0,
+        currencies: [],
+        totalAmount: 0,
+        rowsMissingWork: 0,
+        unmatchedRows: 0,
+        issues: [
+          "No compatible import_rows schema found for QA summary in this environment.",
+        ],
+      };
+    }
     throw new Error(
       `Failed to load generate-statements QA summary: ${lastErrorMessage}`
     );

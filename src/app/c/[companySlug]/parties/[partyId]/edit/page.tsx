@@ -45,12 +45,22 @@ async function loadPartyForEdit(params: {
   ];
 
   for (const attempt of attempts) {
-    const { data, error } = await params.supabase
+    let { data, error } = await params.supabase
       .from("parties")
       .select(attempt.select)
       .eq("company_id", params.companyId)
       .eq("id", params.partyId)
       .maybeSingle();
+
+    if (error && isMissingColumnError(error.message)) {
+      const fallback = await params.supabase
+        .from("parties")
+        .select(attempt.select)
+        .eq("id", params.partyId)
+        .maybeSingle();
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (!error) {
       if (!data) {
@@ -117,11 +127,19 @@ async function updatePartyRecord(params: {
   ];
 
   for (const payload of payloadAttempts) {
-    const { error } = await params.supabase
+    let { error } = await params.supabase
       .from("parties")
       .update(payload)
       .eq("company_id", params.companyId)
       .eq("id", params.partyId);
+
+    if (error && isMissingColumnError(error.message)) {
+      const fallback = await params.supabase
+        .from("parties")
+        .update(payload)
+        .eq("id", params.partyId);
+      error = fallback.error;
+    }
 
     if (!error) {
       return;

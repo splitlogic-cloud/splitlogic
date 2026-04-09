@@ -89,6 +89,19 @@ function pickNumberFromRecords(records: Array<Record<string, unknown> | null>, k
   return null;
 }
 
+function normalizeServiceCandidate(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) return null;
+
+  // Generic ingestion/source labels are not useful for a service ranking card.
+  if (["ROYALTY", "SOURCE", "IMPORT", "STATEMENT", "REPORT"].includes(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -312,20 +325,33 @@ function mapImportRowToAggregationRow(row: Record<string, unknown>): Aggregation
     null;
 
   const service =
-    pickStringFromRecords(records, [
-      "source",
-      "source_system",
-      "source_name",
-      "service",
-      "platform",
-      "store",
-      "dsp",
-      "Source",
-      "Service",
-      "Platform",
-      "Store",
-      "DSP",
-    ]) ?? "Unknown";
+    normalizeServiceCandidate(
+      pickStringFromRecords(records, [
+        "service",
+        "platform",
+        "store",
+        "dsp",
+        "channel",
+        "retailer",
+        "Service",
+        "Platform",
+        "Store",
+        "DSP",
+        "Channel",
+        "Retailer",
+      ])
+    ) ??
+    normalizeServiceCandidate(
+      pickStringFromRecords(records, [
+        "source_name",
+        "source_system",
+        "source",
+        "Source Name",
+        "Source System",
+        "Source",
+      ])
+    ) ??
+    "UNKNOWN";
 
   return { title, territory, service: service.toUpperCase(), amount, currency };
 }

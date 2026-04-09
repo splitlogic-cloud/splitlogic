@@ -50,6 +50,12 @@ function normalizeDateInput(value: string | undefined) {
   return value;
 }
 
+function safeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
 export default async function GenerateStatementsPage({
   params,
   searchParams,
@@ -74,10 +80,26 @@ export default async function GenerateStatementsPage({
     notFound();
   }
 
-  const [qaSummary, preview] = await Promise.all([
-    getGenerateStatementsQaSummary(company.id),
-    getGenerateStatementsPreview(company.id),
-  ]);
+  let qaSummary: Awaited<ReturnType<typeof getGenerateStatementsQaSummary>>;
+  let preview: Awaited<ReturnType<typeof getGenerateStatementsPreview>>;
+
+  try {
+    [qaSummary, preview] = await Promise.all([
+      getGenerateStatementsQaSummary(company.id),
+      getGenerateStatementsPreview(company.id),
+    ]);
+  } catch (error) {
+    qaSummary = {
+      level: "warning",
+      candidateCount: 0,
+      currencies: [],
+      totalAmount: 0,
+      rowsMissingWork: 0,
+      unmatchedRows: 0,
+      issues: [`Could not load QA preview: ${safeErrorMessage(error)}`],
+    };
+    preview = [];
+  }
 
   return (
     <div className="space-y-6">
