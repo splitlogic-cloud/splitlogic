@@ -25,6 +25,20 @@ export default async function AuditPage({ params }: PageProps) {
     limit: 300,
   });
 
+  // If this company has historical events in legacy audit_log but none in audit_events,
+  // expose that hint so users understand why Audit can look empty.
+  let legacyAuditLogCount: number | null = null;
+  if (events.length === 0) {
+    const { count, error: countError } = await supabaseAdmin
+      .from("audit_log")
+      .select("*", { count: "exact", head: true })
+      .eq("company_id", company.id);
+
+    if (!countError) {
+      legacyAuditLogCount = count ?? 0;
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -67,7 +81,9 @@ export default async function AuditPage({ params }: PageProps) {
             ) : (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-slate-500">
-                  No audit events yet.
+                  {legacyAuditLogCount && legacyAuditLogCount > 0
+                    ? `No audit events in audit_events yet (legacy audit_log has ${legacyAuditLogCount} row(s)).`
+                    : "No audit events yet."}
                 </td>
               </tr>
             )}
