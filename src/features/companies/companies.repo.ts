@@ -23,6 +23,38 @@ function slugify(input: string) {
     .replace(/(^-|-$)/g, "");
 }
 
+function asNullableString(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function isSchemaCompatibilityError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("does not exist") ||
+    normalized.includes("schema cache") ||
+    normalized.includes("could not find") ||
+    normalized.includes("relation") ||
+    normalized.includes("column")
+  );
+}
+
+function isUniqueViolation(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("duplicate key") || normalized.includes("unique");
+}
+
+function mapCompanyRow(row: Record<string, unknown>): Company {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ""),
+    slug: String(row.slug ?? ""),
+    base_currency: asNullableString(row.base_currency),
+    created_at: asNullableString(row.created_at),
+  };
+}
+
 async function requireUser() {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.getUser();
@@ -113,30 +145,118 @@ export async function createCompanyForUser(input: { name: string; base_currency?
   const base_currency = (input.base_currency ?? "SEK")?.toString().trim() || "SEK";
 
   const baseSlug = slugify(name) || "company";
-  const suffix = Math.random().toString(36).slice(2, 7);
-  const slug = `${baseSlug}-${suffix}`;
+  const slugCandidates = Array.from(
+    new Set(
+      [0, 1, 2, 3].map((index) =>
+        index === 0
+          ? `${baseSlug}-${Math.random().toString(36).slice(2, 7)}`
+          : `${baseSlug}-${Math.random().toString(36).slice(2, 7)}`
+      )
+    )
+  );
 
-  const { data: company, error: companyErr } = await supabase
-    .from("companies")
-    .insert({ name, slug, base_currency })
-    .select("id,name,slug,base_currency,created_at")
-    .single();
+  const insertVariants = [
+    {
+      payload: (slug: string) => ({ name, slug, base_currency }),
+      select: "id,name,slug,base_currency,created_at",
+    },
+    {
+      payload: (slug: string) => ({ name, slug }),
+      select: "id,name,slug,created_at",
+    },
+    {
+      payload: (slug: string) => ({ name, slug }),
+      select: "id,name,slug",
+    },
+  ] as const;
 
-  if (companyErr) {
-    console.error("createCompanyForUser insert company error:", companyErr);
-    throw new Error("Could not create company.");
+  let company: Company | null = null;
+  let lastCompanyErrorMessage = "unknown";
+
+  outer: for (const slug of slugCandidates) {
+    for (const variant of insertVariants) {
+      const { data, error } = await supabase
+        .from("companies")
+        .insert(variant.payload(slug))
+        .select(variant.select)
+        .single();
+
+      if (!error) {
+        company = mapCompanyRow(data as unknown as Record<string, unknown>);
+        break outer;
+      }
+
+      lastCompanyErrorMessage = error.message;
+      if (isUniqueViolation(error.message)) {
+        break;
+      }
+      if (isSchemaCompatibilityError(error.message)) {
+        continue;
+      }
+
+      console.error("createCompanyForUser insert company error:", error);
+      throw new Error(`Could not create company: ${error.message}`);
+    }
   }
 
-  const { error: membershipErr } = await supabase.from("company_memberships").insert({
-    company_id: company.id,
-    user_id: user.id,
-    role: "owner",
-  });
+  if (!company) {
+    throw new Error(`Could not create company: ${lastCompanyErrorMessage}`);
+  }
 
-  if (membershipErr) {
+  const membershipAttempts = [
+    {
+      table: "company_memberships",
+      payload: { company_id: company.id, user_id: user.id, role: "owner" },
+    },
+    {
+      table: "company_memberships",
+      payload: { company_id: company.id, user_id: user.id },
+    },
+    {
+      table: "company_memberships",
+      payload: { company_id: company.id, profile_id: user.id, role: "owner" },
+    },
+    {
+      table: "company_memberships",
+      payload: { company_id: company.id, profile_id: user.id },
+    },
+    {
+      table: "memberships",
+      payload: { company_id: company.id, user_id: user.id, role: "owner" },
+    },
+    {
+      table: "memberships",
+      payload: { company_id: company.id, user_id: user.id },
+    },
+  ] as const;
+
+  let membershipCreated = false;
+  let lastMembershipErrorMessage = "unknown";
+
+  for (const attempt of membershipAttempts) {
+    const { error: membershipErr } = await supabase
+      .from(attempt.table)
+      .insert(attempt.payload as never);
+
+    if (!membershipErr) {
+      membershipCreated = true;
+      break;
+    }
+
+    lastMembershipErrorMessage = membershipErr.message;
+    if (isSchemaCompatibilityError(membershipErr.message)) {
+      continue;
+    }
+
     console.error("createCompanyForUser insert membership error:", membershipErr);
-    throw new Error("Company created, but membership failed.");
+    throw new Error(`Company created, but membership failed: ${membershipErr.message}`);
   }
 
-  return company as Company;
+  if (!membershipCreated) {
+    throw new Error(
+      `Company created, but membership failed: ${lastMembershipErrorMessage}`
+    );
+  }
+
+  return company;
 }
