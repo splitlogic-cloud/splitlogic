@@ -19,6 +19,7 @@ type PageProps = {
   searchParams?: Promise<{
     periodStart?: string;
     periodEnd?: string;
+    error?: string;
   }>;
 };
 
@@ -65,6 +66,7 @@ export default async function GenerateStatementsPage({
 
   const selectedPeriodStart = normalizeDateInput(resolvedSearchParams.periodStart);
   const selectedPeriodEnd = normalizeDateInput(resolvedSearchParams.periodEnd);
+  const actionError = normalizeDateInput(resolvedSearchParams.error);
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
@@ -135,6 +137,12 @@ export default async function GenerateStatementsPage({
       <div className="rounded-2xl border bg-white p-6">
         <form action={generateStatementsAction} className="space-y-4">
           <input type="hidden" name="companySlug" value={companySlug} />
+
+          {actionError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {actionError}
+            </div>
+          ) : null}
 
           <div className="grid gap-4 md:grid-cols-3">
             <div>

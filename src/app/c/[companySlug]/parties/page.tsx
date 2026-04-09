@@ -190,7 +190,14 @@ export default async function PartiesPage({ params }: PageProps) {
     notFound();
   }
 
-  const rows = await listPartiesForCompany(company.id);
+  let rows: PartyRow[] = [];
+  let partiesLoadWarning: string | null = null;
+  try {
+    rows = await listPartiesForCompany(company.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    partiesLoadWarning = `Could not load parties right now: ${message}`;
+  }
 
   return (
     <div className="space-y-6">
@@ -303,6 +310,12 @@ export default async function PartiesPage({ params }: PageProps) {
           </div>
         </form>
       </section>
+
+      {partiesLoadWarning ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {partiesLoadWarning}
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm">
         <table className="min-w-full text-sm">

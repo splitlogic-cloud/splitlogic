@@ -51,7 +51,7 @@ function groupByPartyCurrency(rows: StatementSourceAllocationLine[]): Map<string
 
   for (const row of rows) {
     if (!row.party_id) {
-      throw new Error(`Allocation line ${row.id} is missing party_id`);
+      continue;
     }
 
     const key = `${row.party_id}::${row.currency ?? "__NULL__"}`;
