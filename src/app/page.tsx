@@ -160,33 +160,6 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="mx-auto max-w-6xl px-6 py-14">
-          <div className="rounded-[32px] border border-slate-200 bg-gradient-to-r from-slate-950 to-slate-900 p-10 text-white shadow-sm">
-            <h2 className="text-3xl font-semibold">
-              Redo att sluta räkna i Excel?
-            </h2>
-            <p className="mt-3 max-w-2xl text-white/80">
-              Boka en demo och se hur ni går från CSV till korrekt utbetalning på
-              minuter, inte dagar.
-            </p>
-
-            <div className="mt-7 flex flex-wrap gap-3">
-              <Link
-                href="/signup"
-                className="rounded-xl bg-white px-5 py-3 font-medium text-slate-900 hover:bg-white/90"
-              >
-                Boka demo
-              </Link>
-              <Link
-                href="/login"
-                className="rounded-xl border border-white/15 px-5 py-3 font-medium hover:bg-white/5"
-              >
-                Logga in
-              </Link>
-            </div>
-          </div>
-        </section>
-
         <footer className="border-t border-slate-200 bg-white">
           <div className="mx-auto max-w-6xl px-6 py-8 text-sm text-slate-500">
             © {new Date().getFullYear()} SplitLogic. Alla rättigheter förbehållna.
