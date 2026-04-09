@@ -169,7 +169,7 @@ export default async function ImportDetailPage({ params }: Params) {
     importJobStatus === "allocating";
 
   const canRunMatching = !isBusy && totalRows > 0;
-  const canRunAllocation = !isBusy && readiness.rowsReadyForAllocation > 0;
+  const canRunAllocation = !isBusy && strictMatchedCount > 0;
 
   return (
     <div className="space-y-6">

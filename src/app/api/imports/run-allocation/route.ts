@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import {
-  runAllocationForImportJob,
-  summarizeAllocationReadinessForImportJob,
-} from "@/features/allocations/allocations.service";
+import { runAllocationForImportJob } from "@/features/allocations/allocations.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,23 +57,6 @@ export async function POST(req: Request) {
       importJobId,
       companyId: company.id,
     });
-
-    const readiness = await summarizeAllocationReadinessForImportJob({
-      companyId: company.id,
-      importJobId,
-    });
-
-    if (readiness.rowsReadyForAllocation === 0) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Allocation blocked: no matched rows currently pass allocation validation (missing currency, missing splits, or split configuration errors).",
-          readiness,
-        },
-        { status: 400 }
-      );
-    }
 
     const result = await runAllocationForImportJob({
       companyId: company.id,
