@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type Props = {
   companySlug: string;
@@ -14,6 +14,33 @@ export default function UploadImportsClient({ companySlug }: Props) {
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  function onPickFile(selected: File | null) {
+    setFile(selected);
+    setIsDragging(false);
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isUploading) return;
+    const selected = e.dataTransfer.files?.[0] ?? null;
+    onPickFile(selected);
+  }
+
+  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) setIsDragging(true);
+  }
+
+  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -46,9 +73,9 @@ export default function UploadImportsClient({ companySlug }: Props) {
 
       setMessage(`Upload klar. Import job ID: ${data.importJobId}`);
       setFile(null);
+      setIsDragging(false);
 
-      const input = document.getElementById("csv-file-input") as HTMLInputElement | null;
-      if (input) input.value = "";
+      if (inputRef.current) inputRef.current.value = "";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Något gick fel vid upload.");
     } finally {
@@ -85,15 +112,33 @@ export default function UploadImportsClient({ companySlug }: Props) {
           CSV-fil
         </label>
 
+        <div
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          className={[
+            "rounded-xl border border-dashed p-4 transition",
+            isDragging
+              ? "border-cyan-400 bg-cyan-50"
+              : "border-slate-300 bg-slate-50",
+            isUploading ? "pointer-events-none opacity-70" : "cursor-pointer",
+          ].join(" ")}
+          onClick={() => inputRef.current?.click()}
+        >
+          <div className="text-sm text-slate-700">
+            Dra & släpp en CSV här, eller klicka för att välja fil.
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {file ? `Vald fil: ${file.name}` : "Ingen fil vald ännu."}
+          </div>
+        </div>
         <input
+          ref={inputRef}
           id="csv-file-input"
           type="file"
           accept=".csv,text/csv"
-          onChange={(e) => {
-            const selected = e.target.files?.[0] ?? null;
-            setFile(selected);
-          }}
-          className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+          onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+          className="hidden"
         />
       </div>
 
