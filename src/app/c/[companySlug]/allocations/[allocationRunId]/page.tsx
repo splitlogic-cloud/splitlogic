@@ -2,6 +2,7 @@ import Link from "next/link";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import {
   getAllocationQASummary,
+  listAllocationQABlockers,
   listAllocationQARows,
 } from "@/features/allocations/allocation-qa.repo";
 
@@ -27,9 +28,10 @@ export default async function AllocationQAPage({ params }: PageProps) {
     throw new Error("Company not found");
   }
 
-  const [summary, rows] = await Promise.all([
+  const [summary, rows, blockers] = await Promise.all([
     getAllocationQASummary({ allocationRunId }),
     listAllocationQARows({ allocationRunId, limit: 500 }),
+    listAllocationQABlockers({ allocationRunId, limit: 1000 }),
   ]);
 
   return (
@@ -75,6 +77,9 @@ export default async function AllocationQAPage({ params }: PageProps) {
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-4 py-3 text-sm font-medium text-slate-900">
+          Allocation rows ({rows.length} shown / {summary.rowCount} total)
+        </div>
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left text-slate-500">
             <tr>
@@ -88,38 +93,105 @@ export default async function AllocationQAPage({ params }: PageProps) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.allocationRowId} className="border-t border-slate-100">
-                <td className="px-4 py-3">
-                  <div className="font-medium text-slate-900">{row.workTitle}</div>
-                  <div className="text-xs text-slate-500">{row.workId}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="font-medium text-slate-900">{row.partyName}</div>
-                  <div className="text-xs text-slate-500">{row.partyId}</div>
-                </td>
-                <td className="px-4 py-3">{row.sourceAmount.toFixed(6)}</td>
-                <td className="px-4 py-3">{row.sharePercent.toFixed(6)}</td>
-                <td className="px-4 py-3 font-medium">{row.allocatedAmount.toFixed(6)}</td>
-                <td className="px-4 py-3">{row.currency || "—"}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Link
-                      href={`/c/${companySlug}/works/${row.workId}/splits`}
-                      className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                    >
-                      Work splits
-                    </Link>
-                    <Link
-                      href={`/c/${companySlug}/parties/${row.partyId}`}
-                      className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
-                    >
-                      Party
-                    </Link>
-                  </div>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                  No allocation rows were created for this run.
                 </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((row) => (
+                <tr key={row.allocationRowId} className="border-t border-slate-100">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-900">{row.workTitle}</div>
+                    <div className="text-xs text-slate-500">{row.workId}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-900">{row.partyName}</div>
+                    <div className="text-xs text-slate-500">{row.partyId}</div>
+                  </td>
+                  <td className="px-4 py-3">{row.sourceAmount.toFixed(6)}</td>
+                  <td className="px-4 py-3">{row.sharePercent.toFixed(6)}</td>
+                  <td className="px-4 py-3 font-medium">{row.allocatedAmount.toFixed(6)}</td>
+                  <td className="px-4 py-3">{row.currency || "—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        href={`/c/${companySlug}/works/${row.workId}/splits`}
+                        className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
+                      >
+                        Work splits
+                      </Link>
+                      <Link
+                        href={`/c/${companySlug}/parties/${row.partyId}`}
+                        className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50"
+                      >
+                        Party
+                      </Link>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-4 py-3 text-sm font-medium text-slate-900">
+          Blockers ({blockers.length} shown / {summary.blockerCount} total)
+        </div>
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-left text-slate-500">
+            <tr>
+              <th className="px-4 py-3 font-medium">Severity</th>
+              <th className="px-4 py-3 font-medium">Code</th>
+              <th className="px-4 py-3 font-medium">Message</th>
+              <th className="px-4 py-3 font-medium">Import row</th>
+              <th className="px-4 py-3 font-medium">Row #</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Raw title</th>
+            </tr>
+          </thead>
+          <tbody>
+            {blockers.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                  No blockers recorded for this run.
+                </td>
+              </tr>
+            ) : (
+              blockers.map((blocker) => (
+                <tr key={blocker.blockerId} className="border-t border-slate-100">
+                  <td className="px-4 py-3">
+                    <span
+                      className={[
+                        "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium",
+                        blocker.severity === "error"
+                          ? "border-red-200 bg-red-100 text-red-700"
+                          : blocker.severity === "warning"
+                            ? "border-amber-200 bg-amber-100 text-amber-700"
+                            : "border-slate-200 bg-slate-100 text-slate-700",
+                      ].join(" ")}
+                    >
+                      {blocker.severity}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                    {blocker.blockerCode}
+                  </td>
+                  <td className="px-4 py-3 text-slate-800">{blocker.message}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                    {blocker.importRowId ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-slate-700">
+                    {blocker.rowNumber != null ? blocker.rowNumber : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-slate-700">{blocker.rowStatus ?? "—"}</td>
+                  <td className="px-4 py-3 text-slate-700">{blocker.rawTitle ?? "—"}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
