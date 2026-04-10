@@ -18,6 +18,7 @@ export type GenerateStatementsParams = {
   periodStart: string;
   periodEnd: string;
   createdBy?: string | null;
+  partyId?: string | null;
 };
 
 export type GeneratedStatementResult = {
@@ -125,12 +126,15 @@ export async function generateStatements(
   });
 
   const usable = rows.filter((row) => row.allocated_amount !== 0);
+  const partyFiltered = params.partyId
+    ? usable.filter((row) => row.party_id === params.partyId)
+    : usable;
 
-  if (!usable.length) {
+  if (!partyFiltered.length) {
     return { statementIds: [], count: 0 };
   }
 
-  const byPartyCurrency = groupByPartyCurrency(usable);
+  const byPartyCurrency = groupByPartyCurrency(partyFiltered);
   const generatedFrom = "allocation";
 
   await replaceDraftStatementsForPeriod({
@@ -138,10 +142,15 @@ export async function generateStatements(
     periodStart: params.periodStart,
     periodEnd: params.periodEnd,
     generatedFrom,
+    partyId: params.partyId ?? null,
   });
 
   const workIds = Array.from(
-    new Set(usable.map((row) => row.work_id).filter((value): value is string => Boolean(value)))
+    new Set(
+      partyFiltered
+        .map((row) => row.work_id)
+        .filter((value): value is string => Boolean(value))
+    )
   );
   const workTitles = await getWorkTitlesByIds(workIds);
 

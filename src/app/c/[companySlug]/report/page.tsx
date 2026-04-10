@@ -8,5 +8,5 @@ type PageProps = {
 
 export default async function ReportRedirectPage({ params }: PageProps) {
   const { companySlug } = await params;
-  redirect(`/c/${companySlug}/report/coverage`);
+  redirect(`/c/${companySlug}/works/coverage`);
 }

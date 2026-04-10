@@ -448,6 +448,7 @@ export async function getGenerateStatementsPreview(
   const { data, error } = await supabaseAdmin
     .from("import_rows")
     .select("matched_work_id, currency, net_amount, gross_amount, party_id, party_name")
+    .eq("company_id", companyId)
     .eq("allocation_status", "completed")
     .order("created_at", { ascending: false })
     .limit(5000);
@@ -502,6 +503,7 @@ export async function getGenerateStatementsQaSummary(
   const { data, error } = await supabaseAdmin
     .from("import_rows")
     .select("matched_work_id, currency, net_amount, gross_amount")
+    .eq("company_id", companyId)
     .eq("allocation_status", "completed")
     .order("created_at", { ascending: false })
     .limit(5000);

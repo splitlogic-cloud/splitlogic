@@ -2,7 +2,7 @@ import "server-only";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { createPartyAction, deletePartyAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +43,7 @@ function formatDate(value: string | null) {
 }
 
 async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
+  const supabase = await createClient();
   const attempts: Array<{
     select: string;
     orderBy?: string;
@@ -104,7 +105,7 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
   const errors: string[] = [];
 
   for (const attempt of attempts) {
-    let query = supabaseAdmin
+    let query = supabase
       .from("parties")
       .select(attempt.select)
       .eq("company_id", companyId)
@@ -131,8 +132,9 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
 
 export default async function PartiesPage({ params }: PageProps) {
   const { companySlug } = await params;
+  const supabase = await createClient();
 
-  const { data: company, error: companyError } = await supabaseAdmin
+  const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, name, slug")
     .eq("slug", companySlug)

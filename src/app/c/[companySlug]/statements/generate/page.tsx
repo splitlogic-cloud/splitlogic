@@ -9,6 +9,7 @@ import {
   getGenerateStatementsQaSummary,
   type QaLevel,
 } from "@/features/statements/statements-qa.repo";
+import { listPartiesMini } from "@/features/parties/parties.repo";
 
 export const dynamic = "force-dynamic";
 
@@ -74,9 +75,10 @@ export default async function GenerateStatementsPage({
     notFound();
   }
 
-  const [qaSummary, preview] = await Promise.all([
+  const [qaSummary, preview, parties] = await Promise.all([
     getGenerateStatementsQaSummary(company.id),
     getGenerateStatementsPreview(company.id),
+    listPartiesMini(company.id),
   ]);
 
   return (
@@ -114,7 +116,7 @@ export default async function GenerateStatementsPage({
         <form action={generateStatementsAction} className="space-y-4">
           <input type="hidden" name="companySlug" value={companySlug} />
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div>
               <label
                 htmlFor="periodStart"
@@ -145,6 +147,28 @@ export default async function GenerateStatementsPage({
                 defaultValue={selectedPeriodEnd}
                 className="w-full rounded-xl border px-3 py-2 text-sm"
               />
+            </div>
+
+            <div>
+              <label
+                htmlFor="partyId"
+                className="mb-1 block text-sm font-medium text-neutral-700"
+              >
+                Party (optional)
+              </label>
+              <select
+                id="partyId"
+                name="partyId"
+                defaultValue=""
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                <option value="">All parties</option>
+                {parties.map((party) => (
+                  <option key={party.id} value={party.id}>
+                    {party.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex items-end">

@@ -14,6 +14,7 @@ export default function UploadImportsClient({ companySlug }: Props) {
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -56,6 +57,28 @@ export default function UploadImportsClient({ companySlug }: Props) {
     }
   }
 
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(false);
+    if (isUploading) return;
+    const dropped = e.dataTransfer.files?.[0] ?? null;
+    if (!dropped) return;
+    setFile(dropped);
+  }
+
+  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) setIsDragActive(true);
+  }
+
+  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragActive(false);
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-2">
@@ -77,7 +100,17 @@ export default function UploadImportsClient({ companySlug }: Props) {
         </select>
       </div>
 
-      <div className="space-y-2">
+      <div
+        className={[
+          "space-y-2 rounded-2xl border border-dashed p-4 transition",
+          isDragActive
+            ? "border-cyan-400 bg-cyan-50/40"
+            : "border-slate-300 bg-slate-50/40",
+        ].join(" ")}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+      >
         <label
           htmlFor="csv-file-input"
           className="block text-sm font-medium text-slate-700"
@@ -95,6 +128,9 @@ export default function UploadImportsClient({ companySlug }: Props) {
           }}
           className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
         />
+        <div className="text-xs text-slate-500">
+          Dra och släpp CSV här, eller välj fil manuellt.
+        </div>
       </div>
 
       <button

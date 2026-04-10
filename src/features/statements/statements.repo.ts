@@ -626,6 +626,7 @@ export async function replaceDraftStatementsForPeriod(params: {
   periodStart: string;
   periodEnd: string;
   generatedFrom: string | null;
+  partyId?: string | null;
 }): Promise<void> {
   let query = supabaseAdmin
     .from("statements")
@@ -639,6 +640,10 @@ export async function replaceDraftStatementsForPeriod(params: {
     query = query.is("generated_from", null);
   } else {
     query = query.eq("generated_from", params.generatedFrom);
+  }
+
+  if (params.partyId) {
+    query = query.eq("party_id", params.partyId);
   }
 
   const { data, error } = await query;
