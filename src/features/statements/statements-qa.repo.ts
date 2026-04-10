@@ -35,6 +35,23 @@ export type StatementQaStatusRow = {
   issue_count: number;
 };
 
+type GeneratePreviewSelectWithPartyName = {
+  matched_work_id: unknown;
+  currency: unknown;
+  net_amount: unknown;
+  gross_amount: unknown;
+  party_id: unknown;
+  party_name: unknown;
+};
+
+type GeneratePreviewSelectWithoutPartyName = {
+  matched_work_id: unknown;
+  currency: unknown;
+  net_amount: unknown;
+  gross_amount: unknown;
+  party_id: unknown;
+};
+
 export type GenerateStatementsPreviewRow = {
   party_id: string;
   party_name: string | null;
@@ -445,7 +462,7 @@ export async function listStatementQaStatusesByCompany(
 export async function getGenerateStatementsPreview(
   companyId: string
 ): Promise<GenerateStatementsPreviewRow[]> {
-  const { data, error } = await supabaseAdmin
+  const withPartyName = await supabaseAdmin
     .from("import_rows")
     .select("matched_work_id, currency, net_amount, gross_amount, party_id, party_name")
     .eq("company_id", companyId)
@@ -453,11 +470,36 @@ export async function getGenerateStatementsPreview(
     .order("created_at", { ascending: false })
     .limit(5000);
 
+  let data =
+    (withPartyName.data as GeneratePreviewSelectWithPartyName[] | null) ?? null;
+  let error = withPartyName.error;
+
+  if (
+    error &&
+    isMissingSchemaEntity(error.message, ["party_name"])
+  ) {
+    const withoutPartyName = await supabaseAdmin
+      .from("import_rows")
+      .select("matched_work_id, currency, net_amount, gross_amount, party_id")
+      .eq("company_id", companyId)
+      .eq("allocation_status", "completed")
+      .order("created_at", { ascending: false })
+      .limit(5000);
+
+    data =
+      (withoutPartyName.data as GeneratePreviewSelectWithoutPartyName[] | null)
+        ?.map((row) => ({
+          ...row,
+          party_name: null,
+        })) ?? null;
+    error = withoutPartyName.error;
+  }
+
   if (error) {
     throw new Error(`Failed to load generate-statements preview: ${error.message}`);
   }
 
-  const rows: ImportRowCandidate[] = (data ?? []).map((row) => ({
+  const rows: ImportRowCandidate[] = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
     matched_work_id: asString(row.matched_work_id),
     currency: asString(row.currency),
     net_amount: asNumber(row.net_amount),

@@ -329,11 +329,6 @@ export default async function PartiesPage({ params, searchParams }: PageProps) {
                           type="submit"
                           className="text-sm text-red-700 underline"
                           formAction={deletePartyAction.bind(null, companySlug)}
-                          onClick={(event) => {
-                            if (!confirm("Delete this party? This cannot be undone.")) {
-                              event.preventDefault();
-                            }
-                          }}
                         >
                           Delete
                         </button>
