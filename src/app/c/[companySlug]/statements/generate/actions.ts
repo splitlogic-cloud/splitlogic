@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { generateStatements } from "@/features/statements/generate-statements";
 
 export async function generateStatementsAction(formData: FormData) {
@@ -9,6 +9,7 @@ export async function generateStatementsAction(formData: FormData) {
   const periodStart = String(formData.get("periodStart") ?? "").trim();
   const periodEnd = String(formData.get("periodEnd") ?? "").trim();
   const partyIdRaw = String(formData.get("partyId") ?? "").trim();
+  const supabase = await createClient();
 
   if (!companySlug) {
     throw new Error("Missing companySlug.");
@@ -18,7 +19,7 @@ export async function generateStatementsAction(formData: FormData) {
     throw new Error("Missing periodStart or periodEnd.");
   }
 
-  const { data: company, error: companyError } = await supabaseAdmin
+  const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, slug")
     .eq("slug", companySlug)
@@ -33,7 +34,7 @@ export async function generateStatementsAction(formData: FormData) {
   }
 
   if (partyIdRaw) {
-    const { data: party, error: partyError } = await supabaseAdmin
+    const { data: party, error: partyError } = await supabase
       .from("parties")
       .select("id")
       .eq("company_id", company.id)
@@ -47,31 +48,18 @@ export async function generateStatementsAction(formData: FormData) {
     if (!party) {
       throw new Error("Selected party was not found for this company.");
     }
+  }
 
-    const { data: generatedId, error: generateError } = await supabaseAdmin.rpc(
-      "generate_statement",
-      {
-        p_company_id: company.id,
-        p_period_start: periodStart,
-        p_period_end: periodEnd,
-        p_party_id: partyIdRaw,
-      }
-    );
+  const result = await generateStatements({
+    companyId: company.id,
+    periodStart,
+    periodEnd,
+    createdBy: null,
+    partyId: partyIdRaw || null,
+  });
 
-    if (generateError) {
-      throw new Error(`generate_statement failed: ${generateError.message}`);
-    }
-
-    if (generatedId) {
-      redirect(`/c/${companySlug}/statements/${String(generatedId)}`);
-    }
-  } else {
-    await generateStatements({
-      companyId: company.id,
-      periodStart,
-      periodEnd,
-      createdBy: null,
-    });
+  if (partyIdRaw && result.statementIds.length === 1) {
+    redirect(`/c/${companySlug}/statements/${result.statementIds[0]}`);
   }
 
   redirect(`/c/${companySlug}/statements`);
