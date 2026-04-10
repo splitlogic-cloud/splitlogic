@@ -11,16 +11,19 @@ type StatementPdfHeader = {
   currency?: string | null;
   status?: string | null;
   created_at?: string | null;
-  note?: string | null;
 };
 
 type StatementPdfLine = {
   id: string;
-  line_label?: string | null;
-  work_title?: string | null;
-  row_count?: number | null;
+  title?: string | null;
+  artist?: string | null;
+  isrc?: string | null;
+  platform?: string | null;
+  territory?: string | null;
+  transaction_date?: string | null;
   amount?: number | null;
   currency?: string | null;
+  units?: number | null;
 };
 
 type BuildStatementPdfParams = {
@@ -154,21 +157,14 @@ export async function buildStatementPdf({
 
   cursorY -= 26;
 
-  if (header.note) {
-    drawText(page, "Note:", marginLeft, cursorY, 11, fontBold);
-    cursorY -= 14;
-
-    drawText(page, truncate(header.note, 140), marginLeft, cursorY, 10, fontRegular);
-    cursorY -= 26;
-  }
-
   const tableTopY = cursorY;
-  const rowHeight = 20;
+  const rowHeight = 18;
 
   const col1 = marginLeft;
-  const col2 = marginLeft + 180;
-  const col3 = marginLeft + 500;
-  const col4 = marginLeft + 610;
+  const col2 = marginLeft + 70;
+  const col3 = marginLeft + 290;
+  const col4 = marginLeft + 470;
+  const col5 = marginLeft + 560;
 
   page.drawLine({
     start: { x: marginLeft, y: tableTopY + 6 },
@@ -177,27 +173,50 @@ export async function buildStatementPdf({
     color: rgb(0.75, 0.75, 0.75),
   });
 
-  drawText(page, "Line", col1, tableTopY - 8, 10, fontBold);
-  drawText(page, "Work", col2, tableTopY - 8, 10, fontBold);
-  drawText(page, "Rows", col3, tableTopY - 8, 10, fontBold);
-  drawText(page, "Amount", col4, tableTopY - 8, 10, fontBold);
+  drawText(page, "Date", col1, tableTopY - 8, 10, fontBold);
+  drawText(page, "Title / Artist", col2, tableTopY - 8, 10, fontBold);
+  drawText(page, "ISRC / Platform", col3, tableTopY - 8, 10, fontBold);
+  drawText(page, "Territory", col4, tableTopY - 8, 10, fontBold);
+  drawText(page, "Amount", col5, tableTopY - 8, 10, fontBold);
 
   let rowY = tableTopY - 28;
-  const visibleLines = lines.slice(0, 20);
+  const visibleLines = lines.slice(0, 18);
 
   if (visibleLines.length === 0) {
     drawText(page, "No statement lines found.", marginLeft, rowY, 10, fontRegular);
   } else {
     for (const line of visibleLines) {
-      drawText(page, truncate(line.line_label ?? "—", 28), col1, rowY, 10, fontRegular);
-      drawText(page, truncate(line.work_title ?? "—", 48), col2, rowY, 10, fontRegular);
-      drawText(page, String(line.row_count ?? 0), col3, rowY, 10, fontRegular);
+      drawText(
+        page,
+        truncate(formatDate(line.transaction_date ?? null), 12),
+        col1,
+        rowY,
+        9,
+        fontRegular
+      );
+      drawText(
+        page,
+        truncate(`${line.title ?? "—"} / ${line.artist ?? "—"}`, 36),
+        col2,
+        rowY,
+        9,
+        fontRegular
+      );
+      drawText(
+        page,
+        truncate(`${line.isrc ?? "—"} / ${line.platform ?? "—"}`, 28),
+        col3,
+        rowY,
+        9,
+        fontRegular
+      );
+      drawText(page, truncate(line.territory ?? "—", 12), col4, rowY, 9, fontRegular);
       drawText(
         page,
         truncate(formatMoney(line.amount ?? null, line.currency ?? header.currency ?? null), 22),
-        col4,
+        col5,
         rowY,
-        10,
+        9,
         fontRegular
       );
 
@@ -205,10 +224,10 @@ export async function buildStatementPdf({
     }
   }
 
-  if (lines.length > 20) {
+  if (lines.length > 18) {
     drawText(
       page,
-      `+ ${lines.length - 20} more lines not shown in this PDF preview`,
+      `+ ${lines.length - 18} more lines not shown in this PDF preview`,
       marginLeft,
       Math.max(40, rowY - 8),
       9,

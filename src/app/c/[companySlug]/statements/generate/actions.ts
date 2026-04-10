@@ -11,6 +11,7 @@ function buildGeneratePath(params: {
   periodStart?: string;
   periodEnd?: string;
   partyId?: string;
+  success?: string;
   error?: string;
 }) {
   const query = new URLSearchParams();
@@ -18,28 +19,11 @@ function buildGeneratePath(params: {
   if (params.periodStart) query.set("periodStart", params.periodStart);
   if (params.periodEnd) query.set("periodEnd", params.periodEnd);
   if (params.partyId) query.set("partyId", params.partyId);
+  if (params.success) query.set("success", params.success);
   if (params.error) query.set("error", params.error);
 
   const qs = query.toString();
   return `/c/${params.companySlug}/statements/generate${qs ? `?${qs}` : ""}`;
-}
-
-function isMissingRpcFunction(message: string) {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("function") &&
-    normalized.includes("does not exist")
-  ) || normalized.includes("could not find the function");
-}
-
-function isMissingSchemaColumn(message: string, column: string) {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes(column.toLowerCase()) &&
-    (normalized.includes("does not exist") ||
-      normalized.includes("schema cache") ||
-      normalized.includes("could not find"))
-  );
 }
 
 function isNextRedirectError(error: unknown): boolean {
@@ -143,47 +127,11 @@ export async function generateStatementsAction(formData: FormData) {
     );
   }
 
-  // Prefer RPC when available: many installations already depend on it.
-  const { data: generatedId, error: rpcError } = await supabase.rpc(
-    "generate_statement",
-    {
-      p_company_id: company.id,
-      p_period_start: periodStart,
-      p_period_end: periodEnd,
-      p_party_id: partyIdRaw || null,
-    }
-  );
-
-  if (!rpcError) {
-    if (generatedId) {
-      redirect(`/c/${companySlug}/statements/${String(generatedId)}`);
-    }
-    redirect(`/c/${companySlug}/statements`);
-  }
-
-  // Fallback to TS generator when RPC is missing OR references newer schema
-  // columns that do not exist in older databases.
-  if (
-    !isMissingRpcFunction(rpcError.message) &&
-    !isMissingSchemaColumn(rpcError.message, "created_by")
-  ) {
-    redirect(
-      buildGeneratePath({
-        companySlug,
-        periodStart,
-        periodEnd,
-        partyId: partyIdRaw,
-        error: `Generate misslyckades: ${rpcError.message}`,
-      })
-    );
-  }
-
   try {
     const result = await generateStatements({
       companyId: company.id,
       periodStart,
       periodEnd,
-      createdBy: null,
       partyId: partyIdRaw || null,
     });
 
@@ -191,7 +139,11 @@ export async function generateStatementsAction(formData: FormData) {
       redirect(`/c/${companySlug}/statements/${result.statementIds[0]}`);
     }
 
-    redirect(`/c/${companySlug}/statements`);
+    redirect(
+      `/c/${companySlug}/statements?success=${encodeURIComponent(
+        `Generated ${result.count} statement${result.count === 1 ? "" : "s"}.`
+      )}`
+    );
   } catch (error) {
     if (isNextRedirectError(error)) {
       throw error;

@@ -21,6 +21,7 @@ type PageProps = {
     periodStart?: string;
     periodEnd?: string;
     partyId?: string;
+    success?: string;
     error?: string;
   }>;
 };
@@ -63,6 +64,7 @@ export default async function GenerateStatementsPage({
   const selectedPeriodStart = normalizeDateInput(resolvedSearchParams.periodStart);
   const selectedPeriodEnd = normalizeDateInput(resolvedSearchParams.periodEnd);
   const selectedPartyId = resolvedSearchParams.partyId ?? "";
+  const generateSuccess = resolvedSearchParams.success ?? "";
   const generateError = resolvedSearchParams.error ?? "";
 
   const supabase = await createClient();
@@ -119,6 +121,11 @@ export default async function GenerateStatementsPage({
       </div>
 
       <div className="rounded-2xl border bg-white p-6">
+        {generateSuccess ? (
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+            {generateSuccess}
+          </div>
+        ) : null}
         {generateError ? (
           <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
             {generateError}

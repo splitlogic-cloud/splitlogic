@@ -21,11 +21,21 @@ function escapeCsv(value: unknown): string {
 }
 
 function buildCsv(rows: Array<Record<string, unknown>>): string {
-  if (rows.length === 0) {
-    return "line_label,work_title,row_count,amount,currency";
-  }
-
-  const headers = ["line_label", "work_title", "row_count", "amount", "currency"];
+  const headers = [
+    "date",
+    "title",
+    "artist",
+    "isrc",
+    "platform",
+    "territory",
+    "amount",
+    "currency",
+    "units",
+    "allocation_line_id",
+    "import_row_id",
+    "work_id",
+    "party_id",
+  ];
 
   const lines = [
     headers.join(","),
@@ -59,11 +69,19 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const csvRows = statement.lines.map((line) => ({
-    line_label: line.line_label ?? "",
-    work_title: line.work_title ?? "",
-    row_count: line.row_count ?? 0,
-    amount: line.amount ?? "",
+    date: line.transaction_date ?? "",
+    title: line.title ?? "",
+    artist: line.artist ?? "",
+    isrc: line.isrc ?? "",
+    platform: line.platform ?? "",
+    territory: line.territory ?? "",
+    amount: line.amount,
     currency: line.currency ?? statement.currency ?? "",
+    units: line.units ?? "",
+    allocation_line_id: line.allocation_line_id,
+    import_row_id: line.import_row_id,
+    work_id: line.work_id ?? "",
+    party_id: line.party_id,
   }));
 
   const csv = buildCsv(csvRows);
@@ -75,6 +93,16 @@ export async function GET(_request: Request, context: RouteContext) {
       .replace(/^-|-$/g, "") || "statement";
 
   const filename = `${safePartyName}-${id}.csv`;
+
+  const { error: exportStatusError } = await supabaseAdmin
+    .from("statements")
+    .update({ status: "exported" })
+    .eq("id", statement.id)
+    .eq("company_id", statement.company_id);
+
+  if (exportStatusError) {
+    throw new Error(`Failed to update statement export status: ${exportStatusError.message}`);
+  }
 
   return new NextResponse(csv, {
     status: 200,

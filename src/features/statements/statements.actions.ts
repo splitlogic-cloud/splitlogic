@@ -5,7 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createAuditEvent } from "@/features/audit/audit.repo";
 import { lockStatementPeriod } from "@/features/statements/period-locks.repo";
 
-type StatementStatus = "draft" | "sent" | "paid" | "void";
+type StatementStatus = "draft" | "finalized" | "exported";
 
 type CompanyRow = {
   id: string;
@@ -19,7 +19,7 @@ type StatementRow = {
   status: string | null;
   period_start: string | null;
   period_end: string | null;
-  allocation_run_id: string | null;
+  statement_run_id: string | null;
 };
 
 async function getCompanyBySlug(companySlug: string): Promise<CompanyRow> {
@@ -39,7 +39,7 @@ async function getCompanyBySlug(companySlug: string): Promise<CompanyRow> {
 async function getStatementForCompany(statementId: string, companyId: string): Promise<StatementRow> {
   const { data, error } = await supabaseAdmin
     .from("statements")
-    .select("id, company_id, status, period_start, period_end, allocation_run_id")
+    .select("id, company_id, status, period_start, period_end, statement_run_id")
     .eq("id", statementId)
     .eq("company_id", companyId)
     .maybeSingle();
@@ -60,7 +60,7 @@ export async function setStatementStatusAction(formData: FormData) {
     throw new Error("Missing companySlug, statementId or nextStatus");
   }
 
-  if (!["draft", "sent", "paid", "void"].includes(nextStatus)) {
+  if (!["draft", "finalized", "exported"].includes(nextStatus)) {
     throw new Error("Invalid statement status");
   }
 
@@ -70,18 +70,6 @@ export async function setStatementStatusAction(formData: FormData) {
   const patch: Record<string, unknown> = {
     status: nextStatus,
   };
-
-  if (nextStatus === "sent") {
-    patch.sent_at = new Date().toISOString();
-  }
-
-  if (nextStatus === "paid") {
-    patch.paid_at = new Date().toISOString();
-  }
-
-  if (nextStatus === "void") {
-    patch.voided_at = new Date().toISOString();
-  }
 
   const { error } = await supabaseAdmin
     .from("statements")
@@ -120,25 +108,9 @@ export async function addStatementNoteAction(formData: FormData) {
   const company = await getCompanyBySlug(companySlug);
   const statement = await getStatementForCompany(statementId, company.id);
 
-  const { error } = await supabaseAdmin
-    .from("statements")
-    .update({
-      note,
-    })
-    .eq("id", statement.id)
-    .eq("company_id", company.id);
-
-  if (error) {
-    const message = error.message.toLowerCase();
-    const missingNoteColumn =
-      (message.includes("column") && message.includes("note")) ||
-      (message.includes("could not find") && message.includes("note")) ||
-      (message.includes("schema cache") && message.includes("note"));
-
-    if (!missingNoteColumn) {
-      throw new Error(`addStatementNoteAction failed: ${error.message}`);
-    }
-  }
+  // statements.note is not part of the current production schema.
+  // Keep this action as an audit-only no-op to avoid crashing older UI flows.
+  void note;
 
   await createAuditEvent({
     companyId: company.id,
@@ -172,22 +144,9 @@ export async function lockStatementPeriodAction(formData: FormData) {
     companyId: company.id,
     periodStart: statement.period_start,
     periodEnd: statement.period_end,
-    allocationRunId: statement.allocation_run_id ?? null,
+    allocationRunId: statement.statement_run_id ?? null,
     lockedBy: null,
   });
-
-  const { error } = await supabaseAdmin
-    .from("statements")
-    .update({
-      locked_at: new Date().toISOString(),
-      locked_by: null,
-    })
-    .eq("id", statement.id)
-    .eq("company_id", company.id);
-
-  if (error) {
-    throw new Error(`lockStatementPeriodAction failed: ${error.message}`);
-  }
 
   await createAuditEvent({
     companyId: company.id,
@@ -197,7 +156,7 @@ export async function lockStatementPeriodAction(formData: FormData) {
     payload: {
       periodStart: statement.period_start,
       periodEnd: statement.period_end,
-      allocationRunId: statement.allocation_run_id ?? null,
+      statementRunId: statement.statement_run_id ?? null,
     },
   });
 

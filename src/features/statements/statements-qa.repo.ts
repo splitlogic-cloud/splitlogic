@@ -4,61 +4,13 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export type QaLevel = "ok" | "warning" | "blocked";
 
-export type StatementQaPreviewRow = {
-  allocationRowId: string;
-  earningDate: string | null;
-  workId: string | null;
-  allocatedAmount: number | null;
-  currency: string | null;
-};
-
-export type StatementQaDetail = {
-  level: QaLevel;
-  statementTotal: number | null;
-  ledgerTotal: number | null;
-  lineTotal: number | null;
-  diffVsLedger: number | null;
-  diffVsLines: number | null;
-  sourceRowCount: number;
-  rowsMissingWork: number;
-  currencies: string[];
-  issues: string[];
-  previewRows: StatementQaPreviewRow[];
-};
-
-export type StatementQaStatusRow = {
-  statement_id: string;
-  level: QaLevel;
-  diff_vs_ledger: number | null;
-  diff_vs_lines: number | null;
-  rows_missing_work: number;
-  issue_count: number;
-};
-
-type GeneratePreviewSelectWithPartyName = {
-  matched_work_id: unknown;
-  currency: unknown;
-  net_amount: unknown;
-  gross_amount: unknown;
-  party_id: unknown;
-  party_name: unknown;
-};
-
-type GeneratePreviewSelectWithoutPartyName = {
-  matched_work_id: unknown;
-  currency: unknown;
-  net_amount: unknown;
-  gross_amount: unknown;
-  party_id: unknown;
-};
-
 export type GenerateStatementsPreviewRow = {
   party_id: string;
   party_name: string | null;
   currency: string | null;
   row_count: number;
-  total_amount: number;
   works_count: number;
+  total_amount: number;
 };
 
 export type GenerateStatementsQaSummary = {
@@ -71,469 +23,149 @@ export type GenerateStatementsQaSummary = {
   issues: string[];
 };
 
-type StatementHeaderRow = {
-  id: string;
-  company_id: string;
-  currency: string | null;
-  total_amount: number | null;
+export type StatementQaStatusRow = {
+  statement_id: string;
+  level: QaLevel;
+  diff_vs_lines: number | null;
+  rows_missing_work: number;
+  issue_count: number;
 };
 
-type StatementLedgerRow = {
-  amount: number | null;
-  currency: string | null;
-  allocation_row_id: string | null;
-  work_id: string | null;
-  earning_date: string | null;
+export type StatementQaPreviewRow = {
+  lineId: string;
+  transactionDate: string | null;
+  workId: string | null;
+  title: string | null;
+  amount: number;
+  currency: string;
 };
 
-type StatementLineRow = {
-  amount: number | null;
-  currency: string | null;
-};
-
-type ImportRowCandidate = {
-  matched_work_id: string | null;
-  currency: string | null;
-  net_amount: number | null;
-  gross_amount: number | null;
-  party_id: string | null;
-  party_name: string | null;
+export type StatementQaDetail = {
+  level: QaLevel;
+  statementTotal: number;
+  lineTotal: number;
+  diffVsLines: number;
+  sourceRowCount: number;
+  rowsMissingWork: number;
+  currencies: string[];
+  issues: string[];
+  previewRows: StatementQaPreviewRow[];
 };
 
 function asString(value: unknown): string | null {
   if (value == null) return null;
-  const s = String(value).trim();
-  return s.length > 0 ? s : null;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 function asNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
 }
 
-function round2(value: number | null): number | null {
-  if (value == null) return null;
-  return Math.round(value * 100) / 100;
+function roundMoney(value: number): number {
+  const rounded = Number(value.toFixed(6));
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
-function abs(value: number | null): number | null {
-  if (value == null) return null;
-  return Math.abs(value);
-}
-
-function sumNumbers(values: Array<number | null | undefined>): number {
-  return values.reduce((sum, value) => sum + Number(value ?? 0), 0);
-}
-
-function pickAmount(row: {
-  net_amount?: number | null;
-  gross_amount?: number | null;
-}): number {
-  if (row.net_amount != null) return Number(row.net_amount);
-  if (row.gross_amount != null) return Number(row.gross_amount);
-  return 0;
-}
-
-function uniqueStrings(values: Array<string | null | undefined>): string[] {
-  return [...new Set(values.filter((v): v is string => Boolean(v)))];
-}
-
-function isMissingSchemaEntity(message: string, entities: string[]): boolean {
-  const normalized = message.toLowerCase();
-  if (
-    !normalized.includes("does not exist") &&
-    !normalized.includes("could not find") &&
-    !normalized.includes("not found in the schema cache")
-  ) {
-    return false;
-  }
-
-  return entities.some((entity) => normalized.includes(entity.toLowerCase()));
-}
-
-function determineQaLevel(params: {
-  diffVsLedger?: number | null;
-  diffVsLines?: number | null;
-  rowsMissingWork?: number;
-  unmatchedRows?: number;
-  currencies?: string[];
-  issues?: string[];
+function determineGenerateLevel(params: {
+  candidateCount: number;
+  rowsMissingWork: number;
+  unmatchedRows: number;
+  currencies: string[];
 }): QaLevel {
-  const hasBlockingDiff =
-    (params.diffVsLedger != null && params.diffVsLedger > 0.01) ||
-    (params.diffVsLines != null && params.diffVsLines > 0.01) ||
-    Number(params.rowsMissingWork ?? 0) > 0 ||
-    Number(params.unmatchedRows ?? 0) > 0;
-
-  if (hasBlockingDiff) {
-    return "blocked";
-  }
-
-  const hasWarnings =
-    (params.issues?.length ?? 0) > 0 || (params.currencies?.length ?? 0) > 1;
-
-  if (hasWarnings) {
-    return "warning";
-  }
-
+  if (params.candidateCount === 0) return "blocked";
+  if (params.rowsMissingWork > 0 || params.unmatchedRows > 0) return "blocked";
+  if (params.currencies.length > 1) return "warning";
   return "ok";
 }
 
-async function getStatementHeader(
-  companyId: string,
-  statementId: string
-): Promise<StatementHeaderRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select("id, company_id, currency, total_amount")
-    .eq("company_id", companyId)
-    .eq("id", statementId)
-    .maybeSingle();
-
-  if (error) {
-    if (isMissingSchemaEntity(error.message, ["currency", "total_amount"])) {
-      const { data: fallbackData, error: fallbackError } = await supabaseAdmin
-        .from("statements")
-        .select("id, company_id")
-        .eq("company_id", companyId)
-        .eq("id", statementId)
-        .maybeSingle();
-
-      if (fallbackError) {
-        throw new Error(`Failed to load statement header: ${fallbackError.message}`);
-      }
-
-      if (!fallbackData) {
-        return null;
-      }
-
-      return {
-        id: String(fallbackData.id),
-        company_id: String(fallbackData.company_id),
-        currency: null,
-        total_amount: null,
-      };
-    }
-
-    throw new Error(`Failed to load statement header: ${error.message}`);
-  }
-
-  if (!data) {
-    return null;
-  }
-
-  return {
-    id: String(data.id),
-    company_id: String(data.company_id),
-    currency: asString(data.currency),
-    total_amount: asNumber(data.total_amount),
-  };
+function determineStatementLevel(params: {
+  diffVsLines: number;
+  rowsMissingWork: number;
+  lineCount: number;
+  currencies: string[];
+}): QaLevel {
+  if (params.lineCount === 0) return "blocked";
+  if (params.diffVsLines > 0.01 || params.rowsMissingWork > 0) return "blocked";
+  if (params.currencies.length > 1) return "warning";
+  return "ok";
 }
 
-async function getStatementLines(statementId: string): Promise<StatementLineRow[]> {
+function shouldIncludeCurrencyIssue(currencies: string[]): boolean {
+  return currencies.length > 1;
+}
+
+type CandidateRow = {
+  id: string;
+  party_id: string | null;
+  currency: string | null;
+  work_id: string | null;
+  allocated_amount: number | null;
+  parties: { name: string | null } | null;
+};
+
+async function loadCandidateRows(companyId: string): Promise<CandidateRow[]> {
   const { data, error } = await supabaseAdmin
-    .from("statement_lines")
-    .select("amount, currency")
-    .eq("statement_id", statementId);
+    .from("allocation_lines")
+    .select(
+      `
+      id,
+      party_id,
+      currency,
+      work_id,
+      allocated_amount,
+      parties(name)
+    `
+    )
+    .eq("company_id", companyId);
 
   if (error) {
-    if (
-      isMissingSchemaEntity(error.message, [
-        "statement_lines",
-        "amount",
-        "currency",
-        "statement_id",
-      ])
-    ) {
-      return [];
-    }
-    throw new Error(`Failed to load statement lines for QA: ${error.message}`);
+    throw new Error(`Failed to load statement candidates: ${error.message}`);
   }
 
   return (data ?? []).map((row) => ({
-    amount: asNumber(row.amount),
+    id: String(row.id),
+    party_id: asString(row.party_id),
     currency: asString(row.currency),
-  }));
-}
-
-async function getStatementLedger(statementId: string): Promise<StatementLedgerRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from("statement_ledger")
-    .select("amount, currency, allocation_row_id, work_id, earning_date")
-    .eq("statement_id", statementId);
-
-  if (error) {
-    if (
-      isMissingSchemaEntity(error.message, [
-        "statement_ledger",
-        "amount",
-        "currency",
-        "allocation_row_id",
-        "work_id",
-        "earning_date",
-        "statement_id",
-      ])
-    ) {
-      return [];
-    }
-    throw new Error(`Failed to load statement ledger for QA: ${error.message}`);
-  }
-
-  return (data ?? []).map((row) => ({
-    amount: asNumber(row.amount),
-    currency: asString(row.currency),
-    allocation_row_id: asString(row.allocation_row_id),
     work_id: asString(row.work_id),
-    earning_date: asString(row.earning_date),
+    allocated_amount: asNumber(row.allocated_amount),
+    parties: Array.isArray(row.parties)
+      ? ((row.parties[0] as { name?: string | null } | undefined)
+          ? { name: asString((row.parties[0] as { name?: string | null }).name) }
+          : null)
+      : ((row.parties as { name?: string | null } | null)
+          ? { name: asString((row.parties as { name?: string | null }).name) }
+          : null),
   }));
-}
-
-function buildStatementQaDetail(params: {
-  statementTotal: number | null;
-  lineRows: StatementLineRow[];
-  ledgerRows: StatementLedgerRow[];
-}): StatementQaDetail {
-  const lineTotal = round2(sumNumbers(params.lineRows.map((row) => row.amount)));
-  const ledgerTotal = round2(sumNumbers(params.ledgerRows.map((row) => row.amount)));
-  const statementTotal = round2(params.statementTotal);
-
-  const diffVsLedger = abs(round2((statementTotal ?? 0) - (ledgerTotal ?? 0)));
-  const diffVsLines = abs(round2((statementTotal ?? 0) - (lineTotal ?? 0)));
-
-  const sourceRowCount = params.ledgerRows.filter(
-    (row) => row.allocation_row_id != null
-  ).length;
-
-  const rowsMissingWork = params.ledgerRows.filter((row) => row.work_id == null).length;
-
-  const currencies = uniqueStrings([
-    ...params.lineRows.map((row) => row.currency),
-    ...params.ledgerRows.map((row) => row.currency),
-  ]);
-
-  const issues: string[] = [];
-
-  if (diffVsLedger != null && diffVsLedger > 0.01) {
-    issues.push(
-      `Statement total differs from ledger total by ${diffVsLedger.toFixed(2)}.`
-    );
-  }
-
-  if (diffVsLines != null && diffVsLines > 0.01) {
-    issues.push(
-      `Statement total differs from line total by ${diffVsLines.toFixed(2)}.`
-    );
-  }
-
-  if (sourceRowCount === 0) {
-    issues.push("No linked ledger rows found for this statement.");
-  }
-
-  if (rowsMissingWork > 0) {
-    issues.push(`${rowsMissingWork} linked ledger rows are missing work_id.`);
-  }
-
-  if (currencies.length > 1) {
-    issues.push("Multiple currencies detected across statement lines / ledger.");
-  }
-
-  const previewRows: StatementQaPreviewRow[] = params.ledgerRows
-    .slice(0, 50)
-    .map((row, index) => ({
-      allocationRowId:
-        row.allocation_row_id ?? `ledger_row_${index + 1}`,
-      earningDate: row.earning_date,
-      workId: row.work_id,
-      allocatedAmount: row.amount,
-      currency: row.currency,
-    }));
-
-  const level = determineQaLevel({
-    diffVsLedger,
-    diffVsLines,
-    rowsMissingWork,
-    currencies,
-    issues,
-  });
-
-  return {
-    level,
-    statementTotal,
-    ledgerTotal,
-    lineTotal,
-    diffVsLedger,
-    diffVsLines,
-    sourceRowCount,
-    rowsMissingWork,
-    currencies,
-    issues,
-    previewRows,
-  };
-}
-
-export async function getStatementQaDetail(
-  companyId: string,
-  statementId: string
-): Promise<StatementQaDetail | null> {
-  const header = await getStatementHeader(companyId, statementId);
-
-  if (!header) {
-    return null;
-  }
-
-  const [lineRows, ledgerRows] = await Promise.all([
-    getStatementLines(statementId),
-    getStatementLedger(statementId),
-  ]);
-
-  return buildStatementQaDetail({
-    statementTotal: header.total_amount,
-    lineRows,
-    ledgerRows,
-  });
-}
-
-export async function listStatementQaStatusesByCompany(
-  companyId: string
-): Promise<StatementQaStatusRow[]> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .select("id, total_amount")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: false })
-    .limit(200);
-
-  let statements = data ?? [];
-
-  if (error) {
-    if (isMissingSchemaEntity(error.message, ["created_at"])) {
-      const { data: fallbackData, error: fallbackError } = await supabaseAdmin
-        .from("statements")
-        .select("id, total_amount")
-        .eq("company_id", companyId)
-        .limit(200);
-
-      if (fallbackError) {
-        throw new Error(`Failed to load statements for QA statuses: ${fallbackError.message}`);
-      }
-
-      statements = fallbackData ?? [];
-    } else {
-      throw new Error(`Failed to load statements for QA statuses: ${error.message}`);
-    }
-  }
-
-  const results = await Promise.all(
-    statements.map(async (statement) => {
-      let detail: StatementQaDetail | null = null;
-
-      try {
-        detail = await getStatementQaDetail(companyId, String(statement.id));
-      } catch {
-        detail = null;
-      }
-
-      if (!detail) {
-        return {
-          statement_id: String(statement.id),
-          level: "blocked" as QaLevel,
-          diff_vs_ledger: null,
-          diff_vs_lines: null,
-          rows_missing_work: 0,
-          issue_count: 1,
-        };
-      }
-
-      return {
-        statement_id: String(statement.id),
-        level: detail.level,
-        diff_vs_ledger: detail.diffVsLedger,
-        diff_vs_lines: detail.diffVsLines,
-        rows_missing_work: detail.rowsMissingWork,
-        issue_count: detail.issues.length,
-      };
-    })
-  );
-
-  return results;
 }
 
 export async function getGenerateStatementsPreview(
   companyId: string
 ): Promise<GenerateStatementsPreviewRow[]> {
-  const withPartyName = await supabaseAdmin
-    .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount, party_id, party_name")
-    .eq("company_id", companyId)
-    .eq("allocation_status", "completed")
-    .order("created_at", { ascending: false })
-    .limit(5000);
-
-  let data =
-    (withPartyName.data as GeneratePreviewSelectWithPartyName[] | null) ?? null;
-  let error = withPartyName.error;
-
-  if (
-    error &&
-    isMissingSchemaEntity(error.message, ["party_name"])
-  ) {
-    const withoutPartyName = await supabaseAdmin
-      .from("import_rows")
-      .select("matched_work_id, currency, net_amount, gross_amount, party_id")
-      .eq("company_id", companyId)
-      .eq("allocation_status", "completed")
-      .order("created_at", { ascending: false })
-      .limit(5000);
-
-    data =
-      (withoutPartyName.data as GeneratePreviewSelectWithoutPartyName[] | null)
-        ?.map((row) => ({
-          ...row,
-          party_name: null,
-        })) ?? null;
-    error = withoutPartyName.error;
-  }
-
-  if (error) {
-    throw new Error(`Failed to load generate-statements preview: ${error.message}`);
-  }
-
-  const rows: ImportRowCandidate[] = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
-    matched_work_id: asString(row.matched_work_id),
-    currency: asString(row.currency),
-    net_amount: asNumber(row.net_amount),
-    gross_amount: asNumber(row.gross_amount),
-    party_id: asString(row.party_id),
-    party_name: asString(row.party_name),
-  }));
-
+  const rows = (await loadCandidateRows(companyId)).filter(
+    (row) => Math.abs(Number(row.allocated_amount ?? 0)) > 0.0000001
+  );
   const grouped = new Map<string, GenerateStatementsPreviewRow>();
 
   for (const row of rows) {
-    const partyId = row.party_id ?? "unassigned";
-    const partyName = row.party_name ?? null;
-    const currency = row.currency ?? null;
-    const amount = pickAmount(row);
-    const key = `${partyId}__${currency ?? "NO_CCY"}`;
-
-    const current = grouped.get(key) ?? {
-      party_id: partyId,
-      party_name: partyName,
-      currency,
+    const key = `${row.party_id ?? "unassigned"}__${row.currency ?? "none"}`;
+    const existing = grouped.get(key) ?? {
+      party_id: row.party_id ?? "unassigned",
+      party_name: row.parties?.name ?? null,
+      currency: row.currency,
       row_count: 0,
-      total_amount: 0,
       works_count: 0,
+      total_amount: 0,
     };
 
-    current.row_count += 1;
-    current.total_amount = round2(current.total_amount + amount) ?? 0;
-
-    if (row.matched_work_id) {
-      current.works_count += 1;
-    }
-
-    grouped.set(key, current);
+    existing.row_count += 1;
+    if (row.work_id) existing.works_count += 1;
+    existing.total_amount = roundMoney(
+      existing.total_amount + Number(row.allocated_amount ?? 0)
+    );
+    grouped.set(key, existing);
   }
 
   return [...grouped.values()].sort((a, b) => b.total_amount - a.total_amount);
@@ -542,60 +174,197 @@ export async function getGenerateStatementsPreview(
 export async function getGenerateStatementsQaSummary(
   companyId: string
 ): Promise<GenerateStatementsQaSummary> {
-  const { data, error } = await supabaseAdmin
-    .from("import_rows")
-    .select("matched_work_id, currency, net_amount, gross_amount")
-    .eq("company_id", companyId)
-    .eq("allocation_status", "completed")
-    .order("created_at", { ascending: false })
-    .limit(5000);
-
-  if (error) {
-    throw new Error(`Failed to load generate-statements QA summary: ${error.message}`);
-  }
-
-  const rows: ImportRowCandidate[] = (data ?? []).map((row) => ({
-    matched_work_id: asString(row.matched_work_id),
-    currency: asString(row.currency),
-    net_amount: asNumber(row.net_amount),
-    gross_amount: asNumber(row.gross_amount),
-    party_id: null,
-    party_name: null,
-  }));
-
-  const currencies = uniqueStrings(rows.map((row) => row.currency));
-  const totalAmount = round2(rows.reduce((sum, row) => sum + pickAmount(row), 0)) ?? 0;
-  const rowsMissingWork = rows.filter((row) => row.matched_work_id == null).length;
-  const unmatchedRows = rowsMissingWork;
+  const rows = await loadCandidateRows(companyId);
+  const candidateCount = rows.length;
+  const totalAmount = roundMoney(
+    rows.reduce((sum, row) => sum + Number(row.allocated_amount ?? 0), 0)
+  );
+  const rowsMissingWork = rows.filter((row) => !row.work_id).length;
+  const unmatchedRows = rows.filter((row) => !row.party_id).length;
+  const currencies = [...new Set(rows.map((row) => row.currency).filter(Boolean))] as string[];
 
   const issues: string[] = [];
-
-  if (rows.length === 0) {
-    issues.push("No allocation-completed import rows found for statement generation.");
+  if (candidateCount === 0) {
+    issues.push("No allocation rows found for statement generation.");
   }
-
   if (rowsMissingWork > 0) {
-    issues.push(`${rowsMissingWork} rows are missing matched_work_id.`);
+    issues.push(`${rowsMissingWork} rows are missing work_id.`);
   }
-
-  if (currencies.length > 1) {
-    issues.push("Multiple currencies detected in statement generation preview.");
+  if (unmatchedRows > 0) {
+    issues.push(`${unmatchedRows} rows are missing party_id.`);
   }
-
-  const level = determineQaLevel({
-    rowsMissingWork,
-    unmatchedRows,
-    currencies,
-    issues,
-  });
+  if (shouldIncludeCurrencyIssue(currencies)) {
+    issues.push("Multiple currencies detected; generation will split by party/currency.");
+  }
 
   return {
-    level,
-    candidateCount: rows.length,
+    level: determineGenerateLevel({
+      candidateCount,
+      rowsMissingWork,
+      unmatchedRows,
+      currencies,
+    }),
+    candidateCount,
     currencies,
     totalAmount,
     rowsMissingWork,
     unmatchedRows,
     issues,
   };
+}
+
+type StatementHeader = {
+  id: string;
+  company_id: string;
+  total_amount: number;
+};
+
+type StatementLine = {
+  id: string;
+  amount: number;
+  currency: string;
+  work_id: string | null;
+  transaction_date: string | null;
+  created_at: string;
+  title: string | null;
+};
+
+async function getStatementHeader(
+  companyId: string,
+  statementId: string
+): Promise<StatementHeader | null> {
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select("id, company_id, total_amount")
+    .eq("company_id", companyId)
+    .eq("id", statementId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load statement header for QA: ${error.message}`);
+  }
+  if (!data) return null;
+
+  return {
+    id: String(data.id),
+    company_id: String(data.company_id),
+    total_amount: asNumber(data.total_amount) ?? 0,
+  };
+}
+
+async function getStatementLines(statementId: string): Promise<StatementLine[]> {
+  const { data, error } = await supabaseAdmin
+    .from("statement_lines")
+    .select("id, amount, currency, work_id, transaction_date, created_at, title")
+    .eq("statement_id", statementId)
+    .order("transaction_date", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to load statement lines for QA: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => ({
+    id: String(row.id),
+    amount: asNumber(row.amount) ?? 0,
+    currency: asString(row.currency) ?? "",
+    work_id: asString(row.work_id),
+    transaction_date: asString(row.transaction_date),
+    created_at: asString(row.created_at) ?? "",
+    title: asString(row.title),
+  }));
+}
+
+export async function getStatementQaDetail(
+  companyId: string,
+  statementId: string
+): Promise<StatementQaDetail | null> {
+  const header = await getStatementHeader(companyId, statementId);
+  if (!header) return null;
+
+  const lines = await getStatementLines(statementId);
+  const lineTotal = roundMoney(lines.reduce((sum, line) => sum + line.amount, 0));
+  const statementTotal = roundMoney(header.total_amount);
+  const diffVsLines = roundMoney(Math.abs(statementTotal - lineTotal));
+  const rowsMissingWork = lines.filter((line) => !line.work_id).length;
+  const currencies = [...new Set(lines.map((line) => line.currency).filter(Boolean))];
+
+  const issues: string[] = [];
+  if (diffVsLines > 0.01) {
+    issues.push(`Statement total differs from lines by ${diffVsLines.toFixed(6)}.`);
+  }
+  if (rowsMissingWork > 0) {
+    issues.push(`${rowsMissingWork} statement lines are missing work_id.`);
+  }
+  if (lines.length === 0) {
+    issues.push("No statement lines found.");
+  }
+
+  return {
+    level: determineStatementLevel({
+      diffVsLines,
+      rowsMissingWork,
+      lineCount: lines.length,
+      currencies,
+    }),
+    statementTotal,
+    lineTotal,
+    diffVsLines,
+    sourceRowCount: lines.length,
+    rowsMissingWork,
+    currencies,
+    issues,
+    previewRows: lines.slice(0, 50).map((line) => ({
+      lineId: line.id,
+      transactionDate: line.transaction_date,
+      workId: line.work_id,
+      title: line.title,
+      amount: line.amount,
+      currency: line.currency,
+    })),
+  };
+}
+
+export async function listStatementQaStatusesByCompany(
+  companyId: string
+): Promise<StatementQaStatusRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select("id")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    throw new Error(`Failed to load statements for QA: ${error.message}`);
+  }
+
+  const statuses = await Promise.all(
+    (data ?? []).map(async (statement) => {
+      const detail = await getStatementQaDetail(companyId, String(statement.id));
+      if (!detail) {
+        return {
+          statement_id: String(statement.id),
+          level: "blocked" as QaLevel,
+          diff_vs_lines: null,
+          rows_missing_work: 0,
+          issue_count: 1,
+        };
+      }
+      return {
+        statement_id: String(statement.id),
+        level:
+          detail.issues.length === 1 &&
+          detail.issues[0] ===
+            "No statement lines found."
+            ? "warning"
+            : detail.level,
+        diff_vs_lines: detail.diffVsLines,
+        rows_missing_work: detail.rowsMissingWork,
+        issue_count: detail.issues.length,
+      };
+    })
+  );
+
+  return statuses;
 }
