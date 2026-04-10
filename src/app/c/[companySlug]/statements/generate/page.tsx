@@ -20,6 +20,8 @@ type PageProps = {
   searchParams?: Promise<{
     periodStart?: string;
     periodEnd?: string;
+    partyId?: string;
+    error?: string;
   }>;
 };
 
@@ -60,6 +62,8 @@ export default async function GenerateStatementsPage({
 
   const selectedPeriodStart = normalizeDateInput(resolvedSearchParams.periodStart);
   const selectedPeriodEnd = normalizeDateInput(resolvedSearchParams.periodEnd);
+  const selectedPartyId = resolvedSearchParams.partyId ?? "";
+  const generateError = resolvedSearchParams.error ?? "";
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
@@ -113,6 +117,11 @@ export default async function GenerateStatementsPage({
       </div>
 
       <div className="rounded-2xl border bg-white p-6">
+        {generateError ? (
+          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {generateError}
+          </div>
+        ) : null}
         <form action={generateStatementsAction} className="space-y-4">
           <input type="hidden" name="companySlug" value={companySlug} />
 
@@ -159,7 +168,7 @@ export default async function GenerateStatementsPage({
               <select
                 id="partyId"
                 name="partyId"
-                defaultValue=""
+                defaultValue={selectedPartyId}
                 className="w-full rounded-xl border px-3 py-2 text-sm"
               >
                 <option value="">All parties</option>

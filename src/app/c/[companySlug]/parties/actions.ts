@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 
 type CompanyRecord = {
   id: string;
@@ -14,6 +15,7 @@ async function insertPartyWithFallback(payload: {
   type: string | null;
   email: string | null;
 }) {
+  const supabase = await createClient();
   const attempts = [
     { select: "company_id, name, type, email", map: () => payload },
     {
@@ -44,7 +46,7 @@ async function insertPartyWithFallback(payload: {
   let lastErrorMessage = "unknown";
 
   for (const attempt of attempts) {
-    const { error } = await supabaseAdmin.from("parties").insert(attempt.map());
+    const { error } = await supabase.from("parties").insert(attempt.map());
     if (!error) {
       return;
     }
@@ -71,6 +73,7 @@ async function updatePartyWithFallback(params: {
   email: string | null;
   external_id: string | null;
 }) {
+  const supabase = await createClient();
   const attempts = [
     {
       select: "name, email, type, external_id, updated_at",
@@ -124,7 +127,7 @@ async function updatePartyWithFallback(params: {
   let lastErrorMessage = "unknown";
 
   for (const attempt of attempts) {
-    const { error } = await supabaseAdmin
+    const { error } = await supabase
       .from("parties")
       .update(attempt.map())
       .eq("company_id", params.companyId)
@@ -152,6 +155,7 @@ export async function createPartyAction(
   companySlug: string,
   formData: FormData
 ): Promise<void> {
+  const supabase = await createClient();
   const name = String(formData.get("name") ?? "").trim();
   const type = String(formData.get("type") ?? "").trim();
   const emailRaw = String(formData.get("email") ?? "").trim();
@@ -160,19 +164,7 @@ export async function createPartyAction(
     throw new Error("Party name is required.");
   }
 
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, slug")
-    .eq("slug", companySlug)
-    .maybeSingle<CompanyRecord>();
-
-  if (companyError) {
-    throw new Error(`Failed to load company: ${companyError.message}`);
-  }
-
-  if (!company) {
-    throw new Error(`Company not found for slug: ${companySlug}`);
-  }
+  const company = await requireCompanyBySlugForUser(companySlug);
 
   const insertPayload: {
     company_id: string;
@@ -195,27 +187,16 @@ export async function deletePartyAction(
   companySlug: string,
   formData: FormData
 ): Promise<void> {
+  const supabase = await createClient();
   const partyId = String(formData.get("partyId") ?? "").trim();
 
   if (!partyId) {
     throw new Error("Missing partyId.");
   }
 
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, slug")
-    .eq("slug", companySlug)
-    .maybeSingle<CompanyRecord>();
+  const company = await requireCompanyBySlugForUser(companySlug);
 
-  if (companyError) {
-    throw new Error(`Failed to load company: ${companyError.message}`);
-  }
-
-  if (!company) {
-    throw new Error(`Company not found for slug: ${companySlug}`);
-  }
-
-  const { data: party, error: partyError } = await supabaseAdmin
+  const { data: party, error: partyError } = await supabase
     .from("parties")
     .select("id")
     .eq("company_id", company.id)
@@ -230,7 +211,7 @@ export async function deletePartyAction(
     throw new Error("Party not found.");
   }
 
-  const { error: deleteError } = await supabaseAdmin
+  const { error: deleteError } = await supabase
     .from("parties")
     .delete()
     .eq("company_id", company.id)
@@ -248,6 +229,7 @@ export async function updatePartyAction(
   partyId: string,
   formData: FormData
 ): Promise<void> {
+  const supabase = await createClient();
   const name = String(formData.get("name") ?? "").trim();
   const emailRaw = String(formData.get("email") ?? "").trim();
   const typeRaw = String(formData.get("type") ?? "").trim();
@@ -261,21 +243,9 @@ export async function updatePartyAction(
     throw new Error("Missing partyId.");
   }
 
-  const { data: company, error: companyError } = await supabaseAdmin
-    .from("companies")
-    .select("id, slug")
-    .eq("slug", companySlug)
-    .maybeSingle<CompanyRecord>();
+  const company = await requireCompanyBySlugForUser(companySlug);
 
-  if (companyError) {
-    throw new Error(`Failed to load company: ${companyError.message}`);
-  }
-
-  if (!company) {
-    throw new Error(`Company not found for slug: ${companySlug}`);
-  }
-
-  const { data: party, error: partyError } = await supabaseAdmin
+  const { data: party, error: partyError } = await supabase
     .from("parties")
     .select("id")
     .eq("company_id", company.id)
