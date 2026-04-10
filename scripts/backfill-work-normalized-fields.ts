@@ -7,21 +7,12 @@ import {
   normalizeText,
   buildNormalizedTitleArtist,
 } from "../src/features/matching/normalize";
+import { requireSupabaseServiceRoleEnv } from "../src/lib/supabase/env";
 
 config({ path: path.resolve(process.cwd(), ".env.local") });
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseServiceRoleKey) {
-  console.error("NEXT_PUBLIC_SUPABASE_URL exists:", !!supabaseUrl);
-  console.error(
-    "SUPABASE_SERVICE_ROLE_KEY exists:",
-    !!supabaseServiceRoleKey
-  );
-  throw new Error("Missing Supabase environment variables");
-}
-
+const { url: supabaseUrl, serviceRoleKey: supabaseServiceRoleKey } =
+  requireSupabaseServiceRoleEnv();
 const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
 type WorkRow = {

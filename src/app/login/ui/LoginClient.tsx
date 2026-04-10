@@ -6,6 +6,14 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 type Tab = "login" | "signup";
 
+function mapSupabaseEnvError(message: string) {
+  if (!message.toLowerCase().includes("missing supabase")) {
+    return message;
+  }
+
+  return "Inloggning är inte konfigurerad än. Lägg till NEXT_PUBLIC_SUPABASE_URL och NEXT_PUBLIC_SUPABASE_ANON_KEY (eller NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY) i miljövariablerna.";
+}
+
 export default function LoginClient() {
   const router = useRouter();
 
@@ -63,7 +71,8 @@ export default function LoginClient() {
       setTab("login");
       setPassword("");
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Okänt fel");
+      const rawMessage = e instanceof Error ? e.message : "Okänt fel";
+      setErr(mapSupabaseEnvError(rawMessage));
     } finally {
       setLoading(false);
     }

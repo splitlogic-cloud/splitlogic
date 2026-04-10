@@ -1,7 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
+import { requireSupabaseServiceRoleEnv } from "@/lib/supabase/env";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const { url: supabaseUrl, serviceRoleKey: supabaseServiceRoleKey } =
+  requireSupabaseServiceRoleEnv();
 
 // Viktigt: service role endast server-side
 export const supabaseAdmin = createClient(
