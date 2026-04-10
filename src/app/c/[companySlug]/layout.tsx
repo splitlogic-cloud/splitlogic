@@ -62,12 +62,6 @@ export default async function CompanyLayout({
 
             <CompanySidebarNav companySlug={companySlug} />
 
-            <div className="mt-auto px-5 pb-5">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-400">
-                <div className="font-medium text-slate-200">System status</div>
-                <div className="mt-1">App shell active</div>
-              </div>
-            </div>
           </div>
         </aside>
 

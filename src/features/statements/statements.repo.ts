@@ -2,104 +2,61 @@ import "server-only";
 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export type StatementStatus = "draft" | "sent" | "paid" | "void" | "voided";
+export type StatementStatus = "draft" | "finalized" | "exported";
 
 export type StatementListRow = {
   id: string;
   company_id: string;
-  party_id: string | null;
+  statement_run_id: string;
+  party_id: string;
   party_name: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  status: string | null;
-  currency: string | null;
-  total_amount: number | null;
-  generated_from: string | null;
-  note: string | null;
+  period_start: string;
+  period_end: string;
+  status: StatementStatus;
+  currency: string;
+  total_amount: number;
+  line_count: number;
   created_at: string | null;
-  created_by: string | null;
+  run_status: string | null;
+  run_started_at: string | null;
+  run_completed_at: string | null;
 };
 
-export type StatementHeaderRow = {
-  id: string;
-  company_id: string;
-  party_id: string | null;
-  party_name: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  status: string | null;
-  currency: string | null;
-  total_amount: number | null;
-  generated_from: string | null;
-  note: string | null;
-  created_at: string | null;
-  created_by: string | null;
-};
+export type StatementHeaderRow = StatementListRow;
 
 export type StatementLineRow = {
   id: string;
-  line_label: string | null;
-  work_title: string | null;
-  row_count: number | null;
-  amount: number | null;
-  currency: string | null;
+  statement_id: string;
+  allocation_line_id: string;
+  import_row_id: string;
+  work_id: string | null;
+  party_id: string;
+  title: string | null;
+  artist: string | null;
+  isrc: string | null;
+  platform: string | null;
+  territory: string | null;
+  transaction_date: string | null;
+  amount: number;
+  currency: string;
+  units: number | null;
+  created_at: string | null;
 };
 
 export type StatementDetailRow = StatementHeaderRow & {
   lines: StatementLineRow[];
 };
 
-export type StatementSourceAllocationLine = {
-  id: string;
-  company_id: string;
-  import_row_id: string;
-  party_id: string | null;
-  work_id: string | null;
-  currency: string | null;
-  allocated_amount: number;
-  earning_date: string | null;
-};
-
-export type StatementInsertRow = {
-  company_id: string;
-  party_id: string;
-  period_start: string;
-  period_end: string;
-  status: StatementStatus;
-  currency: string | null;
-  total_amount: number;
-  generated_from: string | null;
-  created_by: string | null;
-};
-
-export type StatementLineInsertRow = {
-  statement_id: string;
-  line_label: string | null;
-  work_title: string | null;
-  row_count: number;
-  amount: number;
-  currency: string | null;
-};
-
-export type StatementLedgerInsertRow = {
-  statement_id: string;
-  allocation_row_id: string;
-  work_id: string | null;
-  earning_date: string | null;
-  amount: number;
-  currency: string | null;
-};
-
 function asString(value: unknown): string | null {
   if (value == null) return null;
-  const s = String(value).trim();
-  return s.length > 0 ? s : null;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 function asNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : null;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -107,364 +64,129 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function isMissingSchemaColumnError(message: string, column: string): boolean {
-  const normalized = message.toLowerCase();
-  if (
-    !normalized.includes("does not exist") &&
-    !normalized.includes("could not find the") &&
-    !normalized.includes("schema cache")
-  ) {
-    return false;
+function firstObject(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) {
+    return asObject(value[0]);
   }
-  return normalized.includes(column.toLowerCase());
+  return asObject(value);
 }
 
-function normalizeDate(value: string | null): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const maybeDate = trimmed.slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(maybeDate)) {
-    return maybeDate;
-  }
-
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed.toISOString().slice(0, 10);
+function toStatus(value: unknown): StatementStatus {
+  const raw = asString(value);
+  if (raw === "finalized" || raw === "exported") return raw;
+  return "draft";
 }
 
-function roundMoney(value: number): number {
-  return Number(value.toFixed(6));
-}
+function normalizeListRow(row: Record<string, unknown>): StatementListRow {
+  const parties = firstObject(row.parties);
+  const run = firstObject(row.statement_runs);
 
-function chunkArray<T>(items: T[], size: number): T[][] {
-  if (size <= 0) {
-    throw new Error("chunk size must be greater than 0");
-  }
-
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
-  }
-  return chunks;
-}
-
-function pickStatementDate(row: {
-  canonical: Record<string, unknown> | null;
-  normalized: Record<string, unknown> | null;
-  raw: Record<string, unknown> | null;
-}): string | null {
-  const candidates = [
-    asString(row.canonical?.statement_date),
-    asString(row.canonical?.statementDate),
-    asString(row.canonical?.earning_date),
-    asString(row.normalized?.statement_date),
-    asString(row.normalized?.statementDate),
-    asString(row.normalized?.earning_date),
-    asString(row.raw?.statement_date),
-    asString(row.raw?.statementDate),
-    asString(row.raw?.earning_date),
-    asString(row.raw?.["Statement Date"]),
-    asString(row.raw?.["REPORT_START_DATE"]),
-    asString(row.raw?.["REPORT_END_DATE"]),
-  ];
-
-  for (const candidate of candidates) {
-    const normalized = normalizeDate(candidate);
-    if (normalized) return normalized;
-  }
-
-  return null;
-}
-
-function normalizeStatementListRow(row: Record<string, unknown>): StatementListRow {
   return {
     id: String(row.id),
     company_id: String(row.company_id),
-    party_id: asString(row.party_id),
-    party_name: asString(row.party_name),
-    period_start: asString(row.period_start),
-    period_end: asString(row.period_end),
-    status: asString(row.status),
-    currency: asString(row.currency),
-    total_amount: asNumber(row.total_amount),
-    generated_from: asString(row.generated_from),
-    note: asString(row.note),
+    statement_run_id: String(row.statement_run_id),
+    party_id: String(row.party_id),
+    party_name: asString(parties?.name),
+    period_start: String(row.period_start),
+    period_end: String(row.period_end),
+    status: toStatus(row.status),
+    currency: asString(row.currency) ?? "",
+    total_amount: asNumber(row.total_amount) ?? 0,
+    line_count: asNumber(row.line_count) ?? 0,
     created_at: asString(row.created_at),
-    created_by: asString(row.created_by),
+    run_status: asString(run?.status),
+    run_started_at: asString(run?.started_at),
+    run_completed_at: asString(run?.completed_at),
   };
 }
 
-function normalizeStatementLineRow(row: Record<string, unknown>): StatementLineRow {
+function normalizeLineRow(row: Record<string, unknown>): StatementLineRow {
   return {
     id: String(row.id),
-    line_label:
-      asString(row.line_label) ??
-      asString(row.label) ??
-      asString(row.name),
-    work_title:
-      asString(row.work_title) ??
-      asString(row.work_name) ??
-      asString(row.title),
-    row_count:
-      asNumber(row.row_count) ??
-      asNumber(row.source_row_count) ??
-      asNumber(row.count),
-    amount:
-      asNumber(row.amount) ??
-      asNumber(row.total_amount) ??
-      asNumber(row.payable_amount),
-    currency: asString(row.currency),
+    statement_id: String(row.statement_id),
+    allocation_line_id: String(row.allocation_line_id),
+    import_row_id: String(row.import_row_id),
+    work_id: asString(row.work_id),
+    party_id: String(row.party_id),
+    title: asString(row.title),
+    artist: asString(row.artist),
+    isrc: asString(row.isrc),
+    platform: asString(row.platform),
+    territory: asString(row.territory),
+    transaction_date: asString(row.transaction_date),
+    amount: asNumber(row.amount) ?? 0,
+    currency: asString(row.currency) ?? "",
+    units: asNumber(row.units),
+    created_at: asString(row.created_at),
   };
 }
 
 export async function listStatementsByCompany(
   companyId: string
 ): Promise<StatementListRow[]> {
-  const withNoteAndCreatedBySelect = `
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select(
+      `
       id,
       company_id,
+      statement_run_id,
       party_id,
       period_start,
       period_end,
       status,
       currency,
       total_amount,
-      note,
+      line_count,
       created_at,
-      created_by,
-      parties (
-        name
-      )
-    `;
-  const withNoteWithoutCreatedBySelect = `
-      id,
-      company_id,
-      party_id,
-      period_start,
-      period_end,
-      status,
-      currency,
-      total_amount,
-      note,
-      created_at,
-      parties (
-        name
-      )
-    `;
-  const withoutNoteWithCreatedBySelect = `
-      id,
-      company_id,
-      party_id,
-      period_start,
-      period_end,
-      status,
-      currency,
-      total_amount,
-      created_at,
-      created_by,
-      parties (
-        name
-      )
-    `;
-  const withoutNoteWithoutCreatedBySelect = `
-      id,
-      company_id,
-      party_id,
-      period_start,
-      period_end,
-      status,
-      currency,
-      total_amount,
-      created_at,
-      parties (
-        name
-      )
-    `;
-  const variants = [
-    {
-      includeNote: true,
-      includeCreatedBy: true,
-      select: withNoteAndCreatedBySelect,
-    },
-    {
-      includeNote: true,
-      includeCreatedBy: false,
-      select: withNoteWithoutCreatedBySelect,
-    },
-    {
-      includeNote: false,
-      includeCreatedBy: true,
-      select: withoutNoteWithCreatedBySelect,
-    },
-    {
-      includeNote: false,
-      includeCreatedBy: false,
-      select: withoutNoteWithoutCreatedBySelect,
-    },
-  ] as const;
+      parties(name),
+      statement_runs(status, started_at, completed_at)
+    `
+    )
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(1000);
 
-  for (const variant of variants) {
-    const { data, error } = await supabaseAdmin
-      .from("statements")
-      .select(variant.select)
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false })
-      .limit(500);
-
-    if (!error) {
-      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
-      return rows.map((row) =>
-        normalizeStatementListRow({
-          ...row,
-          generated_from: null,
-          note: variant.includeNote ? row.note : null,
-          created_by: variant.includeCreatedBy ? row.created_by : null,
-          party_name: asString(asObject(row.parties)?.name) ?? null,
-        })
-      );
-    }
-
-    if (
-      (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) ||
-      (variant.includeCreatedBy && isMissingSchemaColumnError(error.message, "created_by"))
-    ) {
-      continue;
-    }
-
+  if (error) {
     throw new Error(`listStatementsByCompany failed: ${error.message}`);
   }
 
-  return [];
+  return ((data ?? []) as Array<Record<string, unknown>>).map(normalizeListRow);
 }
 
 export async function getStatementHeader(
   companyId: string,
   statementId: string
 ): Promise<StatementHeaderRow | null> {
-  const withNoteAndCreatedBySelect = `
+  const { data, error } = await supabaseAdmin
+    .from("statements")
+    .select(
+      `
       id,
       company_id,
+      statement_run_id,
       party_id,
       period_start,
       period_end,
       status,
       currency,
       total_amount,
-      note,
+      line_count,
       created_at,
-      created_by,
-      parties (
-        name
-      )
-    `;
-  const withNoteWithoutCreatedBySelect = `
-      id,
-      company_id,
-      party_id,
-      period_start,
-      period_end,
-      status,
-      currency,
-      total_amount,
-      note,
-      created_at,
-      parties (
-        name
-      )
-    `;
-  const withoutNoteWithCreatedBySelect = `
-      id,
-      company_id,
-      party_id,
-      period_start,
-      period_end,
-      status,
-      currency,
-      total_amount,
-      created_at,
-      created_by,
-      parties (
-        name
-      )
-    `;
-  const withoutNoteWithoutCreatedBySelect = `
-      id,
-      company_id,
-      party_id,
-      period_start,
-      period_end,
-      status,
-      currency,
-      total_amount,
-      created_at,
-      parties (
-        name
-      )
-    `;
-  const variants = [
-    {
-      includeNote: true,
-      includeCreatedBy: true,
-      select: withNoteAndCreatedBySelect,
-    },
-    {
-      includeNote: true,
-      includeCreatedBy: false,
-      select: withNoteWithoutCreatedBySelect,
-    },
-    {
-      includeNote: false,
-      includeCreatedBy: true,
-      select: withoutNoteWithCreatedBySelect,
-    },
-    {
-      includeNote: false,
-      includeCreatedBy: false,
-      select: withoutNoteWithoutCreatedBySelect,
-    },
-  ] as const;
+      parties(name),
+      statement_runs(status, started_at, completed_at)
+    `
+    )
+    .eq("company_id", companyId)
+    .eq("id", statementId)
+    .maybeSingle();
 
-  for (const variant of variants) {
-    const { data, error } = await supabaseAdmin
-      .from("statements")
-      .select(variant.select)
-      .eq("company_id", companyId)
-      .eq("id", statementId)
-      .maybeSingle();
-
-    if (!error) {
-      if (!data) {
-        return null;
-      }
-      const row = data as unknown as Record<string, unknown>;
-
-      return {
-        ...normalizeStatementListRow({
-          ...row,
-          generated_from: null,
-          note: variant.includeNote ? row.note : null,
-          created_by: variant.includeCreatedBy ? row.created_by : null,
-          party_name: asString(asObject(row.parties)?.name) ?? null,
-        }),
-      };
-    }
-
-    if (
-      (variant.includeNote && isMissingSchemaColumnError(error.message, "note")) ||
-      (variant.includeCreatedBy && isMissingSchemaColumnError(error.message, "created_by"))
-    ) {
-      continue;
-    }
-
+  if (error) {
     throw new Error(`getStatementHeader failed: ${error.message}`);
   }
 
-  return null;
+  if (!data) return null;
+  return normalizeListRow(data as Record<string, unknown>);
 }
 
 export async function listStatementLines(
@@ -472,24 +194,35 @@ export async function listStatementLines(
 ): Promise<StatementLineRow[]> {
   const { data, error } = await supabaseAdmin
     .from("statement_lines")
-    .select(`
+    .select(
+      `
       id,
-      line_label,
-      work_title,
-      row_count,
+      statement_id,
+      allocation_line_id,
+      import_row_id,
+      work_id,
+      party_id,
+      title,
+      artist,
+      isrc,
+      platform,
+      territory,
+      transaction_date,
       amount,
-      currency
-    `)
+      currency,
+      units,
+      created_at
+    `
+    )
     .eq("statement_id", statementId)
+    .order("transaction_date", { ascending: true })
     .order("created_at", { ascending: true });
 
   if (error) {
     throw new Error(`listStatementLines failed: ${error.message}`);
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) =>
-    normalizeStatementLineRow(row)
-  );
+  return ((data ?? []) as Array<Record<string, unknown>>).map(normalizeLineRow);
 }
 
 export async function getStatementById(
@@ -501,273 +234,6 @@ export async function getStatementById(
     listStatementLines(statementId),
   ]);
 
-  if (!header) {
-    return null;
-  }
-
-  return {
-    ...header,
-    lines,
-  };
-}
-
-async function listAllocatedImportRowsForPeriod(params: {
-  companyId: string;
-  periodStart: string;
-  periodEnd: string;
-}): Promise<Map<string, string | null>> {
-  const rowsById = new Map<string, string | null>();
-  const pageSize = 1000;
-  let from = 0;
-
-  while (true) {
-    const to = from + pageSize - 1;
-    const { data, error } = await supabaseAdmin
-      .from("import_rows")
-      .select("id, allocation_status, canonical, normalized, raw")
-      .eq("company_id", params.companyId)
-      .in("allocation_status", ["allocated", "completed"])
-      .range(from, to);
-
-    if (error) {
-      throw new Error(`listAllocatedImportRowsForPeriod failed: ${error.message}`);
-    }
-
-    const batch = (data ?? []) as Array<{
-      id: unknown;
-      allocation_status: unknown;
-      canonical: unknown;
-      normalized: unknown;
-      raw: unknown;
-    }>;
-
-    for (const row of batch) {
-      const id = asString(row.id);
-      if (!id) continue;
-
-      const status = asString(row.allocation_status);
-      if (status !== "allocated" && status !== "completed") continue;
-
-      const statementDate = pickStatementDate({
-        canonical: asObject(row.canonical),
-        normalized: asObject(row.normalized),
-        raw: asObject(row.raw),
-      });
-
-      if (!statementDate) continue;
-      if (statementDate < params.periodStart || statementDate > params.periodEnd) continue;
-
-      rowsById.set(id, statementDate);
-    }
-
-    if (batch.length < pageSize) {
-      break;
-    }
-
-    from += pageSize;
-  }
-
-  return rowsById;
-}
-
-export async function loadAllocationLinesForStatementGeneration(params: {
-  companyId: string;
-  periodStart: string;
-  periodEnd: string;
-}): Promise<StatementSourceAllocationLine[]> {
-  const importRowDates = await listAllocatedImportRowsForPeriod(params);
-  const importRowIds = Array.from(importRowDates.keys());
-
-  if (importRowIds.length === 0) {
-    return [];
-  }
-
-  const lines: StatementSourceAllocationLine[] = [];
-
-  for (const idsChunk of chunkArray(importRowIds, 500)) {
-    const { data, error } = await supabaseAdmin
-      .from("allocation_lines")
-      .select("id, company_id, import_row_id, work_id, party_id, currency, allocated_amount")
-      .eq("company_id", params.companyId)
-      .in("import_row_id", idsChunk);
-
-    if (error) {
-      throw new Error(`loadAllocationLinesForStatementGeneration failed: ${error.message}`);
-    }
-
-    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
-      const id = asString(row.id);
-      const companyId = asString(row.company_id);
-      const importRowId = asString(row.import_row_id);
-      const amount = asNumber(row.allocated_amount);
-
-      if (!id || !companyId || !importRowId || amount == null) continue;
-
-      const earningDate = importRowDates.get(importRowId) ?? null;
-
-      lines.push({
-        id,
-        company_id: companyId,
-        import_row_id: importRowId,
-        party_id: asString(row.party_id),
-        work_id: asString(row.work_id),
-        currency: asString(row.currency),
-        allocated_amount: roundMoney(amount),
-        earning_date: earningDate,
-      });
-    }
-  }
-
-  return lines;
-}
-
-export async function replaceDraftStatementsForPeriod(params: {
-  companyId: string;
-  periodStart: string;
-  periodEnd: string;
-  generatedFrom: string | null;
-}): Promise<void> {
-  let query = supabaseAdmin
-    .from("statements")
-    .select("id")
-    .eq("company_id", params.companyId)
-    .eq("status", "draft")
-    .eq("period_start", params.periodStart)
-    .eq("period_end", params.periodEnd);
-
-  if (params.generatedFrom == null) {
-    query = query.is("generated_from", null);
-  } else {
-    query = query.eq("generated_from", params.generatedFrom);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`replaceDraftStatementsForPeriod failed: ${error.message}`);
-  }
-
-  const ids = (data ?? [])
-    .map((row) => asString((row as Record<string, unknown>).id))
-    .filter((value): value is string => Boolean(value));
-
-  if (ids.length === 0) return;
-
-  const { error: ledgerDeleteError } = await supabaseAdmin
-    .from("statement_ledger")
-    .delete()
-    .in("statement_id", ids);
-
-  if (ledgerDeleteError) {
-    throw new Error(`Failed to delete statement_ledger rows: ${ledgerDeleteError.message}`);
-  }
-
-  const { error: linesDeleteError } = await supabaseAdmin
-    .from("statement_lines")
-    .delete()
-    .in("statement_id", ids);
-
-  if (linesDeleteError) {
-    throw new Error(`Failed to delete statement_lines rows: ${linesDeleteError.message}`);
-  }
-
-  const { error: statementsDeleteError } = await supabaseAdmin
-    .from("statements")
-    .delete()
-    .eq("company_id", params.companyId)
-    .in("id", ids);
-
-  if (statementsDeleteError) {
-    throw new Error(`Failed to delete draft statements: ${statementsDeleteError.message}`);
-  }
-}
-
-export async function insertStatement(row: StatementInsertRow): Promise<{ id: string }> {
-  const { data, error } = await supabaseAdmin
-    .from("statements")
-    .insert({
-      company_id: row.company_id,
-      party_id: row.party_id,
-      period_start: row.period_start,
-      period_end: row.period_end,
-      status: row.status,
-      currency: row.currency,
-      total_amount: roundMoney(row.total_amount),
-      generated_from: row.generated_from,
-      created_by: row.created_by,
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    throw new Error(`insertStatement failed: ${error.message}`);
-  }
-
-  return { id: String(data.id) };
-}
-
-export async function insertStatementLines(rows: StatementLineInsertRow[]): Promise<void> {
-  if (rows.length === 0) return;
-
-  const { error } = await supabaseAdmin
-    .from("statement_lines")
-    .insert(
-      rows.map((row) => ({
-        statement_id: row.statement_id,
-        line_label: row.line_label,
-        work_title: row.work_title,
-        row_count: row.row_count,
-        amount: roundMoney(row.amount),
-        currency: row.currency,
-      }))
-    );
-
-  if (error) {
-    throw new Error(`insertStatementLines failed: ${error.message}`);
-  }
-}
-
-export async function insertStatementLedgerRows(rows: StatementLedgerInsertRow[]): Promise<void> {
-  if (rows.length === 0) return;
-
-  const { error } = await supabaseAdmin
-    .from("statement_ledger")
-    .insert(
-      rows.map((row) => ({
-        statement_id: row.statement_id,
-        allocation_row_id: row.allocation_row_id,
-        work_id: row.work_id,
-        earning_date: row.earning_date,
-        amount: roundMoney(row.amount),
-        currency: row.currency,
-      }))
-    );
-
-  if (error) {
-    throw new Error(`insertStatementLedgerRows failed: ${error.message}`);
-  }
-}
-
-export async function getWorkTitlesByIds(workIds: string[]): Promise<Map<string, string>> {
-  const ids = Array.from(new Set(workIds.filter(Boolean)));
-  if (ids.length === 0) return new Map();
-
-  const { data, error } = await supabaseAdmin
-    .from("works")
-    .select("id, title")
-    .in("id", ids);
-
-  if (error) {
-    throw new Error(`getWorkTitlesByIds failed: ${error.message}`);
-  }
-
-  const map = new Map<string, string>();
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
-    const id = asString(row.id);
-    const title = asString(row.title);
-    if (!id || !title) continue;
-    map.set(id, title);
-  }
-
-  return map;
+  if (!header) return null;
+  return { ...header, lines };
 }

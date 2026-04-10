@@ -1,38 +1,59 @@
 import "server-only";
 
-import { createAuditEvent } from "@/features/audit/audit.repo";
-import {
-  getWorkTitlesByIds,
-  insertStatement,
-  insertStatementLedgerRows,
-  insertStatementLines,
-  loadAllocationLinesForStatementGeneration,
-  replaceDraftStatementsForPeriod,
-  type StatementLedgerInsertRow,
-  type StatementLineInsertRow,
-  type StatementSourceAllocationLine,
-} from "@/features/statements/statements.repo";
+import crypto from "crypto";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export type GenerateStatementsParams = {
   companyId: string;
   periodStart: string;
   periodEnd: string;
-  createdBy?: string | null;
+  partyId?: string | null;
 };
 
 export type GeneratedStatementResult = {
+  runId: string;
   statementIds: string[];
   count: number;
 };
 
-type StatementGroup = {
-  partyId: string;
+type AllocationRow = {
+  id: string;
+  import_row_id: string | null;
+  work_id: string | null;
+  party_id: string | null;
+  allocated_amount: number | null;
   currency: string | null;
-  rows: StatementSourceAllocationLine[];
+  import_rows: {
+    id: string | null;
+    raw_title: string | null;
+    artist: string | null;
+    isrc: string | null;
+    platform: string | null;
+    territory: string | null;
+    transaction_date: string | null;
+  } | null;
 };
 
-function roundMoney(n: number) {
-  return Math.round(n * 100) / 100;
+type StatementLineInsert = {
+  statement_id: string;
+  allocation_line_id: string;
+  import_row_id: string;
+  work_id: string;
+  party_id: string;
+  title: string | null;
+  artist: string | null;
+  isrc: string | null;
+  platform: string | null;
+  territory: string | null;
+  transaction_date: string | null;
+  amount: number;
+  currency: string;
+  units: number | null;
+};
+
+function normalizeMoney(value: number): number {
+  const rounded = Number(value.toFixed(6));
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
 function assertDateInput(value: string, field: string) {
@@ -46,63 +67,20 @@ function assertDateInput(value: string, field: string) {
   }
 }
 
-function groupByPartyCurrency(rows: StatementSourceAllocationLine[]): Map<string, StatementGroup> {
-  const grouped = new Map<string, StatementGroup>();
-
-  for (const row of rows) {
-    if (!row.party_id) {
-      throw new Error(`Allocation line ${row.id} is missing party_id`);
-    }
-
-    const key = `${row.party_id}::${row.currency ?? "__NULL__"}`;
-    const existing = grouped.get(key) ?? {
-      partyId: row.party_id,
-      currency: row.currency,
-      rows: [],
-    };
-    existing.rows.push(row);
-    grouped.set(key, existing);
+function toImportRow(input: unknown): AllocationRow["import_rows"] {
+  if (!input) return null;
+  if (Array.isArray(input)) {
+    return (input[0] as AllocationRow["import_rows"]) ?? null;
   }
-
-  return grouped;
+  return input as AllocationRow["import_rows"];
 }
 
-function buildStatementLines(params: {
-  statementId: string;
-  rows: StatementSourceAllocationLine[];
-  workTitles: Map<string, string>;
-}): StatementLineInsertRow[] {
-  const groups = new Map<
-    string,
-    { workId: string | null; currency: string | null; amount: number; rowCount: number }
-  >();
-
-  for (const row of params.rows) {
-    const key = `${row.work_id ?? "__UNKNOWN__"}::${row.currency ?? "__NULL__"}`;
-    const existing = groups.get(key) ?? {
-      workId: row.work_id,
-      currency: row.currency,
-      amount: 0,
-      rowCount: 0,
-    };
-    existing.amount = roundMoney(existing.amount + row.allocated_amount);
-    existing.rowCount += 1;
-    groups.set(key, existing);
+function chunk<T>(rows: T[], size = 500): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) {
+    chunks.push(rows.slice(i, i + size));
   }
-
-  return Array.from(groups.values())
-    .map((group) => {
-      const workTitle = group.workId ? params.workTitles.get(group.workId) ?? group.workId : null;
-      return {
-        statement_id: params.statementId,
-        line_label: group.workId ? "Royalty" : "Unknown work",
-        work_title: workTitle,
-        row_count: group.rowCount,
-        amount: roundMoney(group.amount),
-        currency: group.currency,
-      };
-    })
-    .sort((a, b) => (a.work_title ?? "").localeCompare(b.work_title ?? ""));
+  return chunks;
 }
 
 export async function generateStatements(
@@ -118,87 +96,210 @@ export async function generateStatements(
     throw new Error("periodStart cannot be later than periodEnd");
   }
 
-  const rows = await loadAllocationLinesForStatementGeneration({
-    companyId: params.companyId,
-    periodStart: params.periodStart,
-    periodEnd: params.periodEnd,
-  });
+  let query = supabaseAdmin
+    .from("allocation_lines")
+    .select(
+      `
+      id,
+      import_row_id,
+      work_id,
+      party_id,
+      allocated_amount,
+      currency,
+      import_rows!inner(
+        id,
+        raw_title,
+        artist,
+        isrc,
+        platform,
+        territory,
+        transaction_date
+      )
+    `
+    )
+    .eq("company_id", params.companyId)
+    .gte("import_rows.transaction_date", params.periodStart)
+    .lte("import_rows.transaction_date", params.periodEnd);
 
-  const usable = rows.filter((row) => row.allocated_amount !== 0);
-
-  if (!usable.length) {
-    return { statementIds: [], count: 0 };
+  if (params.partyId) {
+    query = query.eq("party_id", params.partyId);
   }
 
-  const byPartyCurrency = groupByPartyCurrency(usable);
-  const generatedFrom = "allocation";
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to load allocation lines for statements: ${error.message}`);
+  }
 
-  await replaceDraftStatementsForPeriod({
-    companyId: params.companyId,
-    periodStart: params.periodStart,
-    periodEnd: params.periodEnd,
-    generatedFrom,
-  });
+  const rows: AllocationRow[] = (data ?? []).map((row) => ({
+    id: String(row.id),
+    import_row_id: row.import_row_id ? String(row.import_row_id) : null,
+    work_id: row.work_id ? String(row.work_id) : null,
+    party_id: row.party_id ? String(row.party_id) : null,
+    allocated_amount:
+      row.allocated_amount == null ? null : Number(row.allocated_amount),
+    currency: row.currency ? String(row.currency) : null,
+    import_rows: toImportRow(row.import_rows),
+  }));
 
-  const workIds = Array.from(
-    new Set(usable.map((row) => row.work_id).filter((value): value is string => Boolean(value)))
+  if (!rows.length) {
+    throw new Error("No allocation rows found for selected period.");
+  }
+
+  const filteredRows = rows.filter(
+    (row) => Math.abs(Number(row.allocated_amount ?? 0)) > 0.0000001
   );
-  const workTitles = await getWorkTitlesByIds(workIds);
 
-  const statementIds: string[] = [];
-
-  for (const group of byPartyCurrency.values()) {
-    const partyRows = group.rows;
-    const total = roundMoney(partyRows.reduce((sum, row) => sum + row.allocated_amount, 0));
-
-    const statement = await insertStatement({
-      company_id: params.companyId,
-      party_id: group.partyId,
-      period_start: params.periodStart,
-      period_end: params.periodEnd,
-      status: "draft",
-      total_amount: total,
-      currency: group.currency,
-      generated_from: generatedFrom,
-      created_by: params.createdBy ?? null,
-    });
-
-    const statementId = statement.id;
-    statementIds.push(statementId);
-
-    const ledgerRows: StatementLedgerInsertRow[] = partyRows.map((row) => ({
-      statement_id: statementId,
-      allocation_row_id: row.id,
-      work_id: row.work_id,
-      earning_date: row.earning_date,
-      amount: row.allocated_amount,
-      currency: row.currency,
-    }));
-    await insertStatementLedgerRows(ledgerRows);
-
-    const lines = buildStatementLines({
-      statementId,
-      rows: partyRows,
-      workTitles,
-    });
-    await insertStatementLines(lines);
+  if (!filteredRows.length) {
+    throw new Error("No non-zero allocation rows found for selected period.");
   }
 
-  await createAuditEvent({
-    companyId: params.companyId,
-    entityType: "statement_batch",
-    entityId: "generate",
-    action: "statements.generated",
-    payload: {
-      count: statementIds.length,
-      period_start: params.periodStart,
-      period_end: params.periodEnd,
-    },
-    createdBy: params.createdBy ?? null,
+  const invalidRows = filteredRows.filter((row) => {
+    if (!row.import_row_id || !row.work_id || !row.party_id || !row.currency) {
+      return true;
+    }
+    if (row.allocated_amount == null || !Number.isFinite(Number(row.allocated_amount))) {
+      return true;
+    }
+    return false;
   });
 
-  return {
-    statementIds,
-    count: statementIds.length,
-  };
+  if (invalidRows.length > 0) {
+    throw new Error(
+      `Allocation rows missing required fields (party_id, currency, work_id, import_row_id, allocated_amount): ${invalidRows.length}`
+    );
+  }
+
+  const hashPayload = filteredRows
+    .map((row) => [row.id, row.party_id, row.currency, row.work_id, row.allocated_amount])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  const inputHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(hashPayload))
+    .digest("hex");
+
+  const { data: run, error: runError } = await supabaseAdmin
+    .from("statement_runs")
+    .insert({
+      company_id: params.companyId,
+      period_start: params.periodStart,
+      period_end: params.periodEnd,
+      status: "processing",
+      input_row_count: filteredRows.length,
+      input_hash: inputHash,
+    })
+    .select("id")
+    .single();
+
+  if (runError || !run?.id) {
+    throw new Error(`Failed to create statement run: ${runError?.message ?? "Unknown error"}`);
+  }
+
+  const runId = String(run.id);
+
+  try {
+    const groups = new Map<string, AllocationRow[]>();
+    for (const row of filteredRows) {
+      const key = `${row.party_id}__${row.currency}`;
+      const current = groups.get(key) ?? [];
+      current.push(row);
+      groups.set(key, current);
+    }
+
+    const statementIds: string[] = [];
+    let totalAmount = 0;
+
+    for (const groupRows of groups.values()) {
+      const partyId = groupRows[0].party_id as string;
+      const currency = groupRows[0].currency as string;
+      const statementTotal = normalizeMoney(
+        groupRows.reduce(
+          (sum, row) => sum + Number(row.allocated_amount ?? 0),
+          0
+        )
+      );
+
+      const { data: statement, error: statementError } = await supabaseAdmin
+        .from("statements")
+        .insert({
+          company_id: params.companyId,
+          statement_run_id: runId,
+          party_id: partyId,
+          period_start: params.periodStart,
+          period_end: params.periodEnd,
+          currency,
+          total_amount: statementTotal,
+          line_count: groupRows.length,
+          status: "draft",
+        })
+        .select("id")
+        .single();
+
+      if (statementError || !statement?.id) {
+        throw new Error(
+          `Failed to create statement: ${statementError?.message ?? "Unknown error"}`
+        );
+      }
+
+      const statementId = String(statement.id);
+      statementIds.push(statementId);
+      totalAmount = normalizeMoney(totalAmount + statementTotal);
+
+      const lines: StatementLineInsert[] = groupRows.map((row) => ({
+        statement_id: statementId,
+        allocation_line_id: row.id,
+        import_row_id: row.import_row_id as string,
+        work_id: row.work_id as string,
+        party_id: row.party_id as string,
+        title: row.import_rows?.raw_title ?? null,
+        artist: row.import_rows?.artist ?? null,
+        isrc: row.import_rows?.isrc ?? null,
+        platform: row.import_rows?.platform ?? null,
+        territory: row.import_rows?.territory ?? null,
+        transaction_date: row.import_rows?.transaction_date ?? null,
+        amount: normalizeMoney(Number(row.allocated_amount ?? 0)),
+        currency: row.currency as string,
+        units: null,
+      }));
+
+      for (const linesChunk of chunk(lines, 500)) {
+        const { error: lineError } = await supabaseAdmin
+          .from("statement_lines")
+          .insert(linesChunk);
+        if (lineError) {
+          throw new Error(`Failed to insert statement lines: ${lineError.message}`);
+        }
+      }
+    }
+
+    const { error: completeError } = await supabaseAdmin
+      .from("statement_runs")
+      .update({
+        status: "completed",
+        statement_count: statementIds.length,
+        total_amount: totalAmount,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", runId);
+
+    if (completeError) {
+      throw new Error(`Failed to complete statement run: ${completeError.message}`);
+    }
+
+    return {
+      runId,
+      statementIds,
+      count: statementIds.length,
+    };
+  } catch (error) {
+    await supabaseAdmin
+      .from("statement_runs")
+      .update({
+        status: "failed",
+        error_message:
+          error instanceof Error ? error.message : "Unknown generation error",
+      })
+      .eq("id", runId);
+
+    throw error;
+  }
 }

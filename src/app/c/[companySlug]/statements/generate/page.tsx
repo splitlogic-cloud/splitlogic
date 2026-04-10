@@ -2,13 +2,14 @@ import "server-only";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { generateStatementsAction } from "./actions";
 import {
   getGenerateStatementsPreview,
   getGenerateStatementsQaSummary,
   type QaLevel,
 } from "@/features/statements/statements-qa.repo";
+import { listPartiesMini } from "@/features/parties/parties.repo";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,9 @@ type PageProps = {
   searchParams?: Promise<{
     periodStart?: string;
     periodEnd?: string;
+    partyId?: string;
+    success?: string;
+    error?: string;
   }>;
 };
 
@@ -59,8 +63,12 @@ export default async function GenerateStatementsPage({
 
   const selectedPeriodStart = normalizeDateInput(resolvedSearchParams.periodStart);
   const selectedPeriodEnd = normalizeDateInput(resolvedSearchParams.periodEnd);
+  const selectedPartyId = resolvedSearchParams.partyId ?? "";
+  const generateSuccess = resolvedSearchParams.success ?? "";
+  const generateError = resolvedSearchParams.error ?? "";
 
-  const { data: company, error: companyError } = await supabaseAdmin
+  const supabase = await createClient();
+  const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, slug, name")
     .eq("slug", companySlug)
@@ -74,10 +82,12 @@ export default async function GenerateStatementsPage({
     notFound();
   }
 
-  const [qaSummary, preview] = await Promise.all([
+  const [qaSummary, preview, parties] = await Promise.all([
     getGenerateStatementsQaSummary(company.id),
     getGenerateStatementsPreview(company.id),
+    listPartiesMini(company.id),
   ]);
+  const canGenerate = qaSummary.level !== "blocked";
 
   return (
     <div className="space-y-6">
@@ -111,10 +121,25 @@ export default async function GenerateStatementsPage({
       </div>
 
       <div className="rounded-2xl border bg-white p-6">
+        {generateSuccess ? (
+          <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+            {generateSuccess}
+          </div>
+        ) : null}
+        {generateError ? (
+          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {generateError}
+          </div>
+        ) : null}
+        {!canGenerate ? (
+          <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900">
+            Generation is currently blocked by QA issues. Resolve blockers below before generating statements.
+          </div>
+        ) : null}
         <form action={generateStatementsAction} className="space-y-4">
           <input type="hidden" name="companySlug" value={companySlug} />
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <div>
               <label
                 htmlFor="periodStart"
@@ -147,10 +172,33 @@ export default async function GenerateStatementsPage({
               />
             </div>
 
+            <div>
+              <label
+                htmlFor="partyId"
+                className="mb-1 block text-sm font-medium text-neutral-700"
+              >
+                Party (optional)
+              </label>
+              <select
+                id="partyId"
+                name="partyId"
+                defaultValue={selectedPartyId}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                <option value="">All parties</option>
+                {parties.map((party) => (
+                  <option key={party.id} value={party.id}>
+                    {party.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex items-end">
               <button
                 type="submit"
-                className="inline-flex items-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white"
+                disabled={!canGenerate}
+                className="inline-flex items-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Generate statements
               </button>

@@ -129,7 +129,7 @@ export default function UploadImportsClient({ companySlug, companyId }: Props) {
       setProgress(100);
 
       // 5) Go to detail page
-      router.push(`/c/${companySlug}/works/imports/${importId}`);
+      router.push(`/c/${companySlug}/works/import/${importId}`);
       router.refresh();
     } catch (e: any) {
       console.error(e);
@@ -284,7 +284,7 @@ export default function UploadImportsClient({ companySlug, companyId }: Props) {
       <div className="text-xs text-slate-500">
         Route efter import:{" "}
         <span className="font-mono">
-          /c/{companySlug}/works/imports/&lt;importId&gt;
+          /c/{companySlug}/works/import/&lt;importId&gt;
         </span>
       </div>
     </div>

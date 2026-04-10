@@ -23,7 +23,7 @@ export async function POST(req: Request, context: Ctx): Promise<Response> {
 
   const nextStatus = String(body.status ?? "");
 
-  if (!["draft", "sent", "paid", "void"].includes(nextStatus)) {
+  if (!["draft", "finalized", "exported"].includes(nextStatus)) {
     return Response.json({ error: "Invalid status" }, { status: 400 });
   }
 
@@ -51,10 +51,6 @@ export async function POST(req: Request, context: Ctx): Promise<Response> {
   const patch: Record<string, unknown> = {
     status: nextStatus,
   };
-
-  if (nextStatus === "sent") patch.sent_at = new Date().toISOString();
-  if (nextStatus === "paid") patch.paid_at = new Date().toISOString();
-  if (nextStatus === "void") patch.voided_at = new Date().toISOString();
 
   const { error: updateError } = await supabaseAdmin
     .from("statements")

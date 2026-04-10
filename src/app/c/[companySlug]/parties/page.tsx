@@ -2,7 +2,7 @@ import "server-only";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { createPartyAction, deletePartyAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +10,9 @@ export const dynamic = "force-dynamic";
 type PageProps = {
   params: Promise<{
     companySlug: string;
+  }>;
+  searchParams?: Promise<{
+    error?: string;
   }>;
 };
 
@@ -43,6 +46,7 @@ function formatDate(value: string | null) {
 }
 
 async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
+  const supabase = await createClient();
   const attempts: Array<{
     select: string;
     orderBy?: string;
@@ -104,7 +108,7 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
   const errors: string[] = [];
 
   for (const attempt of attempts) {
-    let query = supabaseAdmin
+    let query = supabase
       .from("parties")
       .select(attempt.select)
       .eq("company_id", companyId)
@@ -129,10 +133,13 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
   throw new Error(`load parties failed: ${errors.join(" | ")}`);
 }
 
-export default async function PartiesPage({ params }: PageProps) {
+export default async function PartiesPage({ params, searchParams }: PageProps) {
   const { companySlug } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const pageError = resolvedSearchParams.error ?? "";
+  const supabase = await createClient();
 
-  const { data: company, error: companyError } = await supabaseAdmin
+  const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, name, slug")
     .eq("slug", companySlug)
@@ -183,6 +190,11 @@ export default async function PartiesPage({ params }: PageProps) {
       </div>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        {pageError ? (
+          <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {pageError}
+          </div>
+        ) : null}
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-zinc-900">Add party</h2>
           <p className="text-sm text-zinc-600">
@@ -317,11 +329,6 @@ export default async function PartiesPage({ params }: PageProps) {
                           type="submit"
                           className="text-sm text-red-700 underline"
                           formAction={deletePartyAction.bind(null, companySlug)}
-                          onClick={(event) => {
-                            if (!confirm("Delete this party? This cannot be undone.")) {
-                              event.preventDefault();
-                            }
-                          }}
                         >
                           Delete
                         </button>

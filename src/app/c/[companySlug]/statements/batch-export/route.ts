@@ -91,12 +91,15 @@ export async function GET(request: Request, context: RouteContext) {
 
   const csvRows = statements.map((statement) => ({
     statement_id: statement.id,
+    statement_run_id: statement.statement_run_id,
     party_name: statement.party_name ?? "",
     period_start: statement.period_start ?? "",
     period_end: statement.period_end ?? "",
-    status: statement.status ?? "",
-    currency: statement.currency ?? "",
-    total_amount: statement.total_amount ?? "",
+    status: statement.status,
+    currency: statement.currency,
+    total_amount: statement.total_amount,
+    line_count: statement.line_count,
+    run_status: statement.run_status ?? "",
     created_at: statement.created_at ?? "",
   }));
 

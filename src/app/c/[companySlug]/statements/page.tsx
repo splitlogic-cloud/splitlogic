@@ -16,6 +16,9 @@ type PageProps = {
   params: Promise<{
     companySlug: string;
   }>;
+  searchParams?: Promise<{
+    success?: string;
+  }>;
 };
 
 function badgeClass(level: QaLevel) {
@@ -60,8 +63,10 @@ function buildQaMap(rows: StatementQaStatusRow[]): Map<string, StatementQaStatus
   return new Map(rows.map((row) => [row.statement_id, row]));
 }
 
-export default async function StatementsPage({ params }: PageProps) {
+export default async function StatementsPage({ params, searchParams }: PageProps) {
   const { companySlug } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const successMessage = resolvedSearchParams.success ?? "";
 
   const { data: company, error: companyError } = await supabaseAdmin
     .from("companies")
@@ -121,6 +126,12 @@ export default async function StatementsPage({ params }: PageProps) {
           </Link>
         </div>
       </div>
+
+      {successMessage ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          {successMessage}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-xl border bg-white p-4">

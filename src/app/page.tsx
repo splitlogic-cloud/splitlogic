@@ -23,12 +23,6 @@ export default function LandingPage() {
             >
               Logga in
             </Link>
-            <Link
-              href="/signup"
-              className="rounded-xl bg-gradient-to-r from-cyan-500 to-violet-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-95"
-            >
-              Boka demo
-            </Link>
           </nav>
         </div>
       </header>
@@ -57,15 +51,9 @@ export default function LandingPage() {
               </p>
 
               <div className="mt-8 flex flex-wrap gap-3">
-                <Link
-                  href="/signup"
-                  className="rounded-xl bg-slate-900 px-5 py-3 font-medium text-white shadow-sm hover:bg-slate-800"
-                >
-                  Boka demo
-                </Link>
                 <a
                   href="#how"
-                  className="rounded-xl border border-slate-200 bg-white px-5 py-3 font-medium hover:bg-slate-50"
+                  className="rounded-xl bg-slate-900 px-5 py-3 font-medium text-white shadow-sm hover:bg-slate-800"
                 >
                   Se hur det fungerar
                 </a>

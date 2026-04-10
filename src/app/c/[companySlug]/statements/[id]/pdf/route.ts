@@ -47,8 +47,28 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const lines = await listStatementLines(id);
   const pdfBytes = await buildStatementPdf({
-    header,
-    lines,
+    header: {
+      id: header.id,
+      party_name: header.party_name,
+      period_start: header.period_start,
+      period_end: header.period_end,
+      total_amount: header.total_amount,
+      currency: header.currency,
+      status: header.status,
+      created_at: header.created_at,
+    },
+    lines: lines.map((line) => ({
+      id: line.id,
+      title: line.title,
+      artist: line.artist,
+      isrc: line.isrc,
+      platform: line.platform,
+      territory: line.territory,
+      transaction_date: line.transaction_date,
+      amount: line.amount,
+      currency: line.currency,
+      units: line.units,
+    })),
   });
 
   const pdfBuffer = toArrayBuffer(pdfBytes);

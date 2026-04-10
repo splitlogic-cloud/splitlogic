@@ -3,6 +3,7 @@ import "server-only";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import CreateCompanyClient from "./ui/CreateCompanyClient";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +76,9 @@ export default async function SelectCompanyPage() {
               Go to onboarding
             </Link>
           </div>
+          <div className="pt-2">
+            <CreateCompanyClient />
+          </div>
         </div>
       </div>
     );
@@ -89,11 +93,14 @@ export default async function SelectCompanyPage() {
   return (
     <div className="min-h-[60vh] p-6">
       <div className="mx-auto max-w-2xl space-y-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Select company</h1>
-          <p className="text-sm text-slate-600">
-            Choose which company you want to open.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Select company</h1>
+            <p className="text-sm text-slate-600">
+              Choose which company you want to open.
+            </p>
+          </div>
+          <CreateCompanyClient />
         </div>
 
         <div className="grid gap-3">
