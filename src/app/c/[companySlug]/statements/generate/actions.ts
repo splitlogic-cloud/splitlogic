@@ -177,6 +177,10 @@ export async function generateStatementsAction(formData: FormData) {
 
     redirect(`/c/${companySlug}/statements`);
   } catch (error) {
+    if (isNextRedirectError(error)) {
+      throw error;
+    }
+
     const message =
       error instanceof Error
         ? error.message
