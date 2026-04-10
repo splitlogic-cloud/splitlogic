@@ -85,6 +85,7 @@ export default async function GenerateStatementsPage({
     getGenerateStatementsPreview(company.id),
     listPartiesMini(company.id),
   ]);
+  const canGenerate = qaSummary.level !== "blocked";
 
   return (
     <div className="space-y-6">
@@ -121,6 +122,11 @@ export default async function GenerateStatementsPage({
         {generateError ? (
           <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
             {generateError}
+          </div>
+        ) : null}
+        {!canGenerate ? (
+          <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900">
+            Generation is currently blocked by QA issues. Resolve blockers below before generating statements.
           </div>
         ) : null}
         <form action={generateStatementsAction} className="space-y-4">
@@ -184,7 +190,8 @@ export default async function GenerateStatementsPage({
             <div className="flex items-end">
               <button
                 type="submit"
-                className="inline-flex items-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white"
+                disabled={!canGenerate}
+                className="inline-flex items-center rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Generate statements
               </button>

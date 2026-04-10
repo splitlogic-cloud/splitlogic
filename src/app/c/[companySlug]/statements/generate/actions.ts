@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireCompanyBySlugForUser } from "@/features/companies/companies.repo";
 import { generateStatements } from "@/features/statements/generate-statements";
+import { getGenerateStatementsQaSummary } from "@/features/statements/statements-qa.repo";
 
 function buildGeneratePath(params: {
   companySlug: string;
@@ -125,6 +126,21 @@ export async function generateStatementsAction(formData: FormData) {
         })
       );
     }
+  }
+
+  const qaSummary = await getGenerateStatementsQaSummary(company.id);
+  if (qaSummary.level === "blocked") {
+    redirect(
+      buildGeneratePath({
+        companySlug,
+        periodStart,
+        periodEnd,
+        partyId: partyIdRaw,
+        error:
+          qaSummary.issues[0] ??
+          "Generation is blocked until QA issues are resolved.",
+      })
+    );
   }
 
   // Prefer RPC when available: many installations already depend on it.
