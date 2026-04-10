@@ -688,9 +688,28 @@ export async function replaceDraftStatementsForPeriod(params: {
 }
 
 export async function insertStatement(row: StatementInsertRow): Promise<{ id: string }> {
-  const { data, error } = await supabaseAdmin
+  const payloadWithCreatedBy = {
+    company_id: row.company_id,
+    party_id: row.party_id,
+    period_start: row.period_start,
+    period_end: row.period_end,
+    status: row.status,
+    currency: row.currency,
+    total_amount: roundMoney(row.total_amount),
+    generated_from: row.generated_from,
+    created_by: row.created_by,
+  };
+  const initial = await supabaseAdmin
     .from("statements")
-    .insert({
+    .insert(payloadWithCreatedBy)
+    .select("id")
+    .single();
+
+  let data = initial.data;
+  let error = initial.error;
+
+  if (error && isMissingSchemaColumnError(error.message, "created_by")) {
+    const payloadWithoutCreatedBy = {
       company_id: row.company_id,
       party_id: row.party_id,
       period_start: row.period_start,
@@ -699,13 +718,20 @@ export async function insertStatement(row: StatementInsertRow): Promise<{ id: st
       currency: row.currency,
       total_amount: roundMoney(row.total_amount),
       generated_from: row.generated_from,
-      created_by: row.created_by,
-    })
-    .select("id")
-    .single();
+    };
 
-  if (error) {
-    throw new Error(`insertStatement failed: ${error.message}`);
+    const fallback = await supabaseAdmin
+      .from("statements")
+      .insert(payloadWithoutCreatedBy)
+      .select("id")
+      .single();
+
+    data = fallback.data;
+    error = fallback.error;
+  }
+
+  if (error || !data) {
+    throw new Error(`insertStatement failed: ${error?.message ?? "no data returned"}`);
   }
 
   return { id: String(data.id) };
