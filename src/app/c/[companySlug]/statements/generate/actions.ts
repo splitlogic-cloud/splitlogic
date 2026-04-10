@@ -31,6 +31,16 @@ function isMissingRpcFunction(message: string) {
   ) || normalized.includes("could not find the function");
 }
 
+function isMissingSchemaColumn(message: string, column: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes(column.toLowerCase()) &&
+    (normalized.includes("does not exist") ||
+      normalized.includes("schema cache") ||
+      normalized.includes("could not find"))
+  );
+}
+
 function isNextRedirectError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const digest = (error as { digest?: unknown }).digest;
@@ -135,8 +145,12 @@ export async function generateStatementsAction(formData: FormData) {
     redirect(`/c/${companySlug}/statements`);
   }
 
-  // Fallback to TS generator when RPC is missing.
-  if (!isMissingRpcFunction(rpcError.message)) {
+  // Fallback to TS generator when RPC is missing OR references newer schema
+  // columns that do not exist in older databases.
+  if (
+    !isMissingRpcFunction(rpcError.message) &&
+    !isMissingSchemaColumn(rpcError.message, "created_by")
+  ) {
     redirect(
       buildGeneratePath({
         companySlug,
