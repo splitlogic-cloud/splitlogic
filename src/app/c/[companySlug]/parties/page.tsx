@@ -11,6 +11,9 @@ type PageProps = {
   params: Promise<{
     companySlug: string;
   }>;
+  searchParams?: Promise<{
+    error?: string;
+  }>;
 };
 
 type CompanyRecord = {
@@ -130,8 +133,10 @@ async function listPartiesForCompany(companyId: string): Promise<PartyRow[]> {
   throw new Error(`load parties failed: ${errors.join(" | ")}`);
 }
 
-export default async function PartiesPage({ params }: PageProps) {
+export default async function PartiesPage({ params, searchParams }: PageProps) {
   const { companySlug } = await params;
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const pageError = resolvedSearchParams.error ?? "";
   const supabase = await createClient();
 
   const { data: company, error: companyError } = await supabase
@@ -185,6 +190,11 @@ export default async function PartiesPage({ params }: PageProps) {
       </div>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        {pageError ? (
+          <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {pageError}
+          </div>
+        ) : null}
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-zinc-900">Add party</h2>
           <p className="text-sm text-zinc-600">

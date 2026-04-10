@@ -31,6 +31,16 @@ function isMissingRpcFunction(message: string) {
   ) || normalized.includes("could not find the function");
 }
 
+function isNextRedirectError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const digest = (error as { digest?: unknown }).digest;
+  return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
+}
+
+function toMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export async function generateStatementsAction(formData: FormData) {
   const companySlug = String(formData.get("companySlug") ?? "").trim();
   const periodStart = String(formData.get("periodStart") ?? "").trim();
@@ -53,19 +63,36 @@ export async function generateStatementsAction(formData: FormData) {
     );
   }
 
-  const supabase = await createClient();
-  const company = await requireCompanyBySlugForUser(companySlug).catch((error) => {
-    const message = error instanceof Error ? error.message : "Kunde inte läsa bolag.";
+  let supabase: Awaited<ReturnType<typeof createClient>>;
+  try {
+    supabase = await createClient();
+  } catch (error) {
     redirect(
       buildGeneratePath({
         companySlug,
         periodStart,
         periodEnd,
         partyId: partyIdRaw,
-        error: message,
+        error: toMessage(error, "Kunde inte ansluta till databasen."),
       })
     );
-  });
+  }
+
+  let company: Awaited<ReturnType<typeof requireCompanyBySlugForUser>>;
+  try {
+    company = await requireCompanyBySlugForUser(companySlug);
+  } catch (error) {
+    if (isNextRedirectError(error)) throw error;
+    redirect(
+      buildGeneratePath({
+        companySlug,
+        periodStart,
+        periodEnd,
+        partyId: partyIdRaw,
+        error: toMessage(error, "Kunde inte läsa bolag."),
+      })
+    );
+  }
 
   if (partyIdRaw) {
     const { data: party, error: partyError } = await supabase

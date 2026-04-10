@@ -20,7 +20,7 @@ export default function CompanySidebarNav({
     { label: "Imports", href: `/c/${companySlug}/imports` },
     { label: "Allocations", href: `/c/${companySlug}/allocations` },
     { label: "Works", href: `/c/${companySlug}/works` },
-    { label: "Coverage", href: `/c/${companySlug}/works/coverage` },
+    { label: "Reports", href: `/c/${companySlug}/report` },
     { label: "Parties", href: `/c/${companySlug}/parties` },
     { label: "Statements", href: `/c/${companySlug}/statements` },
     { label: "Audit", href: `/c/${companySlug}/audit` },

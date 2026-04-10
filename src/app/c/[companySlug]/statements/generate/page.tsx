@@ -2,7 +2,7 @@ import "server-only";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { generateStatementsAction } from "./actions";
 import {
   getGenerateStatementsPreview,
@@ -65,7 +65,8 @@ export default async function GenerateStatementsPage({
   const selectedPartyId = resolvedSearchParams.partyId ?? "";
   const generateError = resolvedSearchParams.error ?? "";
 
-  const { data: company, error: companyError } = await supabaseAdmin
+  const supabase = await createClient();
+  const { data: company, error: companyError } = await supabase
     .from("companies")
     .select("id, slug, name")
     .eq("slug", companySlug)
